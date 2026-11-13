@@ -67,9 +67,19 @@
 - (void)prepare {
  if(self.preparing)return;self.preparing=YES;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-  NSDictionary *existing=[self session];if(existing){[self ready:existing];return;}
+  NSString *resource=NSBundle.mainBundle.resourcePath;
+  NSDictionary *release=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[resource stringByAppendingPathComponent:@"payload/release.json"]] options:0 error:nil];
+  NSDictionary *existing=[self session];
+  if(existing&&[existing[@"version"] isEqual:release[@"version"]]){[self ready:existing];return;}
+  if(existing){
+   // Replace only this installation's authenticated service; keep its vault and key.
+   int pid=[existing[@"pid"] intValue];if(pid<=1){[self failed];return;}
+   kill(pid,SIGTERM);
+   for(int i=0;i<40&&[self session]&&!self.quitting;i++)[NSThread sleepForTimeInterval:.25];
+   if(self.quitting)return;if([self session]){[self failed];return;}
+  }
   [[NSFileManager defaultManager] createDirectoryAtPath:self.base withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];
-  NSString *resource=NSBundle.mainBundle.resourcePath;NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/bin/bash"];task.arguments=@[[resource stringByAppendingPathComponent:@"bootstrap.sh"],[resource stringByAppendingPathComponent:@"payload"],self.base];
+  NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:@"/bin/bash"];task.arguments=@[[resource stringByAppendingPathComponent:@"bootstrap.sh"],[resource stringByAppendingPathComponent:@"payload"],self.base];
   NSMutableDictionary *env=[NSProcessInfo.processInfo.environment mutableCopy];if(self.profileHome)env[@"PRIVATE_AI_PROFILE_HOME"]=self.profileHome;task.environment=env;
   task.standardOutput=[NSFileHandle fileHandleForWritingAtPath:@"/dev/null"];task.standardError=[NSFileHandle fileHandleForWritingAtPath:@"/dev/null"];task.standardInput=[NSFileHandle fileHandleForReadingAtPath:@"/dev/null"];self.task=task;
   NSError *error=nil;if(![task launchAndReturnError:&error]){[self failed];return;}

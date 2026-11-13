@@ -6,7 +6,8 @@ function renderOnboarding(){
  const hasContext=dashboard.counts.memories+dashboard.counts.skills>0;
  const hasMail=!!dashboard.gmail.account;
  const connections=dashboard.connections.filter(active);
- const skipped=dashboard.onboarding?.gmail_skipped===true;
+ const mailAvailable=dashboard.gmail.configured||hasMail;
+ const skipped=dashboard.onboarding?.gmail_skipped===true||!mailAvailable;
  const needsSetup=!hasContext||(!hasMail&&!skipped)||!connections.length;
  const visible=!dashboard.onboarding?.dismissed&&(onboardingStarted||needsSetup);
  onboardingStarted=visible;
@@ -26,6 +27,10 @@ function renderOnboarding(){
  $('setupGmail').textContent=hasMail?'Reconnect Gmail':'Connect Gmail';
  $('setupSkipGmail').hidden=hasMail||skipped;
  $('reconnect').textContent=hasMail?'Reconnect':'Connect Gmail';
+ $('setupGmail').disabled=!mailAvailable;
+ $('reconnect').disabled=!mailAvailable;
+ $('checkGmail').disabled=!hasMail;
+ if(!mailAvailable)$('setupGmailStatus').textContent='Gmail sign-in is not configured in this public build. Continue to connect your AI; imported context works normally.';
  $('setupAgentStatus').textContent=connections.length?connections.some(x=>x.used)?'Your AI has successfully used this connection.':'Settings saved. Restart your AI, then try the prompt below.':'Choose the AI app you already use on this Mac.';
  $('setupTry').hidden=!connections.length;
  $('finishSetup').hidden=!complete.every(Boolean);
@@ -33,7 +38,7 @@ function renderOnboarding(){
  $('setupReadyText').textContent=connections.some(x=>x.used)?'You can see the filtered context in Privacy → What was shared.':'Restart your AI app. Enable Airlock if it asks, then paste this prompt into a new chat.';
  $('setupQuestion').textContent=prompt;
  $('setupAi').textContent=connections.length?'Connect another AI':'Connect my AI';
- $('contextDoneNote').textContent=connections.length?'Ask your connected AI to use Airlock.':'Next, connect Gmail and your AI from the setup screen.';
+ $('contextDoneNote').textContent=connections.length?'Ask your connected AI to use Airlock.':'Next, connect your AI from the setup screen. Gmail is optional.';
 }
 async function pollGmail(){
  clearTimeout(gmailTimer);

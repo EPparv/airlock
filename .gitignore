@@ -22,3 +22,4 @@ dist/
 *.zip
 *.bundle
 *.pem
+vendor/private_ai/google_client.json

@@ -31,4 +31,12 @@ class Links(HTMLParser):
                     assert (out / link.path).is_file(), f'Missing asset: {value}'
 
 Links().feed((out / 'index.html').read_text())
+if meta.get('mac'):
+    mac=out/meta['mac']['archive']
+    assert hashlib.sha256(mac.read_bytes()).hexdigest()==meta['mac']['sha256']
+    with zipfile.ZipFile(mac) as z:
+        assert z.testzip() is None
+        prefix='Airlock/Airlock.app/Contents/'
+        assert z.getinfo(prefix+'MacOS/Airlock').external_attr>>16 & 0o111
+        assert json.loads(z.read(prefix+'Resources/payload/release.json'))['version']==meta['version']
 print(f'Validated website links, checksum and {len(expected)} source files.')

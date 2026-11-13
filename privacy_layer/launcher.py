@@ -8,11 +8,14 @@ import subprocess
 import sys
 import socket
 import time
-from urllib.request import Request,urlopen
+from urllib.request import Request,build_opener,ProxyHandler,HTTPRedirectHandler
 from urllib.parse import urlsplit
 import webbrowser
 
 ROOT=Path(__file__).resolve().parents[1]
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self,*args,**kwargs):return None
 
 def start():
     state=ROOT/'.private';state.mkdir(mode=0o700,exist_ok=True)
@@ -24,7 +27,7 @@ def start():
                 u=urlsplit(record['url'])
                 if u.scheme!='http' or u.hostname!='127.0.0.1' or u.username or u.password or not u.port:return None
                 r=Request(f'http://127.0.0.1:{u.port}/api/state',data=b'{}',headers={'Authorization':'Bearer '+record['owner_token'],'Content-Type':'application/json'})
-                with urlopen(r,timeout=2) as response:
+                with build_opener(ProxyHandler({}),NoRedirect()).open(r,timeout=2) as response:
                     if response.status==200:return record
             except Exception:return None
         record=running()
@@ -51,7 +54,7 @@ def main():
         from .sources import LocalSources
         from .core import EncryptedStore,Gateway
         from .setup import saved_dot_available,restore_dot
-        sources=LocalSources()
+        sources=LocalSources(context_home=os.environ.get('PRIVATE_AI_PROFILE_HOME'))
         gateway=Gateway(EncryptedStore(ROOT/'.private/connections.enc',sources.key),sources)
         if saved_dot_available(gateway):restore_dot(gateway)
     except Exception:

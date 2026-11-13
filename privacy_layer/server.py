@@ -289,9 +289,10 @@ def main():
     sources=LocalSources(context_home=os.environ.get('PRIVATE_AI_PROFILE_HOME'));gateway=Gateway(EncryptedStore(args.state/'connections.enc',sources.key),sources)
     sources.connection_store=gateway.store
     owner_token=secrets.token_urlsafe(32)
+    release=json.loads((ROOT/'release.json').read_text()) if (ROOT/'release.json').exists() else {}
     args.state.mkdir(parents=True,exist_ok=True,mode=0o700)
     fd=os.open(args.state/'launch.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
-    with os.fdopen(fd,'w') as f: json.dump({'url':f'http://127.0.0.1:{args.owner_port}/?v=privacy-layer-1#'+owner_token,'owner_token':owner_token,'mcp_url':f'http://127.0.0.1:{args.mcp_port}/mcp','pid':os.getpid()},f)
+    with os.fdopen(fd,'w') as f: json.dump({'url':f'http://127.0.0.1:{args.owner_port}/?v=privacy-layer-1#'+owner_token,'owner_token':owner_token,'mcp_url':f'http://127.0.0.1:{args.mcp_port}/mcp','pid':os.getpid(),'version':release.get('version','source')},f)
     async def serve():
         app,_=mcp_app(gateway,args.mcp_port)
         configs=[uvicorn.Config(owner_app(gateway,owner_token,args.owner_port),host='127.0.0.1',port=args.owner_port,log_level='error',access_log=False),uvicorn.Config(app,host='127.0.0.1',port=args.mcp_port,log_level='error',access_log=False)]

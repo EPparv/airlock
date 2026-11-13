@@ -4,21 +4,24 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 **NEAR HACKATHON 2026 track: Privacy & Private AI (`privacy`).** This is a new feature on an existing Airlock application. See [the hackathon scope and baseline diff](docs/HACKATHON.md#eligible-work-and-baseline), [the judge walkthrough](docs/JUDGE.md) and [the demo script](docs/DEMO.md).
 
-Public preview/download: https://private-ai-phone-parv.parv223885.chatgpt.site/airlock/preview/
+Download the Mac app: https://epparv.github.io/airlock/
 
-This is the **0.6.0 alpha source preview**. The isolated walkthrough works without the companion application. It is not a rebuilt or notarized Mac application, and it does not update an existing installation.
+This is **0.6.0 alpha 2**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
-## Try it
+## Open and run on Mac
 
-Requires Python 3.12 or later. Extract the download into a new directory, then run:
+1. Download and unzip **Airlock_Mac_Latest.zip**. Move **Airlock.app** to Applications and open it.
+2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
+3. Import memories and skills. Gmail is optional. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
+4. Choose your existing Codex, Claude or Cursor app. Restart that AI, enable Airlock if prompted, and paste the test question. Keep Airlock open.
 
-```sh
-bash Run-Airlock.command
-```
+The alpha is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. Updates currently require replacing the app; your encrypted Application Support data is preserved.
 
-First launch installs pinned Python dependencies. Keep Terminal open while using the local control panel. The walkthrough uses fictional records, encrypted storage, actual permissions and MCP calls. Its Coding and Writing buttons simulate agent requests, not model inference.
+Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
 
-Optional real inference uses a locally installed Ollama model. NEAR confidential inference additionally requires your API key and independently reviewed deployment hashes. Neither is required for the memory walkthrough. See [SHARED_MEMORY.md](SHARED_MEMORY.md) for setup, boundaries and validation limits.
+## Developer walkthrough
+
+The source walkthrough uses fictional records and simulated agent requests. It requires Python 3.12+ and `bash Run-Airlock.command`. Its permission checks and MCP calls are real. Optional inference setup is documented in [SHARED_MEMORY.md](SHARED_MEMORY.md).
 
 For an automated judge, from the repository root:
 
@@ -46,7 +49,7 @@ Built with Python, the official MCP SDK, Starlette/Uvicorn, cryptography AES-GCM
 
 ## What is hosted
 
-The public website is a product page and current source download. The vault, owner control panel, private prompts, credentials and MCP service run locally. Publishing the website does not publish your local server. The existing Airlock Chat website is a separate application and is not built by this repository.
+The public website is a product page with current Mac and source downloads. The vault, owner control panel, private prompts, credentials and MCP service run locally. Publishing the website does not publish your local server. The existing Airlock Chat website is a separate application and is not built by this repository.
 
 ## Develop and publish
 
@@ -57,12 +60,12 @@ python3 scripts/check_site.py
 
 `dist/` contains the website, a repeatable source ZIP and `release.json` with its SHA-256. Only `dist/` is published. The build uses an explicit source allowlist and excludes runtime data, credentials and Git history. Edit the source files, not the generated ZIP or `dist/`.
 
-GitHub Actions checks the isolated app and builds the site on pushes and pull requests. Enable Pages and the `PUBLISH_PAGES` repository variable to publish successful `main` builds at a stable address after the checks pass. Netlify is also supported through `netlify.toml`, with a separate repository connection. Neither service is considered connected until its first deployment succeeds.
+GitHub Actions tests the app, builds the universal Mac launcher, verifies first setup on Apple silicon and Intel runners, and builds the site on pushes and pull requests. Enable Pages and the `PUBLISH_PAGES` repository variable to publish successful `main` builds at a stable address after the checks pass. Netlify is also supported through `netlify.toml`, with a separate repository connection. Neither service is considered connected until its first deployment succeeds.
 
 See [PUBLISHING.md](PUBLISHING.md) for the one-time connection, custom domain and rollback steps.
 
 ## Tests
 
-The regular Mac app still depends on an adjacent `Private_AI` companion package that is not part of this preview. CI explicitly excludes three companion-dependent modules and two companion-dependent cases; it does not represent full Mac-app validation. Live Ollama, live NEAR and native agent sessions are not exercised by CI. The standalone memory, permissions and MCP tests run normally.
+The required companion adapters are now bundled in `vendor/`. CI runs the full Python suite on Linux and a fresh Mac install, import, agent connection and MCP retrieval smoke test. The Mac smoke test does not run a real AI conversation, Google login or Finder/Gatekeeper interaction. Live Ollama, live NEAR and native agent conversations are not exercised by CI.
 
 MIT licensed. See [LICENSE](LICENSE).
