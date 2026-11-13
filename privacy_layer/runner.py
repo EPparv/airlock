@@ -36,6 +36,11 @@ def execute(package,script,inputs,timeout=20):
         runner=root/'run.py'
         runner.write_text('import os,runpy,sys\nfrom pathlib import Path\nr=Path(__file__).parent\nsys.path[:0]=[str(r/"dependencies"),str(r/"skill/scripts")]\nos.chdir(r/"skill")\nrunpy.run_path(str(r/"skill"/'+repr(script)+'),run_name="__main__")\n')
         python=Path(sys.executable).resolve();base=Path(sys.base_prefix).resolve()
+        # python.org framework builds use a launcher that spawns Python.app.
+        # Invoke the real interpreter directly so child-process denial stays intact.
+        framework_python=base/'Resources/Python.app/Contents/MacOS/Python'
+        if getattr(sys,'_framework','') and framework_python.is_file():
+            python=framework_python.resolve()
         quote=lambda p:json.dumps(str(p))
         profile='(version 1)\n(deny default)\n(allow file-read* (literal "/"))\n(allow process-exec (literal '+quote(python)+'))\n(allow signal (target self))\n(allow sysctl-read)\n'
         # Python resolves its runtime through ancestor directories on startup.

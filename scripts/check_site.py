@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 import hashlib
 import json
+import sys
 import zipfile
 from build_site import ROOT, sources
 
@@ -39,4 +40,11 @@ if meta.get('mac'):
         prefix='Airlock/Airlock.app/Contents/'
         assert z.getinfo(prefix+'MacOS/Airlock').external_attr>>16 & 0o111
         assert json.loads(z.read(prefix+'Resources/payload/release.json'))['version']==meta['version']
+        sys.path.insert(0,str(ROOT))
+        from macos.package import entries
+        expected_payload=entries()
+        payload=prefix+'Resources/payload/'
+        assert {n.removeprefix(payload) for n in z.namelist() if n.startswith(payload)}==set(expected_payload)
+        for name,data in expected_payload.items():
+            assert z.read(payload+name)==data,f'Mac payload differs from source: {name}'
 print(f'Validated website links, checksum and {len(expected)} source files.')
