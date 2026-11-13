@@ -24,6 +24,7 @@ CLIENTS = {
     'claude-code': {'name':'Claude Code', 'hint':'Your Claude coding workspace', 'mark':'C'},
     'cursor': {'name':'Cursor', 'hint':'Personal context in your editor', 'mark':'↗'},
     'mcp': {'name':'Other agents', 'hint':'Standard MCP connection on this Mac', 'mark':'+'},
+    'ironclaw': {'name':'IronClaw', 'hint':'HTTPS MCP extension; secure endpoint setup required', 'mark':'I'},
 }
 RELATIVE_CONFIGS = {
     'codex':'.codex/config.toml',
@@ -110,7 +111,7 @@ def install_config(agent,entry,home=None):
         finally:tmp.unlink(missing_ok=True)
     return str(path)
 
-def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, install=True, home=None):
+def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, install=True, home=None, scope=None):
     if agent not in CLIENTS or approved is not True or not isinstance(install,bool):raise Denied('Choose an agent and approve its connection.')
     if agent=='dot':
         from .setup import saved_dot_available
@@ -119,11 +120,21 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
     token_path=ROOT/f'.private/clients/{agent}-{grant["id"]}.token'
     result={'id':grant['id'],'agent':agent,'name':CLIENTS[agent]['name'],'expires':grant['expires'],'installed':False}
     try:
+        if scope is not None:
+            from .agent_memory import AgentMemory
+            AgentMemory(gateway).configure(grant['id'], **scope)
         if agent=='dot':
             restore_dot(gateway,grant['token'])
             result.update(installed=True,message='Connected to your existing Dot plugin. Ask Dot to use Airlock.')
         else:
             private_write(token_path,grant['token'])
+            if agent=='ironclaw':
+                from .ironclaw_adapter import manifest
+                result.update(config=manifest(), credential_path=str(token_path),
+                    message='Review the HTTPS extension template. Replace airlock.invalid with a secured MCP endpoint and configure this scoped token through IronClaw’s secret settings. Current IronClaw does not accept stdio. No endpoint was published or host connection tested.')
+                with gateway.store.transaction() as data:
+                    data['grants'][grant['id']]['client_setup']={'installed':False,'at':gateway.clock()}
+                return result
             entry=server_entry(token_path)
             exported={'mcpServers':{SERVER:entry}}
             result['config']=json.dumps(exported,indent=2)

@@ -162,7 +162,7 @@ class ContextHub:
         result=[dict(row) for batch in imports for row in batch['items']]
         for key,row in shared.items():
             if not row.get('deleted'):
-                result.append({'kind':row['kind'],'text':'Agent-authored note (not independently verified): '+row['text'],'source_id':'shared:'+key,'origin':'Shared agent note','device_only':False,'shared_reference':key,'revision':row['revision']})
+                result.append({'kind':row['kind'],'text':('Owner-reviewed agent note (not independently verified): ' if row.get('owner_approved') else 'Agent-authored note (not independently verified): ')+row['text'],'source_id':'shared:'+key,'origin':'Shared agent note','device_only':False,'shared_reference':key,'revision':row['revision']})
         for key,pkg in packages.items():
             result.append({'kind':'skills','text':pkg['instructions'],'source_id':'package:'+key,'origin':'Installed skill package','device_only':False,'package_digest':pkg['digest']})
         for source in enabled:

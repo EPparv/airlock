@@ -6,7 +6,7 @@ if(owner)sessionStorage.setItem('private-ai-owner',owner);
 history.replaceState(null,'',location.pathname);
 let dashboard=null, selectedAgent='codex', exportConfig='', library=null, libraryKind='memories';
 let mode='library', found=[], chosen=new Map(), created=null, phrasesDirty=false;
-const names={dot:'Dot',codex:'Codex','claude-desktop':'Claude Desktop','claude-code':'Claude Code',cursor:'Cursor',mcp:'Other agent',test:'Local verification'};
+const names={dot:'Dot',codex:'Codex','claude-desktop':'Claude Desktop','claude-code':'Claude Code',cursor:'Cursor',mcp:'Other agent',test:'Local verification',ironclaw:'IronClaw'};
 const marks={dot:'D',codex:'⌘','claude-desktop':'✳','claude-code':'C',cursor:'↗',mcp:'+'};
 const prompt='Use Airlock to suggest what I should focus on this week, using my memories, skills and relevant Gmail. Cite what you found, distinguish facts from suggestions, and do not change or send any email.';
 function notice(text,error=false){$('notice').textContent=text;$('notice').hidden=!text;$('notice').classList.toggle('error',error);}
@@ -101,4 +101,4 @@ $('copy').onclick=guard(async()=>{await navigator.clipboard.writeText(created.to
 $('save').onclick=guard(async()=>{const r=await api('install-claude',{token:created.token});notice(r.message);});
 $('useSavedDot').onclick=guard(async()=>{const r=await api('restore-dot',{token:created.token});notice(r.message);await refresh();});
 window.addEventListener('beforeunload',event=>{if(phrasesDirty){event.preventDefault();event.returnValue='';}});
-guard(async()=>{await refresh();const policy=await api('private-phrases');$('privatePhrases').value=policy.phrases.join('\n');})().catch(()=>{});
+window.airlockReady=guard(async()=>{await refresh();if(!dashboard.demo_only){const policy=await api('private-phrases');$('privatePhrases').value=policy.phrases.join('\n');}})();

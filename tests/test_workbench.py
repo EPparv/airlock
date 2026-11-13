@@ -52,12 +52,16 @@ def test_cross_agent_updates_conflicts_undo_and_live_revision(bundle):
     with pytest.raises(Denied):g.call(a['token'],'update_shared_context',args)
     g.set_capabilities(a['id'],context_updates=True);g.set_capabilities(b['id'],context_updates=True)
     revision=g.call(a['token'],'context_status',{})['revision']
-    added=g.call(a['token'],'update_shared_context',args)
+    proposed=g.call(a['token'],'update_shared_context',args)
+    from privacy_layer.agent_memory import AgentMemory
+    assert g.call(b['token'],'context_status',{})['revision']==revision
+    added=AgentMemory(g).decide(proposed['proposal_id'],True)
     assert g.call(b['token'],'context_status',{})['revision']>revision
     item=g.call(b['token'],'get_private_context',{'query':'Zephyr demo deadline'})['items'][0]
     assert item['shared_reference']==added['reference'] and 'unverified' in item['evidence_type'] or 'not independently verified' in item['evidence_type']
     args.update(operation='update',reference=added['reference'],expected_revision=1,text='Fictional Zephyr demo deadline is Monday.')
-    changed=g.call(b['token'],'update_shared_context',args);assert changed['revision']==2
+    proposed=g.call(b['token'],'update_shared_context',args)
+    changed=AgentMemory(g).decide(proposed['proposal_id'],True);assert changed['revision']==2
     with pytest.raises(Denied,match='another agent'):g.call(a['token'],'update_shared_context',args)
     SharedContext(g).undo(added['reference'],2)
     assert 'Friday' in g.call(a['token'],'get_private_context',{'query':'Zephyr'})['items'][0]['text']

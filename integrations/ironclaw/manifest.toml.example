@@ -1,0 +1,27 @@
+# REVIEW TEMPLATE: replace airlock.invalid with your secured MCP endpoint.
+# No public endpoint is created by Airlock. Never expose the owner UI.
+schema_version = "reborn.extension_manifest.v3"
+id = "airlock"
+name = "Airlock"
+version = "0.1.0"
+description = "Owner-controlled local context and approved private task results."
+trust = "third_party"
+
+[mcp]
+origin_gate_matrix = { loop_run = "gated_unless_granted", product = "forbidden", automation = "forbidden" }
+server = "https://airlock.invalid/mcp"
+namespace = "airlock"
+max_tools = 32
+default_permission = "ask"
+effects = ["network", "use_secret", "external_write"]
+
+[[mcp.credentials]]
+handle = "airlock_scoped_token"
+vendor = "airlock"
+scopes = []
+injection = { type = "header", name = "authorization", prefix = "Bearer " }
+
+[auth.airlock]
+method = "api_key"
+display_name = "Airlock scoped agent connection"
+fields = [{ handle = "airlock_scoped_token", label = "Scoped agent token", secret = true }]

@@ -1,0 +1,14 @@
+[build]
+  command = "python3 scripts/build_site.py && python3 scripts/check_site.py"
+  publish = "dist"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
+    Content-Security-Policy = "default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+
+[context.deploy-preview]
+  command = "python3 scripts/build_site.py && python3 scripts/check_site.py"

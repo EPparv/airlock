@@ -7,3 +7,18 @@ node_modules/
 .tools/
 plugins/claude-code/.mcp.json
 
+
+.near-demo/
+artifacts/
+dist/
+*.key
+.env*
+
+.agent-demo/
+*.log
+
+.netlify/
+.DS_Store
+*.zip
+*.bundle
+*.pem

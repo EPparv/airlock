@@ -126,6 +126,11 @@ class SkillPackages:
         with self.g.store.transaction() as d:d.get('skill_packages',{}).pop(key,None)
         return {'removed':True}
     def package(self,key):
+        if self.grant:
+            from .agent_memory import AgentMemory
+            memory=AgentMemory(self.g);rows=memory.snapshot()
+            if not memory.allowed('skills:package:'+key,rows):
+                raise Denied('This skill package must stay local.')
         with self.g.store.transaction() as d:pkg=copy.deepcopy(d.get('skill_packages',{}).get(key))
         if not pkg:raise Denied('Skill unavailable. Refresh the skill list.')
         if hashlib.sha256(canonical({n:hashlib.sha256(base64.b64decode(v,validate=True)).hexdigest() for n,v in pkg['files'].items()})).hexdigest()!=pkg['digest']:raise Denied('Skill integrity check failed. Import it again.')
@@ -138,6 +143,9 @@ class SkillPackages:
         protected=self.g.sources.protected();items=[]
         with self.g.store.transaction() as d:packages=copy.deepcopy(d.get('skill_packages',{}))
         for key,pkg in packages.items():
+            from .agent_memory import AgentMemory
+            memory=AgentMemory(self.g);rows=memory.snapshot()
+            if self.grant and not memory.allowed('skills:package:'+key,rows):continue
             text=sanitize(pkg['name']+'\n'+pkg['description'],protected)
             if text:items.append({'kind':'skills','source_id':key,'text':text,'skill_id':key,'name':sanitize(pkg['name'],protected) or 'Local skill','description':sanitize(pkg['description'],protected) or '','executable':bool(pkg['enabled'] and (self.grant or {}).get('capabilities',{}).get('skill_execution'))})
         candidates=ranked(items,query) if query.strip() else items

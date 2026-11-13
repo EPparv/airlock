@@ -317,7 +317,10 @@ class Automatic:
         return value
 
     def context(self,query):
-        raw=self.g.sources.library();protected=self.g.sources.protected();eligible=[];withheld=0
+        from .agent_memory import AgentMemory
+        memory=AgentMemory(self.g);rows=memory.snapshot()
+        raw=[dict(row,device_only=not memory.allowed(ref,rows)) for ref,row in rows.items()]
+        protected=self.g.sources.protected();eligible=[];withheld=0
         for row in raw:
             text=None if row.get('device_only') else sanitize(row['text'],protected)
             if not text:withheld+=1;continue

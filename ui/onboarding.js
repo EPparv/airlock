@@ -2,6 +2,7 @@
 let onboardingStarted=false,gmailTimer=null,gmailDeadline=0;
 function renderOnboarding(){
  if(!dashboard)return;
+ if(dashboard.demo_only){$('onboarding').hidden=true;return;}
  const hasContext=dashboard.counts.memories+dashboard.counts.skills>0;
  const hasMail=!!dashboard.gmail.account;
  const connections=dashboard.connections.filter(active);

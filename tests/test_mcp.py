@@ -32,7 +32,7 @@ async def check_session(s):
     await s.initialize()
     tools=(await s.list_tools()).tools
     names={t.name for t in tools}
-    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context'}
+    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result'}
     for tool in tools:
         if tool.name in ('get_private_context','search_gmail'):
             assert tool.inputSchema['properties']['query']['maxLength']==2000
@@ -55,6 +55,34 @@ def test_official_sdk_http(bundle,serving):
         async with httpx.AsyncClient(headers={'Authorization':'Bearer '+token}) as client:
             async with streamable_http_client(url,http_client=client) as (read,write,_):
                 async with ClientSession(read,write) as session:await check_session(session)
+    asyncio.run(run())
+
+
+def test_scoped_agents_over_real_mcp_http(bundle,serving):
+    from privacy_layer.agent_memory import AgentMemory
+    g=bundle[0];m=AgentMemory(g);url,_=serving
+    a=g.create(agent='codex',purpose='Scoped MCP test',views=[],mode='automatic',approved=True)
+    b=g.create(agent='mcp',purpose='Compute-only MCP test',views=[],mode='automatic',approved=True)
+    m.configure(a['id'],['skills:s1'],disclose=True,compute=False)
+    m.configure(b['id'],['memories:m1'],disclose=False,compute=True)
+    async def client(gr):
+        async with httpx.AsyncClient(headers={'Authorization':'Bearer '+gr['token']},trust_env=False) as http:
+            async with streamable_http_client(url,http_client=http) as (read,write,_):
+                async with ClientSession(read,write) as session:
+                    await session.initialize()
+                    r=await session.call_tool('get_private_context',{'query':''})
+                    if gr is a:
+                        assert not r.isError and 'Be concise' in r.content[0].text and 'Hyderabad' not in r.content[0].text
+                    else:
+                        assert r.isError and 'compute-only' in r.content[0].text
+                        t=await session.call_tool('request_private_task',{'instruction':'Summarize the approved interview facts.','records':[],'route':'local'})
+                        assert not t.isError and 'Hyderabad' not in t.content[0].text
+                        task_id=json.loads(t.content[0].text)['task_id']
+                        result=await session.call_tool('get_private_task_result',{'task_id':task_id})
+                        assert not result.isError and json.loads(result.content[0].text)['text'] is None
+                    denied=await session.call_tool('search_gmail',{'query':'pickup'})
+                    assert denied.isError
+    async def run():await asyncio.gather(client(a),client(b))
     asyncio.run(run())
 
 def test_automatic_mode_over_real_mcp_transport(bundle,serving):
@@ -142,7 +170,7 @@ def test_native_client_export_over_real_stdio(bundle,serving,tmp_path,monkeypatc
         async with stdio_client(StdioServerParameters(**config)) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                tools=await session.list_tools();assert len(tools.tools)==11
+                tools=await session.list_tools();assert len(tools.tools)==13
                 context=await session.call_tool('get_private_context',{'query':'interview'})
                 assert not context.isError
                 assert 'Hyderabad' in context.content[0].text
