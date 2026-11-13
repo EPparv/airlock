@@ -10,7 +10,7 @@ python3.12 -m venv .venv
 bash Run-Airlock.command
 ```
 
-On Windows, activate the venv and use `python -m privacy_layer.memory_demo` instead of the Bash launcher. Windows has not been runtime-tested. Python 3.12 on macOS was used for the current available tests; Linux coverage is configured in CI.
+On Windows, activate the venv and use `python -m privacy_layer.memory_demo` instead of the Bash launcher. Windows has not been runtime-tested. Python 3.12 was used for the local macOS checks and the successful Linux run in GitHub Actions.
 
 The launcher opens the authenticated browser panel after both listeners are ready. Keep the terminal open. For a headless machine use `bash Run-Airlock.command --no-open`; the private launch URL is in `.agent-demo/launch.json`. Never publish that file or include its URL in a recording. Stop with Ctrl+C.
 
@@ -44,6 +44,8 @@ Supply your own `NEARAI_API_KEY`, `NEARAI_GATEWAY_COMPOSE_SHA256` and `NEARAI_MO
 Live NEAR generation remains unverified in this release. Missing SDK, credentials or reviewed hashes must leave the task blocked. Do not treat an environment-ready indicator as successful attestation. Do not use private real data for a first verification run.
 
 ## Automated checks and limits
+
+The [public GitHub Actions run](https://github.com/EPparv/airlock/actions/runs/43510072813) passed 347 tests, with 4 skipped and 2 deselected, on Linux. Website links, archive scope and checksum checks also passed. These are standalone application checks; live provider calls and native client sessions were not tested by that run.
 
 Run the four modules listed in the root README for the standalone judge checks. For the broader suite, use the command in SHARED_MEMORY.md. Three modules and two cases require the omitted companion application. Three Mac sandbox cases cannot run inside the current restricted session. The SDK encryption module skips when the optional SDK is absent. These limitations are distinct from successful tests, and CI logs are the authority for a particular GitHub run.
 
