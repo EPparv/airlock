@@ -38,6 +38,10 @@ def execute(package,script,inputs,timeout=20):
         python=Path(sys.executable).resolve();base=Path(sys.base_prefix).resolve()
         quote=lambda p:json.dumps(str(p))
         profile='(version 1)\n(deny default)\n(allow file-read* (literal "/"))\n(allow process-exec (literal '+quote(python)+'))\n(allow signal (target self))\n(allow sysctl-read)\n'
+        # Python resolves its runtime through ancestor directories on startup.
+        # Permit only metadata for these exact paths, never sibling file contents.
+        for ancestor in sorted(set(python.parents)|set(base.parents)|set(root.parents)):
+            profile+='(allow file-read-metadata (literal '+quote(ancestor)+'))\n'
         for p in ('/System/Library','/usr/lib',str(base),str(root)):
             profile+='(allow file-read* (subpath '+quote(p)+'))\n'
         for p in ('/dev/null','/dev/random','/dev/urandom','/private/var/db/timezone'):
