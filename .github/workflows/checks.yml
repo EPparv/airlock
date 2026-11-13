@@ -39,11 +39,18 @@ jobs:
           cache-dependency-path: requirements.lock
       - run: python -m pip install -r requirements.lock
       - name: Verify macOS action sandbox
-        run: python -m pytest -q tests/test_workbench.py
+        id: sandbox
+        continue-on-error: true
+        run: |
+          python scripts/diagnose_mac_sandbox.py
+          python -m pytest -q tests/test_workbench.py
       - name: Build universal Mac app from this revision
         run: python macos/package.py artifacts/Airlock_Mac_Latest.zip --app-destination artifacts/Airlock.app
       - name: Fresh install, import, connect, retrieve and revoke
         run: python scripts/smoke_mac.py artifacts/Airlock.app
+      - name: Require action sandbox checks
+        if: steps.sandbox.outcome != 'success'
+        run: exit 1
       - uses: actions/upload-artifact@v4
         if: matrix.runner == 'macos-15'
         with:
