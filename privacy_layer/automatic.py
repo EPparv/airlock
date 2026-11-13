@@ -325,15 +325,17 @@ class Automatic:
             text=None if row.get('device_only') else sanitize(row['text'],protected)
             if not text:withheld+=1;continue
             eligible.append({**row,'text':text})
-        selected=[];counts=Counter();seen=set()
-        for row in ranked(eligible,query):
-            if counts[row['kind']]>=LIMITS[row['kind']] or row['text'] in seen:continue
-            text,truncated=excerpt(row['text'],query,2400)
-            item=self.public(row,text);item['excerpt_truncated']=truncated
+        candidates=[];seen=set()
+        for row in eligible:
+            if row['text'] in seen:continue
+            item=self.public(row,row['text']);item['core']=bool(row.get('core'))
             if row.get('shared_reference'):item.update(shared_reference=row['shared_reference'],revision=row['revision'],evidence_type='agent-authored shared note; not independently verified')
-            selected.append(item);counts[row['kind']]+=1;seen.add(row['text'])
-        return {'items':selected,'library_counts':dict(Counter(r['kind'] for r in raw)),'withheld_records':withheld,
-                'coverage':'The full local memory and skill library was considered. Returned items are ranked, filtered excerpts; a search miss is not proof of absence. Refine the topic for more context.'}
+            candidates.append(item);seen.add(row['text'])
+        from .continuity import select
+        result=select(self.g,self.grant,candidates,query)
+        for item in result['items']:item['excerpt_truncated']=not item['text_complete']
+        return {**result,'library_counts':dict(Counter(r['kind'] for r in raw)),'withheld_records':withheld,
+                'coverage':'Core profile plus locally ranked, filtered context. Follow next_query for remaining matches or long-record parts. A search miss is not proof of absence. Retired, stale and restricted records are excluded. No hidden chat-history synchronization.'}
 
     def search(self,query,selection_topic=None):
         if query.startswith('page:'):

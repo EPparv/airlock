@@ -212,6 +212,7 @@ class Gateway:
         with self.store.transaction() as data:
             return [{'id':g['id'],'agent':g['agent'],'purpose':g['purpose'],'expires':g['expires'],
                      'remaining':g['remaining'],'revoked':g['revoked'],'mode':g.get('mode','reviewed'),'configured':g.get('client_setup',{}).get('installed'),
+                     'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
 
     def call(self, token, tool, args):
@@ -239,7 +240,12 @@ class Gateway:
                 memory = AgentMemory(self)
                 if tool == 'get_private_context': result = memory.context(snapshot, query)
                 elif tool == 'context_status':
-                    result = {'scope':snapshot['scope'], 'updates_require_owner_review':True,
+                    visible=[]
+                    capability='disclose' if snapshot['scope'].get('disclose') else 'compute'
+                    for ref in snapshot['scope']['records']:
+                        try:visible.extend(memory.resolve(snapshot,[ref],capability=capability))
+                        except Denied:continue
+                    result = {'scope':snapshot['scope'], 'revision':digest([visible,snapshot.get('policy_revision',0)]), 'checked_at':self.clock(), 'updates_require_owner_review':True,
                               'coverage':'Only selected records; no hidden chat-history synchronization.'}
                 elif tool == 'update_shared_context': result = memory.propose(snapshot, **args)
                 elif tool == 'request_private_task':
@@ -319,6 +325,9 @@ class Gateway:
                 current = self._grant(data, token)
                 if any(current.get(k)!=snapshot.get(k) for k in ('views','mode','policy','policy_revision','capabilities','scope')): raise Denied('Sharing rules changed. Retry after owner review.')
                 self.audit(data,current,tool,'released',[i['ref'] for i in result.get('items',[])])
+                if tool=='get_private_context':
+                    current['last_context_read']=self.clock()
+                    current['last_context_fingerprint']=result.get('context_fingerprint')
                 if snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context'):
                     receipts=data.setdefault('disclosures',[])
                     receipts.append({'at':self.clock(),'agent':current['id'],'tool':tool,'items':copy.deepcopy(result.get('items',[])),'coverage':result.get('coverage',''),'response':copy.deepcopy(result)})

@@ -26,15 +26,20 @@ class AgentMemory:
         with self.g.store.transaction() as d:
             policy = copy.deepcopy(d.get('memory_policy', {}))
             notes = copy.deepcopy(d.get('shared_context', {}))
+            core = copy.deepcopy(d.get('memory_core', {}))
+            retired = copy.deepcopy(d.get('memory_retired', {}))
         for ref, row in rows.items():
             note = notes.get(row.get('shared_reference'), {})
             row['parents'] = note.get('parents', [])
             row['never_share'] = bool(row.get('device_only') or policy.get(ref, False))
+            row['core'] = core.get(ref,row.get('core',False))
+            row['retired'] = retired.get(ref,False)
+            row['stale'] = any(p not in rows or digest(rows[p]['text'])!=h for p,h in note.get('source_content_hashes',{}).items())
         return rows
 
     def allowed(self, ref, rows, seen=None):
         seen = set(seen or ())
-        if ref in seen or ref not in rows or rows[ref]['never_share']:
+        if ref in seen or ref not in rows or rows[ref]['never_share'] or rows[ref].get('retired') or rows[ref].get('stale'):
             return False
         seen.add(ref)
         return all(self.allowed(p, rows, seen) for p in rows[ref]['parents'])
@@ -53,9 +58,43 @@ class AgentMemory:
             tasks = copy.deepcopy(list(d.get('private_tasks', {}).values()))
         return {'records': [dict(ref=ref, title=row.get('title') or row.get('origin') or row['kind'],
                                  text=row['text'], kind=row['kind'], never_share=not self.allowed(ref, rows),
-                                 source_device_only=bool(row.get('device_only')), parents=row['parents'])
+                                 source_device_only=bool(row.get('device_only')), parents=row['parents'],
+                                 core=row.get('core',False),retired=row.get('retired',False),stale=row.get('stale',False),
+                                 editable=row['source_id'].startswith('import:'),text_hash=digest(row['text']))
                             for ref, row in rows.items()],
                 'connections': self.g.list_grants(), 'proposals': proposals[-50:], 'tasks': tasks[-30:]}
+
+    def priority(self, ref, core):
+        rows=self.snapshot()
+        if ref not in rows or type(core) is not bool:raise Denied('Choose an existing record.')
+        if core:
+            if not self.allowed(ref,rows):raise Denied('A restricted or retired record cannot enter the shared core profile.')
+            if len(rows[ref]['text'])>4000:raise Denied('Use a core profile entry under 4,000 characters.')
+            if sum(bool(r.get('core')) for k,r in rows.items() if k!=ref)>=6:raise Denied('Keep up to six core profile records. Unpin another first.')
+        with self.g.store.transaction() as d:
+            d.setdefault('memory_core',{})[ref]=core
+            for g in d['grants'].values():g['policy_revision']=g.get('policy_revision',0)+1
+        return {'saved':True}
+
+    def retire(self, ref, retired):
+        if ref not in self.snapshot() or type(retired) is not bool:raise Denied('Choose an existing record.')
+        with self.g.store.transaction() as d:
+            d.setdefault('memory_retired',{})[ref]=retired
+            for g in d['grants'].values():g['policy_revision']=g.get('policy_revision',0)+1
+        return {'saved':True}
+
+    def edit(self, ref, text, expected_hash):
+        if not isinstance(text,str) or not text.strip() or len(text)>12000:raise Denied('Use a nonempty correction of up to 12,000 characters.')
+        with self.g.store.transaction() as d:
+            row=next((r for batch in d.get('context_batches',{}).values() for r in batch['items'] if record_ref(r)==ref),None)
+            if not row:raise Denied('Only imported records can be edited here. Update linked files at their original source.')
+            if digest(row['text'])!=expected_hash:raise Denied('This record changed. Refresh before editing.')
+            if d.get('memory_core',{}).get(ref,row.get('core',False)) and len(text.strip())>4000:raise Denied('Unpin this record before expanding it beyond 4,000 characters.')
+            d.setdefault('import_edit_history',[]).append({'ref':ref,'before':copy.deepcopy(row),'at':self.g.clock()})
+            d['import_edit_history']=d['import_edit_history'][-100:]
+            row.update(text=text.strip(),revision=row.get('revision',0)+1,updated_at=self.g.clock())
+            for g in d['grants'].values():g['policy_revision']=g.get('policy_revision',0)+1
+        return {'saved':True,'message':'Correction saved. Agents must refresh context; already shared copies cannot be recalled.'}
 
     def configure(self, identifier, records, disclose=False, compute=False, proposals=False):
         if not isinstance(records, list) or len(records) > 100 or any(not isinstance(r, str) for r in records):
@@ -117,7 +156,7 @@ class AgentMemory:
         if not grant.get('scope', {}).get('disclose'):
             raise Denied('This connection is compute-only. Request a private task; raw context stays in Airlock.')
         rows = self.snapshot()
-        result = []
+        eligible = []
         from .automatic import sanitize
         protected = self.g.sources.protected()
         for ref in grant['scope']['records']:
@@ -126,17 +165,17 @@ class AgentMemory:
             except Denied:
                 continue
             text = sanitize(row['text'], protected)
-            if not text or (query and row['kind'] != 'skills' and not terms(query) & terms(text)):
+            if not text:
                 continue
-            result.append({'ref': ref, 'kind': row['kind'], 'text': text,
-                           'citation': f'[A{len(result)+1}]', 'evidence_type': 'owner-selected context; not independent verification',
+            eligible.append({'ref': ref, 'kind': row['kind'], 'text': text,'core':rows[ref].get('core',False),
+                           'citation': f'[A{len(eligible)+1}]', 'evidence_type': 'owner-selected context; not independent verification',
                            'revision': rows[ref].get('revision', 0)})
             if rows[ref].get('shared_reference'):
-                result[-1]['shared_reference'] = rows[ref]['shared_reference']
-            if len(result) >= 12:
-                break
+                eligible[-1]['shared_reference'] = rows[ref]['shared_reference']
+        from .continuity import select
+        result=select(self.g,grant,eligible,query)
         # Final grant comparison occurs in Gateway.call before release.
-        return {'items': result, 'revision': digest(result),
+        return {**result, 'revision':result['context_fingerprint'],
                 'coverage': 'Only this agent’s selected records. Returned text is visible to its host/provider. Skills are instructions, not tool permissions.'}
 
     def propose(self, grant, operation, kind, text='', reference='', expected_revision=0):
@@ -221,7 +260,7 @@ class AgentMemory:
                 'operation': p['operation'], 'revision': rev, 'agent': p['grant_id'], 'at': self.g.clock()})
             d['context_changes'] = d['context_changes'][-200:]
             notes[ref] = {'text': p['text'], 'kind': p['kind'], 'revision': rev, 'agent': p['agent'],
-                          'owner_approved': True, 'parents': parents, 'updated_at': self.g.clock(),
+                          'owner_approved': True, 'parents': parents, 'source_content_hashes':{r:digest(rows[r]['text']) for r in parents}, 'updated_at': self.g.clock(),
                           'deleted': p['operation'] == 'delete'}
             p.update(status='accepted', saved_reference=ref)
             self.g.audit(d, g, 'memory_proposal', 'accepted')

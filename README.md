@@ -6,7 +6,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 2**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.6.0 alpha 3**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
@@ -18,6 +18,14 @@ This is **0.6.0 alpha 2**, now packaged as a Mac app with the shared memory feat
 The alpha is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. Updates currently require replacing the app; your encrypted Application Support data is preserved.
 
 Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
+
+## Continuity across sessions
+
+The updated transfer prompt captures a core profile, detailed projects, dated decisions, corrections, open loops, full workflows and explicit coverage gaps. Up to six owner-selected core records accompany every authorized automatic or scoped context request, even without matching keywords. Larger recall results are paginated; long records are returned in explicit parts instead of silently losing the ending.
+
+Shared memory lets the owner pin core records, correct imported facts and retire outdated ones. New approved agent notes record source hashes and are withheld if their sources change. Connections show their last successful context request. To learn from ongoing work, enable memory proposals, review them, and include approved notes in the relevant agents' scopes.
+
+Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Retrieval remains local lexical ranking with aliases, not semantic embeddings. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
 
 ## Developer walkthrough
 

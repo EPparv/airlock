@@ -20,6 +20,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.lock
       - run: python -m pip install -r requirements.lock
+      - name: Check updated browser scripts
+        run: |
+          node --check ui/context.js
+          node --check ui/memory.js
       - name: Full app tests, including bundled adapters
         env:
           PYTHONPATH: .

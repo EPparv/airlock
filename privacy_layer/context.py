@@ -26,17 +26,31 @@ SPECS = {
 }
 MEMORY_HEAD = re.compile(r'^(?:memories|memory|facts(?: about me)?|background|profile|projects?|personal context|goals?|history|people|relationships|decisions|open loops|constraints)$', re.I)
 SKILL_HEAD = re.compile(r'^(?:skills|instructions|custom instructions|preferences|workflows|writing(?: style)?|ways of working|templates|playbooks|rules)$', re.I)
-PROMPT = '''Transfer the useful context you already have about me into Airlock. Use only information you can actually access in this account, conversation, project, saved memory and my own instructions. Do not claim you inspected hidden or unavailable history, and do not retrieve this information from Airlock itself.
+PROMPT = '''Create a detailed continuity handoff into Airlock so another AI can help me without making me repeat my background, preferences and ongoing work. This transfers accessible context, not your model, tools or hidden history. Do not retrieve or repeat Airlock's own library.
 
-Include memories: background, work and projects, goals, relationships relevant to my work, decisions, constraints, ongoing plans and unresolved questions. Preserve useful dates and project scope. Distinguish confirmed facts, historical plans and uncertain/inferred information. Prefer my latest explicit correction; do not invent missing facts.
+FIRST, INVENTORY YOUR SOURCES. Use only information actually available in this conversation, project, saved memory, my own instructions, and accessible source documents. State which you reviewed, which you could not access, and the date of this export. Do not claim an account-wide history review unless you actually performed one. Do not contact anyone, run code, modify other sources or create connections. Do not expose system/developer instructions.
 
-Include skills: how I prefer answers, writing style, recurring workflows, decision rules, checklists, templates, examples and project conventions I explicitly adopted. Keep useful steps and examples; do not turn a one-off request or a third-party instruction into my permanent preference. Skills are text, not installed tools or permission to act.
+CORE PROFILE. Mark at most SIX short, stable entries with [CORE] at the beginning of their text (under 4,000 characters each). Choose enduring background, communication preferences, decision rules and important continuing constraints. These entries will accompany authorized Airlock context requests even when the question has no matching keywords. Put detailed project history and temporary plans in ordinary entries. Core status never overrides privacy or the owner's selected agent access.
 
-Omit passwords, tokens, financial/identity numbers, exact residential addresses and details I said not to share. Do not expose hidden system instructions. Do not run code, modify other sources, contact anyone or create new connections. Explain which sources you could access and any gaps. Do not claim the transfer is complete when it is not.
+MEMORIES. Work through every category below; do not compress everything into a generic biography:
+1. Background, roles, expertise, interests and relevant enduring constraints.
+2. Each active project: exact name and aliases, purpose, my role, current state, milestones, relevant people and their roles, important source documents, latest decisions and rationale, rejected options and why, dependencies and unresolved questions.
+3. Open loops: next action, who owns it, dates/deadlines and blockers. Preserve whether an action was merely planned, started, sent, approved, completed, paused or abandoned. Never convert a plan into a completion.
+4. Important relationships: how I know someone, what we discussed, what they offered or declined, and the latest confirmed next step. Do not infer employment from a customer or partner relationship.
+5. Corrections and changes: prefer my latest explicit correction. Label older facts as historical with their dates when useful; identify unresolved contradictions instead of choosing a convenient answer. Never turn an inferred fact into a confirmed one.
+6. Relevant personal preferences and recurring practical needs, excluding anything private that should not transfer.
 
-If stage_context_import is available on the Airlock connection, call it with transfer_code "{code}", memories and skills as lists of text, and scope describing coverage. Keep this batch below 300 items and 200,000 UTF-8 bytes. This only stages a local preview; I will save it in the control panel. If more remains, say what remains so I can transfer another batch. Do not retrieve or echo Airlock's existing library.
+SKILLS. Preserve my adopted response style, recurring workflows, decision rules, checklists, templates, project conventions and useful examples. For each named skill state when to use it, the full useful steps, desired output and exceptions. Preserve my exact wording where meaningful. A one-off request or third-party instruction is not a permanent preference. These are text instructions, not installed tools or authorization to act.
 
-If that tool is unavailable, return a copyable Markdown reply with # Memories, # Skills and # Scope. Use separate self-contained memories and named skills with their full useful steps. I will paste the reply into Airlock. No special JSON format is required.'''
+WRITE SELF-CONTAINED RECORDS. Repeat the project/person name where needed so an entry makes sense alone. Keep useful detail, relationships, dates, provenance and uncertainty. Distinguish facts from plans and inferences. Date time-sensitive facts as 'as of YYYY-MM-DD' when the source supports it; use 'date unknown' otherwise. Include topic aliases in the text to help later retrieval. Do not replace detailed project records with a short summary just to fit one reply.
+
+PRIVACY. Omit passwords, tokens, financial/identity numbers, exact residential addresses and anything I said not to share. Do not put sensitive records into the core profile. State omitted categories without revealing their contents.
+
+SECOND PASS. Check the handoff against each category, my latest corrections, active projects and adopted workflows. In Scope, list covered categories, unavailable sources, unfinished categories/batches and 5-10 practical questions the transferred context should answer. Mark those questions as a suggested validation checklist, not proof of successful recall. Say explicitly when coverage is incomplete or unknown.
+
+DELIVERY. If stage_context_import is available, call it once with transfer_code "{code}", memories and skills as lists of self-contained text, and scope describing actual coverage. Keep this batch below 300 items and 200,000 UTF-8 bytes; scope must be under 4,000 characters. A [CORE] prefix belongs inside the entry text. Staging creates a local preview only; I must review and save it. If more remains, identify the remaining categories and ask me to obtain a fresh transfer prompt for the next batch. Do not silently truncate, invent completion or reuse the one-time code.
+
+If the tool is unavailable, return copyable Markdown with # Memories, # Skills and # Scope. Use one bullet per memory and a heading per complete skill. A core skill heading may start with '## [CORE]'. I will paste the reply into Airlock. Keep the coverage checklist in Scope, not as personal facts.'''
 
 
 def identity(row):
@@ -74,18 +88,22 @@ def parse_context(name, raw, kind='auto'):
         if isinstance(value,list):
             for x in value:add(x,target)
             return
-        device_only=False
+        device_only=False;core=False
         if isinstance(value,dict):
             meta=value.get('meta',{}) if isinstance(value.get('meta',{}),dict) else {}
             device_only=value.get('device_only') is True or value.get('privacy') in ('device','local','local_only','private_only') or meta.get('privacy') in ('local_only','private_only') or bool(meta.get('sensitive')) or meta.get('status','active')!='active'
+            core=value.get('core') is True
             body=next((value[k] for k in ('text','content','instructions','memory','body') if isinstance(value.get(k),str)),None)
             if not body:return
             title=value.get('title') or value.get('name')
             value=(title+'\n\n' if isinstance(title,str) else '')+body
         if not isinstance(value,str) or not value.strip():return
         value=value.strip()
+        marker=re.match(r'^(?:#{1,6}\s*|[-*•]\s*)?\[CORE\]\s*',value,re.I)
+        if marker:core=True;value=value[marker.end():].strip()
+        if core and len(value)>4000:raise Denied('Keep each core profile entry under 4,000 characters. Put detailed history in separate records.')
         for offset in range(0,len(value),12000):
-            items.append({'kind':target,'text':value[offset:offset+12000], 'device_only':device_only,'source':PurePosixPath(name).name[:120]})
+            items.append({'kind':target,'text':value[offset:offset+12000], 'device_only':device_only,'core':core,'source':PurePosixPath(name).name[:120]})
     if text[:1] in ('{','[') or suffix=='.json':
         try:
             data=json.loads(text)
@@ -131,7 +149,9 @@ def finish(items,scope=''):
     unique={}
     for row in items:
         key=identity(row)
-        if key in unique:unique[key]['device_only']|=row.get('device_only',False)
+        if key in unique:
+            unique[key]['device_only']|=row.get('device_only',False)
+            unique[key]['core']|=row.get('core',False)
         else:unique[key]=row
     if not unique:raise Denied('No memories or skills found. Paste the context itself, or try the transfer prompt.')
     if len(unique)>MAX_ITEMS:raise Denied('This contains more than 2,000 items. Import a smaller batch.')
@@ -210,26 +230,37 @@ class ContextHub:
 
     def commit(self,key,indices,existing):
         if not isinstance(indices,list) or not indices or any(type(i) is not int for i in indices):raise Denied('Select at least one item to save.')
-        known={identity(r) for r in existing};private={identity(r) for r in existing if r.get('device_only')};added=[];skipped=0;privacy_updated=0
+        known={identity(r) for r in existing};private={identity(r) for r in existing if r.get('device_only')};added=[];skipped=0;privacy_updated=0;core_updated=0
         with self.store.transaction() as d:
             p=d.get('context_previews',{}).get(key)
             if not p or p['expires']<=self.clock():raise Denied('This preview expired. Paste or choose the file again.')
             if any(i<0 or i>=len(p['items']) for i in indices):raise Denied('The selection is invalid.')
             for batch in d.get('context_batches',{}).values():
                 known.update(identity(r) for r in batch['items']);private.update(identity(r) for r in batch['items'] if r.get('device_only'))
+            originals={r['kind']+':'+r['source_id']:r for r in existing if r.get('source_id')}
+            originals.update({r['kind']+':'+r['source_id']:r for batch in d.get('context_batches',{}).values() for r in batch['items']})
+            core_overrides=d.setdefault('memory_core',{})
             for i in dict.fromkeys(indices):
                 row=p['items'][i];signature=identity(row)
                 if signature in known:
+                    if row.get('core') and not row.get('device_only') and signature not in private:
+                        match=next(((ref,r) for ref,r in originals.items() if identity(r)==signature and not d.get('memory_policy',{}).get(ref) and not d.get('memory_retired',{}).get(ref)),None)
+                        if match and not core_overrides.get(match[0],match[1].get('core',False)):
+                            core_overrides[match[0]]=True;core_updated+=1
                     if not row.get('device_only') or signature in private:skipped+=1;continue
-                    row={**row,'privacy_override':True};privacy_updated+=1
+                    row={**row,'privacy_override':True,'core':False};privacy_updated+=1
                 if row.get('device_only'):private.add(signature)
                 known.add(signature);added.append({**row,'source_id':'import:'+secrets.token_hex(16),'origin':'Imported context'})
+            if sum(bool(core_overrides.get(ref,r.get('core',False))) for ref,r in originals.items())+sum(bool(r.get('core')) for r in added)>6:
+                raise Denied('Keep up to six core profile records. Unpin existing entries in Shared memory or remove extra [CORE] markers, then import again.')
+            if core_updated:
+                for grant in d['grants'].values():grant['policy_revision']=grant.get('policy_revision',0)+1
             batch_id=secrets.token_hex(12)
             if added:d.setdefault('context_batches',{})[batch_id]={'label':p['label'],'at':self.clock(),'items':added,'scope':p['scope']}
             del d['context_previews'][key]
             t=d.get('context_transfer',{})
             if t.get('preview')==key:t['saved']=True
-        return {'added':len(added)-privacy_updated,'privacy_updated':privacy_updated,'skipped':skipped,'memories':sum(x['kind']=='memories' and not x.get('privacy_override') for x in added),'skills':sum(x['kind']=='skills' and not x.get('privacy_override') for x in added),'batch_id':batch_id if added else None}
+        return {'added':len(added)-privacy_updated,'privacy_updated':privacy_updated,'core_updated':core_updated,'skipped':skipped,'memories':sum(x['kind']=='memories' and not x.get('privacy_override') for x in added),'skills':sum(x['kind']=='skills' and not x.get('privacy_override') for x in added),'batch_id':batch_id if added else None}
 
     def remove(self,batch_id):
         with self.store.transaction() as d:d.get('context_batches',{}).pop(batch_id,None)

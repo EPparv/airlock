@@ -10,8 +10,10 @@ from .core import Denied,canonical
 class SharedContext:
     def __init__(self,gateway,grant=None):self.g=gateway;self.grant=grant
     def status(self):
-        rows=self.g.sources.library()
-        fingerprint=hashlib.sha256(canonical(sorted((r['kind'],r['source_id'],r['text'],bool(r.get('device_only')),r.get('revision',0),r.get('package_digest','')) for r in rows))).hexdigest()
+        from .agent_memory import AgentMemory
+        memory=AgentMemory(self.g);snapshot=memory.snapshot()
+        rows=[r for ref,r in snapshot.items() if memory.allowed(ref,snapshot)]
+        fingerprint=hashlib.sha256(canonical([sorted((r['kind'],r['source_id'],r['text'],bool(r.get('core')),r.get('revision',0),r.get('package_digest','')) for r in rows),sorted(self.g.sources.protected())])).hexdigest()
         with self.g.store.transaction() as d:
             state=d.setdefault('context_clock',{'revision':0})
             if state.get('fingerprint')!=fingerprint:state.update(fingerprint=fingerprint,revision=state['revision']+1,changed_at=self.g.clock())

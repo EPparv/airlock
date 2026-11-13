@@ -9,7 +9,7 @@ import subprocess
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '0.6.0-alpha.2'
+VERSION = '0.6.0-alpha.3'
 ARCHIVE = 'Airlock_Source_Latest.zip'
 MAC_ARCHIVE = 'Airlock_Mac_Latest.zip'
 SOURCE_DIRS = ('privacy_layer', 'ui', 'builtin', 'integrations', 'tests', 'macos', 'scripts', 'web', '.github', 'docs', 'vendor/private_ai')
