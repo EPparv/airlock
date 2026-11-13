@@ -1,0 +1,9 @@
+.venv/
+.private/
+__pycache__/
+.pytest_cache/
+node_modules/
+*.token
+.tools/
+plugins/claude-code/.mcp.json
+
