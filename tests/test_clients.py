@@ -118,3 +118,92 @@ def test_airlock_does_not_take_over_unrelated_legacy_connection(tmp_path,monkeyp
     assert tomllib.loads(clients.codex_config(old,entry))['mcp_servers']=={clients.LEGACY_SERVER:{'command':'unrelated'},'airlock':entry}
     js=json.dumps({'mcpServers':{clients.LEGACY_SERVER:{'command':'unrelated'}}})
     assert json.loads(clients.json_config(js,entry))['mcpServers'][clients.LEGACY_SERVER]=={'command':'unrelated'}
+
+
+def test_migrate_older_install_preserves_unrelated_and_test_connections(bundle,tmp_path,monkeypatch):
+    old=tmp_path/'old-source';new=tmp_path/'installed-app';home=tmp_path/'profile'
+    monkeypatch.setattr(clients,'ROOT',old)
+    old_entry=clients.server_entry(old/'.private/clients/codex-old.token')
+    original=clients.codex_config('# Keep this\nmodel="fixture"\n[mcp_servers.other]\ncommand="other"\n',old_entry)
+    monkeypatch.setattr(clients,'ROOT',new)
+    test_entry=clients.server_entry(new/'.private/safe-test/clients/fixture.token')
+    original=clients.codex_config(original,test_entry,server_name='airlock-test')
+    target=home/'.codex/config.toml';target.parent.mkdir(parents=True);target.write_text(original)
+    result=clients.connect(bundle[0],agent='codex',approved=True,home=home,scope={'records':[],'disclose':False,'compute':False,'proposals':False})
+    before=tomllib.loads(original);after=tomllib.loads(target.read_text())
+    assert after['mcp_servers']['airlock']['command']==str(new/'.venv/bin/python')
+    before['mcp_servers'].pop('airlock');after['mcp_servers'].pop('airlock')
+    assert before==after and result['installed']
+    assert next((new/'.private/clients/backups').glob('*.txt')).read_text()==original
+    assert not (old/'.private/clients/codex-old.token').exists()
+
+
+@pytest.mark.parametrize('agent',['claude-desktop','claude-code','cursor'])
+def test_json_migrates_managed_entry_from_an_older_install(tmp_path,monkeypatch,agent):
+    old=tmp_path/'old';new=tmp_path/'new';monkeypatch.setattr(clients,'ROOT',old)
+    old_entry=clients.server_entry(old/'.private/old.token')
+    previous={'theme':'keep','mcpServers':{'airlock':old_entry,'other':{'command':'unrelated'}}}
+    monkeypatch.setattr(clients,'ROOT',new);entry=clients.server_entry(new/'.private/new.token')
+    value=json.loads(clients.json_config(json.dumps(previous),entry))
+    assert value=={**previous,'mcpServers':{**previous['mcpServers'],'airlock':entry}}
+
+
+@pytest.mark.parametrize('change',[
+    {'command':'/unrelated/python'},
+    {'args':['/unrelated/script.py','--token-file','/tmp/key.token']},
+    {'args':['/old/privacy_layer/stdio.py','--token-file','/elsewhere/private.token']},
+    {'args':['/old/privacy_layer/stdio.py','--token-file','/old/.private/../outside.token']},
+    {'env':{'CUSTOM':'keep'}},
+])
+def test_migration_rejects_ambiguous_or_unrelated_entries(change,tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',Path('/old'))
+    entry=clients.server_entry(Path('/old/.private/old.token'));entry.update(change)
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'new')
+    assert not clients.owned(entry)
+    with pytest.raises(Denied):clients.json_config(json.dumps({'mcpServers':{'airlock':entry}}),clients.server_entry(tmp_path/'new/.private/new.token'))
+
+
+def test_actionable_config_conflict_is_not_hidden_by_valueerror_handler(tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'root');home=tmp_path/'home'
+    target=home/'.codex/config.toml';target.parent.mkdir(parents=True)
+    original='[mcp_servers.airlock]\ncommand="unrelated-tool"\n';target.write_text(original)
+    with pytest.raises(Denied,match='unrelated Airlock connection'):
+        clients.install_config('codex',clients.server_entry(tmp_path/'root/.private/new.token'),home)
+    assert target.read_text()==original
+    target.write_text('invalid ! TOML')
+    with pytest.raises(Denied,match='invalid TOML'):
+        clients.install_config('codex',clients.server_entry(tmp_path/'root/.private/new.token'),home)
+
+
+def test_connection_wizard_shares_only_reviewed_selection_and_reports_real_request(bundle,tmp_path,monkeypatch):
+    g,s,*_=bundle;monkeypatch.setattr(clients,'ROOT',tmp_path)
+    with TestClient(owner_app(g,'owner'),base_url='http://127.0.0.1:8791') as c:
+        h={'Authorization':'Bearer owner'}
+        assert c.post('/api/client-context',json={}).status_code==401
+        preview=c.post('/api/client-context',json={},headers=h).json()
+        assert preview['withheld']==1 and 'PRIVATE_MEDICAL_CANARY' not in json.dumps(preview)
+        selected=next(r for r in preview['records'] if r['kind']=='skills')
+        r=c.post('/api/client-connect',json={'agent':'codex','approved':True,'install':False,'selection':{selected['ref']:selected['text_hash']},'proposals':True},headers=h)
+        assert r.status_code==200,r.text
+        entry=r.json();assert entry['shared_records']==1
+        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
+        args=entry['args'];token=Path(args[args.index('--token-file')+1]).read_text()
+        g.call(token,'privacy_status',{})
+        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
+        result=g.call(token,'get_private_context',{'query':''})
+        assert 'Be concise' in str(result) and 'Hyderabad' not in str(result)
+        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='verified'
+        g.revoke(entry['id'])
+        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='revoked'
+
+
+@pytest.mark.parametrize('selection,proposals',[
+    ({'skills:s1':'outdated'},False),({'memories:m2':'private'},False),
+    ({'missing':'no'},False),([],False),({},'yes'),
+])
+def test_selection_failures_create_no_connection(bundle,tmp_path,monkeypatch,selection,proposals):
+    monkeypatch.setattr(clients,'ROOT',tmp_path)
+    with TestClient(owner_app(bundle[0],'owner'),base_url='http://127.0.0.1:8791') as c:
+        r=c.post('/api/client-connect',json={'agent':'codex','approved':True,'install':False,'selection':selection,'proposals':proposals},headers={'Authorization':'Bearer owner'})
+        assert r.status_code==400,r.text
+    assert not bundle[0].list_grants()

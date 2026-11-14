@@ -41,10 +41,27 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
  await click('personalConsent');await click('personal');await until("location.pathname==='/personal'&&document.getElementById('serviceStatus')?.textContent==='Running on this Mac'");
  assert.equal(await evaluate('location.hash'),'');
+ await click('setupAi');await until("document.querySelectorAll('#connectRecords input[type=checkbox]').length===2");
+ assert.equal(await evaluate("document.getElementById('connectAgent').disabled"),true);
+ assert.equal(await evaluate("document.getElementById('otherAgents').open"),false);
+ assert.equal(await evaluate("document.getElementById('connectionOptions').open"),false);
+ assert.equal(await evaluate("document.getElementById('connectRecords').textContent.includes('FICTIONAL_PRIVATE_PERSONAL')"),false);
+ await evaluate("document.querySelector('#connectRecords input[type=checkbox]').click()");
+ assert.equal(await evaluate("document.getElementById('selectionCount').textContent"),'1 record selected');
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
+ assert.equal(await evaluate("document.getElementById('connectDialog').getBoundingClientRect().width<=390"),true);
+ if(process.argv[4]){const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],'connect-context-mobile.png'),Buffer.from(shot.data,'base64'));}
+ await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
+ await click('connectAgent');await until("document.getElementById('setupDialog').open && document.getElementById('setupMessage').textContent.includes('1 selected')");
+ assert.equal(await evaluate("document.getElementById('setupTitle').textContent"),'Open your AI.');
+ assert.equal(await evaluate("document.getElementById('connectionState').textContent.includes('Waiting for your AI')"),true);
+ const migrated=fs.readFileSync(path.join(tmp,'profile/.codex/config.toml'),'utf8');
+ assert.ok(migrated.includes('model = "fixture"') && !migrated.includes('/old-source/') && migrated.includes('mcp_servers.airlock-test'));
+ await evaluate("document.querySelector('#setupDialog [data-close]').click()");
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/`},session);
  await until("document.getElementById('isolation')?.textContent.includes('Personal workspace is also open')");
  await click('closePersonal');await until("document.getElementById('isolation').textContent.includes('Personal sources are closed')");
  await click('reset');await until("document.getElementById('progress').textContent==='0 of 7 checks passed'");
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,guided_checks:7,desktop:1280,mobile:390,consent:true,separate_config:true,personal_open_close:true,reset:true,browser_errors:errors}));
+ console.log(JSON.stringify({passed:true,guided_checks:7,desktop:1280,mobile:390,consent:true,separate_config:true,personal_open_close:true,context_selection:true,old_install_migrated:true,no_false_connection_success:true,reset:true,browser_errors:errors}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>{if(chrome)chrome.kill();if(service)service.kill();for(const p of pending.values())clearTimeout(p.timer);});

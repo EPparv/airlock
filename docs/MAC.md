@@ -21,8 +21,8 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 ## Personal workspace, only after opt-in
 
 1. Explicitly open personal sources using the checkbox and button. Existing approved connections can resume with their previous permissions. Importing real information is optional; fictional text also works here.
-2. Import and review context. Connect an AI. Confirm its new connection initially has **no record access**.
-3. In Shared memory, choose exact records and enable excerpt sharing. Save access, then ask the AI to request context. Gmail and arbitrary actions remain unavailable to scoped connections.
+2. Import and review context. Click **Connect my AI**. Confirm no records are preselected and private records are absent. Choose the AI and records together, then connect. Older managed Airlock settings should migrate without changing other connections.
+3. Restart your AI, enable Airlock if prompted and paste the supplied question. The screen must say **Waiting for your AI** until a real context request arrives. Check the response. Further permissions can be edited in Shared memory. Gmail and arbitrary actions remain unavailable to scoped connections.
 4. Correct, retire, pin and restrict records. Ask the AI to refresh and compare responses. Review proposed memories before accepting them, then add approved notes to each relevant connection's selection. Airlock cannot silently capture hidden chats.
 5. Return to Fictional test & access controls and close personal access. New personal calls must fail. Quit and reopen; personal access stays closed until explicitly reopened. Saved personal data and permissions are preserved.
 6. Revoke a personal connection and verify fresh requests fail even while the personal workspace is open.

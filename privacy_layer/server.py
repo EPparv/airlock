@@ -22,7 +22,7 @@ import uvicorn
 
 from .core import Gateway, EncryptedStore, Denied, suggest_redaction, QUERY_LIMIT
 from .setup import configure_claude,configure_dot,dot_status,saved_dot_available,restore_dot
-from .clients import catalog,connect
+from .clients import catalog,connect,connection_context,selected_scope,connection_status
 from .context import ContextHub,MAX_BYTES
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -231,10 +231,18 @@ def owner_app(gateway, owner_token, port=8791):
                 if set(body)-{'gmail_skipped','dismissed'} or any(not isinstance(v,bool) for v in body.values()):raise Denied('Invalid setup preference.')
                 with gateway.store.transaction() as data:
                     data.setdefault('onboarding',{}).update(body);result=data['onboarding']
+            elif action=='client-context':
+                if body:raise Denied('Invalid context request.')
+                result=await asyncio.to_thread(connection_context,gateway)
+            elif action=='client-status':
+                if set(body)!={'id'} or not isinstance(body['id'],str):raise Denied('Choose a connection.')
+                result=connection_status(gateway,body['id'])
             elif action=='client-connect':
-                if not isinstance(body,dict) or set(body)-{'agent','approved','lifetime','max_calls','install'}:raise Denied('Invalid connection settings.')
-                result=await asyncio.to_thread(connect,gateway,home=getattr(gateway.sources,'context_home',None),scope={'records':[],'disclose':False,'compute':False,'proposals':False},**body)
-                result['message']='Connection saved with no record access. Open Shared memory, select the exact records this AI may receive, and save its access before testing.'
+                if set(body)-{'agent','approved','lifetime','max_calls','install','selection','proposals'}:raise Denied('Invalid connection settings.')
+                scope=await asyncio.to_thread(selected_scope,gateway,body.pop('selection',{}),body.pop('proposals',False))
+                result=await asyncio.to_thread(connect,gateway,home=getattr(gateway.sources,'context_home',None),scope=scope,**body)
+                result['shared_records']=len(scope['records'])
+                result['message']=(f'{len(scope["records"])} selected records are ready. Quit and reopen your AI app, enable Airlock if prompted, then paste the question below.' if scope['records'] else 'Settings saved with no records shared. Add context before asking your AI to use it.')
             elif action=='gmail-check':
                 await asyncio.to_thread(gateway.sources.google,'/profile')
                 result={'connected':True,'message':'Gmail is connected with read-only access.'}

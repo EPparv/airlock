@@ -97,17 +97,22 @@ def check(app, cached_runtime=None):
             preview=api('context-preview',{'name':'fictional.md','content':base64.b64encode(raw).decode()},personal=True)
             saved=api('context-commit',{'id':preview['id'],'indices':list(range(len(preview['items'])))},personal=True)
             assert saved['added']==2
+            # An existing developer copy must migrate without touching other entries.
+            old=base/'old-source';old_entry={'command':str(old/'.venv/bin/python'),'args':[str(old/'privacy_layer/stdio.py'),'--token-file',str(old/'.private/clients/old.token')]}
+            with config.open('a') as f:f.write('\n# Airlock managed connection — begin\n[mcp_servers.airlock]\ncommand = '+json.dumps(old_entry['command'])+'\nargs = '+json.dumps(old_entry['args'])+'\n# Airlock managed connection — end\n')
             entry=api('client-connect',{'agent':'codex','approved':True,'lifetime':604800,'max_calls':100},personal=True)
             assert entry['installed']
             servers=tomllib.loads(config.read_text())['mcp_servers']
             assert servers['airlock-test']==test_entry and 'airlock' in servers
             assert 'pal_' not in config.read_text() and personal_owner not in config.read_text()
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            state=api('memory-state',personal=True)
-            api('memory-scope',{'identifier':entry['id'],'records':[r['ref'] for r in state['records']], 'disclose':True,'compute':False,'proposals':True},personal=True)
+            selectable=api('client-context',personal=True)['records']
+            entry=api('client-connect',{'agent':'codex','approved':True,'lifetime':604800,'max_calls':100,'selection':{r['ref']:r['text_hash'] for r in selectable}},personal=True)
+            assert api('client-status',{'id':entry['id']},personal=True)['status']=='waiting'
             result=call(entry,'get_private_context',{'query':'Cypress launch update style'})
             assert 'November 20' in str(result) and 'two concise bullets' in str(result)
             assert '415 555 0123' not in str(result)
+            assert api('client-status',{'id':entry['id']},personal=True)['status']=='verified'
             assert raw not in (base/'app/.private/connections.enc').read_bytes()
             api('close-personal');call(entry,'get_private_context',{'query':'Cypress'},denied=True)
             first=launch['pid'];stop();launch=start();assert launch['pid']!=first
@@ -118,7 +123,7 @@ def check(app, cached_runtime=None):
             assert 'November 20' in str(call(entry,'get_private_context',{'query':'Cypress launch'}))
             api('revoke',{'id':entry['id']},personal=True)
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'finder_ui_tested':False}))
+            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'finder_ui_tested':False}))
         finally:
             if not launch:
                 path=base/'app/.private/launch.json'

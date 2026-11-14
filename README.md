@@ -6,7 +6,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 4**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.6.0 alpha 5**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
@@ -14,7 +14,7 @@ This is **0.6.0 alpha 4**, now packaged as a Mac app with the shared memory feat
 2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
 3. Run the seven checks in the **fictional test workspace**. Your existing personal library, Gmail and source files stay closed.
 4. Optionally add the separate **airlock-test** connection to Codex, Claude or Cursor. Restart that AI and use the prompts shown. Only allowed fictional records are available through this connection; the AI's other tools and memories are outside Airlock's control.
-5. When ready, explicitly open the personal workspace. Import context, connect an AI, select its records in **Shared memory** and save access. New connections start with no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
+5. When ready, explicitly open the personal workspace. Add context, click **Connect my AI**, and select the exact records in the same screen. Nothing is preselected. Connect, restart your AI and paste the first question. Airlock distinguishes saved settings from a real context request. Connections created without a selection still have no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
 
 Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
 
@@ -22,6 +22,12 @@ Quitting and reopening starts with personal access closed. Test results persist 
 The alpha is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. Updates currently require replacing the app; your encrypted Application Support data is preserved.
 
 Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
+
+## Connection setup
+
+The main setup shows common desktop AIs and the records to share together. Manual integrations, connection duration and request limits are under optional controls. Private, retired and stale records are excluded; changing a selected record requires a fresh review before connecting. Memory proposals remain opt-in and owner-reviewed.
+
+Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. A saved settings file is not proof that an AI connected: the UI waits for a real context request.
 
 ## Continuity across sessions
 

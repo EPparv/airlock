@@ -12,7 +12,7 @@ import secrets
 import time
 import tomllib
 
-from .core import Denied
+from .core import Denied, digest, suggest_redaction
 from .setup import ROOT, private_write, restore_dot
 
 SERVER = 'airlock'
@@ -49,7 +49,22 @@ def server_entry(token_path):
     return {'command':str(ROOT/'.venv/bin/python'), 'args':args}
 
 def owned(entry):
-    return isinstance(entry,dict) and entry.get('command')==str(ROOT/'.venv/bin/python') and isinstance(entry.get('args'),list) and entry['args'][:2]==[str(ROOT/'privacy_layer/stdio.py'),'--token-file']
+    """Recognize our exact bridge layout, including an earlier installation.
+
+    Never execute or read the old credential. Only this entry is replaced; the
+    full settings file is backed up before writing. Custom entries stay intact.
+    """
+    if not isinstance(entry,dict) or set(entry)!={'command','args'}:return False
+    command,args=entry.get('command'),entry.get('args')
+    if not isinstance(command,str) or not isinstance(args,list) or len(args) not in (3,5) or any(not isinstance(a,str) for a in args):return False
+    exe=Path(command)
+    if not exe.is_absolute() or exe.parts[-3:]!=('.venv','bin','python') or '..' in exe.parts:return False
+    root=exe.parents[2]
+    if args[:2]!=[str(root/'privacy_layer/stdio.py'),'--token-file']:return False
+    try:token=Path(args[2]).relative_to(root/'.private')
+    except ValueError:return False
+    if '..' in token.parts or token.suffix!='.token':return False
+    return len(args)==3 or args[3:]==['--session-file',str(root/'.private/launch.json')]
 
 def json_config(original, entry, server_name=SERVER):
     if server_name not in (SERVER,'airlock-test'):raise Denied('Invalid connection name.')
@@ -106,7 +121,10 @@ def install_config(agent,entry,home=None,server_name=SERVER):
         os.chmod(lock_path,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
         existed=path.exists();original=path.read_text() if existed else ''
         try:candidate=codex_config(original,entry,server_name) if agent=='codex' else json_config(original,entry,server_name)
-        except (ValueError,TypeError):raise Denied('The existing settings could not be read. They were left unchanged.') from None
+        except Denied:raise
+        except (ValueError,TypeError):
+            format_name='TOML' if agent=='codex' else 'JSON'
+            raise Denied(f'{CLIENTS[agent]["name"]} settings contain invalid {format_name}. Airlock left the file unchanged. Repair that settings file before reconnecting.') from None
         if (path.read_text() if path.exists() else '')!=original:raise Denied('Settings changed during setup. Try again.')
         if existed:private_write(ROOT/f'.private/clients/backups/{agent}-{time.time_ns()}.txt',original)
         tmp=path.with_name(path.name+'.private-ai-'+secrets.token_hex(6))
@@ -115,6 +133,38 @@ def install_config(agent,entry,home=None,server_name=SERVER):
             os.replace(tmp,path)
         finally:tmp.unlink(missing_ok=True)
     return str(path)
+
+
+def connection_context(gateway):
+    """Owner-only preview for the connection flow; no credentials or task data."""
+    from .agent_memory import AgentMemory
+    memory=AgentMemory(gateway);rows=memory.snapshot();protected=gateway.sources.protected()
+    available=[dict(ref=ref,kind=r['kind'],text=suggest_redaction(r['text'],protected),
+                    title=r.get('title') or r.get('origin') or r['kind'],
+                    text_hash=digest(r['text']),parents=r['parents'])
+               for ref,r in rows.items() if memory.allowed(ref,rows)]
+    return {'records':available,'withheld':len(rows)-len(available)}
+
+
+def selected_scope(gateway, selection, proposals=False):
+    from .agent_memory import AgentMemory
+    if not isinstance(selection,dict) or len(selection)>100 or any(not isinstance(k,str) or not isinstance(v,str) for k,v in selection.items()) or type(proposals) is not bool:
+        raise Denied('Choose up to 100 records to share.')
+    memory=AgentMemory(gateway);rows=memory.snapshot()
+    for ref,expected_hash in selection.items():
+        if not memory.allowed(ref,rows):raise Denied('A selected record is no longer shareable. Refresh the selection.')
+        if digest(rows[ref]['text'])!=expected_hash:raise Denied('A selected record changed. Refresh and review it before connecting.')
+        if any(parent not in selection for parent in rows[ref]['parents']):raise Denied('Select the linked source records too, or leave out the derived note.')
+    return {'records':list(selection),'disclose':bool(selection),'compute':False,'proposals':proposals}
+
+
+def connection_status(gateway, identifier):
+    grant=next((g for g in gateway.list_grants() if g['id']==identifier),None)
+    if not grant:raise Denied('This connection no longer exists. Connect your AI again.')
+    status=('revoked' if grant['revoked'] else 'expired' if grant['expires']<=gateway.clock() or grant['remaining']<=0
+            else 'verified' if grant.get('last_context_read') else 'waiting')
+    return {'status':status,'last_context_read':grant.get('last_context_read'),
+            'shared_records':len((grant.get('scope') or {}).get('records',[]))}
 
 def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, install=True, home=None, scope=None):
     if agent not in CLIENTS or approved is not True or not isinstance(install,bool):raise Denied('Choose an agent and approve its connection.')

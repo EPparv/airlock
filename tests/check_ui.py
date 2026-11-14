@@ -37,17 +37,17 @@ with tempfile.TemporaryDirectory(prefix='privacy-layer-ui-') as temp:
             assert 'Hyderabad' in page.locator('.receipt pre').first.inner_text()
             page.locator('[data-page="agents"]').click()
             page.locator('#page-agents [data-add]').click();page.locator('[data-agent="codex"]').click()
-            page.locator('#connectAgent').click();page.locator('#setupDialog').wait_for(state='visible')
-            assert page.locator('#setupTitle').inner_text()=='Settings saved'
+            page.locator('#connectRecords input[type=checkbox]').first.wait_for();page.locator('#connectRecords input[type=checkbox]').first.check();page.locator('#connectAgent').click();page.locator('#setupDialog').wait_for(state='visible')
+            assert page.locator('#setupTitle').inner_text()=='Open your AI.'
             config=page.locator('#exportConfig').inner_text();assert 'pal_' not in config
             saved=Path(temp)/'home/.codex/config.toml';assert saved.exists()
-            page.locator('#setupDialog .primary').click()
+            page.locator('#setupDialog [data-close]').first.click()
             row=page.locator('#connections .connection').filter(has_text='Codex');row.get_by_role('button',name='Disconnect',exact=True).click()
             expect(page.locator('#connections .connection').filter(has_text='Codex')).to_have_count(0)
-            page.locator('#page-agents [data-add]').click();page.locator('[data-agent="mcp"]').click();page.locator('#connectAgent').click();page.locator('#setupDialog').wait_for(state='visible')
-            assert page.locator('#setupTitle').inner_text()=='Connection created'
+            page.locator('#page-agents [data-add]').click();page.locator('#otherAgents summary').click();page.locator('[data-agent="mcp"]').click();page.locator('#connectRecords input[type=checkbox]').first.wait_for();page.locator('#connectRecords input[type=checkbox]').first.check();page.locator('#connectAgent').click();page.locator('#setupDialog').wait_for(state='visible')
+            assert page.locator('#setupTitle').inner_text()=='Open your AI.'
             assert page.locator('#configDetails').get_attribute('open') is not None
-            page.locator('#setupDialog .primary').click()
+            page.locator('#setupDialog [data-close]').first.click()
             page.screenshot(path=str(OUT/'agents-desktop.png'),full_page=True)
             page.locator('[data-page="privacy"]').click();page.locator('#exactReview summary').click();page.locator('#search').fill('interview');page.locator('#sources button').first.wait_for();page.locator('#sources button').first.click()
             page.locator('#purpose').fill('Fictional interview review');page.locator('#consent').check();page.locator('#create').click();page.locator('#created').wait_for(state='visible')

@@ -8,7 +8,7 @@ let dashboard=null, selectedAgent='codex', exportConfig='', library=null, librar
 let mode='library', found=[], chosen=new Map(), created=null, phrasesDirty=false;
 const names={dot:'Dot',codex:'Codex','claude-desktop':'Claude Desktop','claude-code':'Claude Code',cursor:'Cursor',mcp:'Other agent',test:'Local verification',ironclaw:'IronClaw'};
 const marks={dot:'D',codex:'⌘','claude-desktop':'✳','claude-code':'C',cursor:'↗',mcp:'+'};
-const prompt='Request fresh Airlock context from my selected memories and skills. Suggest what I should focus on this week. Cite what you found and distinguish facts from suggestions. If access is not enabled, tell me to select records and save access in Airlock Shared memory.';
+const prompt='Use Airlock to read the context I selected. Tell me what you learned, use my saved writing preferences if available, and cite the returned records. If no context is available, say so instead of guessing.';
 function notice(text,error=false){$('notice').textContent=text;$('notice').hidden=!text;$('notice').classList.toggle('error',error);}
 async function api(action,body={}){
  const response=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+owner},body:JSON.stringify(body),cache:'no-store'});
@@ -16,13 +16,13 @@ async function api(action,body={}){
  if(!response.ok)throw Error(result.error||'Connection unavailable. Open the Airlock app to reconnect.');
  return result;
 }
-function guard(fn){return async function(event){if(event?.type==='submit')event.preventDefault();const button=event?.currentTarget?.tagName==='BUTTON'?event.currentTarget:null;const disabled=button?.disabled;try{notice('');if(button)button.disabled=true;await fn(event);}catch(error){notice(error.message,true);const dialog=document.querySelector('dialog[open]');if(dialog){let msg=dialog.querySelector('.dialog-error');if(!msg){msg=el('p',undefined,'dialog-error');msg.setAttribute('role','alert');dialog.append(msg);}msg.textContent=error.message;}}finally{if(button?.isConnected)button.disabled=disabled||(button.id==='create'&&(!$('consent').checked||!chosen.size));}};}
+function guard(fn){return async function(event){if(event?.type==='submit')event.preventDefault();const button=event?.currentTarget?.tagName==='BUTTON'?event.currentTarget:null;const disabled=button?.disabled;try{notice('');if(button)button.disabled=true;await fn(event);}catch(error){notice(error.message,true);const dialog=document.querySelector('dialog[open]');if(dialog){let msg=dialog.querySelector('.dialog-error');if(!msg){msg=el('p',undefined,'dialog-error');msg.setAttribute('role','alert');dialog.append(msg);}msg.textContent=error.message;msg.hidden=false;}}finally{if(button?.isConnected)button.disabled=disabled||(button.id==='create'&&(!$('consent').checked||!chosen.size));}};}
 function switchPage(page){for(const node of document.querySelectorAll('.page'))node.hidden=node.id!=='page-'+page;for(const node of document.querySelectorAll('[data-page]')){node.classList.toggle('active',node.dataset.page===page);if(node.dataset.page===page)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');}$('pageTitle').textContent=page==='agents'?'Connections':page==='workbench'?'Skills & actions':page[0].toUpperCase()+page.slice(1);window.scrollTo({top:0,behavior:'instant'});if(page==='workbench'&&typeof loadWorkbench==='function')guard(loadWorkbench)();}
 for(const button of document.querySelectorAll('[data-page],[data-go]'))button.onclick=()=>switchPage(button.dataset.page||button.dataset.go);
 for(const button of document.querySelectorAll('[data-close]'))button.onclick=()=>$(button.dataset.close).close();
 for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
 const active=c=>!c.revoked&&c.expires*1000>Date.now()&&c.remaining>0;
-function stateLabel(c){return c.revoked?'Disconnected':c.expires*1000<=Date.now()?'Expired':c.remaining<=0?'Limit reached':'Access on';}
+function stateLabel(c){return c.revoked?'Disconnected':c.expires*1000<=Date.now()?'Expired':c.remaining<=0?'Limit reached':c.scope&&!c.scope.disclose?'No context shared':c.last_context_read?'AI connected':'Waiting for AI';}
 function avatar(agent){return el('span',marks[agent]||'+','agent-avatar');}
 function connectionRow(c,compact=false){
  const row=el('div',undefined,'connection');row.append(avatar(c.agent));const info=el('div',undefined,'agent-info'),title=el('div',undefined,'agent-title');title.append(el('strong',names[c.agent]||'Agent'),el('span',stateLabel(c),'pill'+(active(c)?'':' off')));info.append(title);
@@ -42,15 +42,51 @@ function renderConnections(){
  for(const [id,list,compact] of [['overviewConnections',live.slice(0,3),true],['connections',live,false],['pastConnections',past.slice().reverse(),false]]){const host=$(id);host.replaceChildren();if(!list.length&&id!=='pastConnections'){const empty=el('div',undefined,'empty');empty.append(el('p','No agents have active access. Add one to start using your context.'));const b=el('button','Add an agent','primary');b.onclick=()=>openConnect();empty.append(b);host.append(empty);}else for(const c of list)host.append(connectionRow(c,compact));}
  $('pastCount').textContent=`(${past.length})`;
 }
+let connectionRecords=[],connectionSelection=new Set(),connectionLoading=false,connectionLoad=0,connectionTimer=null,connectionDeadline=0,connectedId=null;
 function renderClients(){
- $('clientCards').replaceChildren();$('agentChoices').replaceChildren();
- for(const client of [...dashboard.clients].sort((a,b)=>Number(b.can_install)-Number(a.can_install))){
-  const card=el('button',undefined,'client-card');card.append(avatar(client.id),el('strong',client.name),el('p',client.hint),el('span','Connect →','text-button'));card.onclick=()=>openConnect(client.id);$('clientCards').append(card);
-  const choice=el('button',undefined,'agent-choice');choice.type='button';choice.dataset.agent=client.id;choice.append(avatar(client.id),el('span',client.id==='dot'&&!dashboard.saved_dot?'Dot · separate setup':client.name));choice.disabled=client.id==='dot'&&!dashboard.saved_dot;choice.onclick=()=>chooseAgent(client.id);$('agentChoices').append(choice);
+ $('clientCards').replaceChildren();$('agentChoices').replaceChildren();$('agentAdvancedChoices').replaceChildren();
+ for(const client of dashboard.clients){
+  const primary=['codex','claude-desktop'].includes(client.id)||(client.id==='cursor'&&client.app_present);
+  if(primary){const card=el('button',undefined,'client-card');card.append(avatar(client.id),el('strong',client.name),el('p',client.hint),el('span','Choose context →','text-button'));card.onclick=()=>openConnect(client.id);$('clientCards').append(card);}
+  const choice=el('button',undefined,'agent-choice');choice.type='button';choice.dataset.agent=client.id;choice.append(avatar(client.id),el('span',client.id==='dot'&&!dashboard.saved_dot?'Dot · separate setup':client.name));choice.disabled=client.id==='dot'&&!dashboard.saved_dot;choice.onclick=()=>chooseAgent(client.id);$(primary?'agentChoices':'agentAdvancedChoices').append(choice);
  }
 }
-function chooseAgent(agent){selectedAgent=agent;$('connectAgent').disabled=agent==='dot'&&!dashboard.saved_dot;for(const c of document.querySelectorAll('.agent-choice')){c.classList.toggle('selected',c.dataset.agent===agent);c.setAttribute('aria-pressed',String(c.dataset.agent===agent));}const client=dashboard.clients.find(c=>c.id===agent);$('connectAgent').textContent=agent==='mcp'?'Create local connection':'Connect '+client.name;$('connectHint').textContent=agent==='dot'?(dashboard.saved_dot?'Uses your saved private Dot tunnel. No key entry.':'A private Dot tunnel must be configured in Advanced setup first.'):agent==='mcp'?'Creates a copyable setup for agents that support local MCP. It works on this Mac.':(client.app_present?'Detected on this Mac. ':'App not detected here. ')+'Saves the connection in this agent’s settings. Existing connections are preserved.';}
-function openConnect(agent='codex'){if(!dashboard)return;chooseAgent(agent);$('connectDialog').querySelector('.dialog-error')?.remove();$('connectDialog').showModal();}
+function updateConnectionButton(){
+ const n=connectionSelection.size,client=dashboard?.clients.find(c=>c.id===selectedAgent);
+ $('connectAgent').disabled=connectionLoading||!n||(selectedAgent==='dot'&&!dashboard.saved_dot);
+ $('connectAgent').textContent=connectionLoading?'Loading context…':!n?'Select context to continue':`Connect ${client?.name||'AI'} · ${n} selected`;
+ $('selectionCount').textContent=n?`${n} record${n===1?'':'s'} selected`:'Nothing selected';
+}
+function chooseAgent(agent){selectedAgent=agent;for(const c of document.querySelectorAll('.agent-choice')){c.classList.toggle('selected',c.dataset.agent===agent);c.setAttribute('aria-pressed',String(c.dataset.agent===agent));}const client=dashboard.clients.find(c=>c.id===agent);$('connectHint').textContent=agent==='dot'?'Uses your previously configured private tunnel.':agent==='mcp'?'You will copy the setup into your AI app.':agent==='ironclaw'?'Requires a separately configured HTTPS endpoint. An extension template will be provided.':`${client.name} needs a restart after setup. An older managed Airlock connection will be updated; other settings stay intact.`;updateConnectionButton();}
+function visibleConnectionRecords(){const q=$('connectSearch').value.trim().toLocaleLowerCase();return connectionRecords.filter(r=>!q||(r.text+' '+r.title).toLocaleLowerCase().includes(q)).slice(0,50);}
+function setConnectionSelection(ref,checked){
+ const records=new Map(connectionRecords.map(r=>[r.ref,r]));const next=new Set(connectionSelection);
+ function include(key,seen=new Set()){if(seen.has(key))throw Error('This record has a circular source link. Review it in Shared memory.');const r=records.get(key);if(!r)throw Error('A linked source is unavailable. Refresh the records.');seen.add(key);for(const p of r.parents)include(p,new Set(seen));next.add(key);}
+ if(checked)include(ref);else{next.delete(ref);let changed=true;while(changed){changed=false;for(const r of connectionRecords)if(next.has(r.ref)&&r.parents.some(p=>!next.has(p))){next.delete(r.ref);changed=true;}}}
+ if(next.size>100)throw Error('Choose up to 100 records. Narrow the search or clear some selections.');connectionSelection=next;
+}
+function renderConnectionRecords(){
+ const host=$('connectRecords');host.replaceChildren();const visible=visibleConnectionRecords();
+ if(!visible.length)host.append(el('p',connectionLoading?'Loading…':connectionRecords.length?'No matches. Try another search.':'No shareable context yet. Add a memory or preference below, or use the fictional test from the home screen.','empty'));
+ for(const r of visible){const row=el('div',undefined,'connect-record');const label=el('label',undefined,'check');const box=el('input');box.type='checkbox';box.checked=connectionSelection.has(r.ref);box.dataset.ref=r.ref;box.setAttribute('aria-label','Share '+r.text.slice(0,90));box.onchange=()=>{try{setConnectionSelection(r.ref,box.checked);renderConnectionRecords();}catch(e){notice(e.message,true);box.checked=connectionSelection.has(r.ref);}};const content=el('span');content.append(el('small',r.kind==='skills'?'Preference / skill':'Memory'),el('span',r.text,'connect-record-text'));if(r.parents.length)content.append(el('small',`Includes ${r.parents.length} linked source record(s).`));label.append(box,content);const detail=el('details');detail.append(el('summary','Read full record'),el('pre',r.text));row.append(label,detail);host.append(row);}
+ $('selectShown').disabled=connectionLoading||!visible.length;updateConnectionButton();
+}
+async function loadConnectionContext(){const request=++connectionLoad;connectionLoading=true;connectionRecords=[];connectionSelection.clear();renderConnectionRecords();try{const r=await api('client-context');if(request!==connectionLoad)return;connectionRecords=r.records;$('contextSelectionHint').textContent=`Showing up to 50 matches. ${r.withheld?r.withheld+' private, retired or unavailable records are excluded.':'Only records you select can be shared.'}`;}finally{if(request===connectionLoad){connectionLoading=false;renderConnectionRecords();}}}
+function openConnect(agent='codex'){if(!dashboard)return;$('connectDialog').querySelector('.dialog-error')?.remove();$('connectSearch').value='';$('allowProposals').checked=false;$('otherAgents').open=false;$('connectionOptions').open=false;chooseAgent(agent);$('connectDialog').showModal();guard(loadConnectionContext)();}
+$('connectSearch').oninput=renderConnectionRecords;
+$('selectShown').onclick=guard(async()=>{const previous=new Set(connectionSelection);try{for(const r of visibleConnectionRecords())setConnectionSelection(r.ref,true);}catch(e){connectionSelection=previous;throw e;}finally{renderConnectionRecords();}});
+$('clearSelection').onclick=()=>{connectionSelection.clear();renderConnectionRecords();};
+$('reloadConnectionContext').onclick=guard(loadConnectionContext);
+$('connectionAddContext').onclick=()=>{$('connectDialog').close();$('addContext').click();};
+async function checkConnection(){
+ if(!connectedId)return;const id=connectedId;const r=await api('client-status',{id});if(id!==connectedId)return;
+ const verified=r.status==='verified';$('connectionMark').textContent=verified?'✓':'↗';$('setupTitle').textContent=verified?'Your AI reached Airlock.':r.status==='waiting'?'Open your AI.':'Connection needs attention.';
+ $('connectionState').textContent=verified?`Context requested at ${new Date(r.last_context_read*1000).toLocaleTimeString()}. Check the answer in your AI app.`:r.status==='waiting'?'Waiting for your AI. Quit and reopen it, enable Airlock, then paste the question below.':'This connection expired or was revoked. Create a new connection.';
+ if(verified||r.status!=='waiting'){clearTimeout(connectionTimer);connectionDeadline=0;await refresh();}
+}
+async function pollConnection(){clearTimeout(connectionTimer);if(!$('setupDialog').open||Date.now()>connectionDeadline)return;try{await checkConnection();}catch(e){$('connectionState').textContent=e.message;return;}if(connectionDeadline)connectionTimer=setTimeout(pollConnection,2000);}
+$('checkConnection').onclick=guard(checkConnection);
+$('setupDialog').addEventListener('close',()=>clearTimeout(connectionTimer));
 for(const b of document.querySelectorAll('[data-add]'))b.onclick=()=>openConnect();
 async function refresh(){
  library=null;
@@ -63,9 +99,11 @@ async function refresh(){
 $('refresh').onclick=guard(refresh);
 $('connectAgent').onclick=guard(async()=>{
  const lifetime=Number($('newLifetime').value),max_calls=Number($('newCalls').value);
- if(!Number.isInteger(max_calls)||max_calls<1||max_calls>1000)throw Error('Choose between 1 and 1,000 tool calls.');
- const result=await api('client-connect',{agent:selectedAgent,approved:true,lifetime,max_calls,install:selectedAgent!=='mcp'});
- exportConfig=result.config||'';$('setupTitle').textContent=result.agent==='dot'?'Dot is connected':result.installed?'Settings saved':'Connection created';$('setupMessage').textContent=result.message;$('exportConfig').textContent=exportConfig;$('configDetails').hidden=!exportConfig;$('configDetails').open=!result.installed;$('connectDialog').close();$('setupDialog').showModal();await refresh();
+ if(!Number.isInteger(max_calls)||max_calls<1||max_calls>1000)throw Error('Choose between 1 and 1,000 requests.');
+ if(!connectionSelection.size)throw Error('Select the context this AI may read.');
+ const selection=Object.fromEntries(connectionRecords.filter(r=>connectionSelection.has(r.ref)).map(r=>[r.ref,r.text_hash]));
+ const result=await api('client-connect',{agent:selectedAgent,approved:true,lifetime,max_calls,install:!['mcp','ironclaw'].includes(selectedAgent),selection,proposals:$('allowProposals').checked});
+ connectedId=result.id;exportConfig=result.config||'';$('setupTitle').textContent='Open your AI.';$('connectionMark').textContent='↗';$('setupMessage').textContent=result.message;$('connectionQuestion').textContent=prompt;$('connectionState').textContent='Waiting for your AI to request context.';$('exportConfig').textContent=exportConfig;$('configDetails').hidden=!exportConfig;$('configDetails').open=!result.installed;$('connectDialog').close();$('setupDialog').showModal();await refresh();connectionDeadline=Date.now()+120000;pollConnection();
 });
 $('copyConfig').onclick=guard(async()=>{await navigator.clipboard.writeText(exportConfig);notice('Setup copied. Paste it into your agent’s MCP settings.');$('copyConfig').textContent='Copied';setTimeout(()=>$('copyConfig').textContent='Copy setup',1500);});
 $('copyPrompt').onclick=guard(async()=>{await navigator.clipboard.writeText(prompt);$('copyPrompt').textContent='Copied';setTimeout(()=>$('copyPrompt').textContent='Copy prompt',1500);});

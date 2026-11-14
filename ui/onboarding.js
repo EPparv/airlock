@@ -20,7 +20,10 @@ function renderOnboarding(){
   const card=$('setupStep'+(i+1));card.classList.toggle('complete',complete[i]);card.classList.toggle('current',i===complete.indexOf(false));
   card.querySelector('.step-number').textContent=complete[i]?'✓':String(i+1);
  }
- $('setupProgress').textContent=`${complete.filter(Boolean).length} of 3 steps ready`;
+ $('setupStep2').hidden=!mailAvailable;
+ const shown=mailAvailable?complete:[hasContext,!!connections.length];
+ $('setupStep3').querySelector('.step-number').textContent=connections.length?'✓':mailAvailable?'3':'2';
+ $('setupProgress').textContent=`${shown.filter(Boolean).length} of ${shown.length} steps ready`;
  $('setupContextStatus').textContent=hasContext?`${dashboard.counts.memories} memories · ${dashboard.counts.skills} skills added`:'Facts about you, and how you like things done.';
  $('setupImport').textContent=hasContext?'Add more context':'Import memories & skills';
  $('setupGmailStatus').textContent=hasMail?'Your Gmail is connected. Read-only access.':skipped?'Skipped for now. You can connect anytime.':'Sign in with Google. No email is sent or changed.';
@@ -31,14 +34,14 @@ function renderOnboarding(){
  $('reconnect').disabled=!mailAvailable;
  $('checkGmail').disabled=!hasMail;
  if(!mailAvailable)$('setupGmailStatus').textContent='Gmail sign-in is not configured in this public build. Continue to connect your AI; imported context works normally.';
- $('setupAgentStatus').textContent=connections.length?connections.some(x=>x.used)?'Your AI has requested context. Check its answer and the disclosure receipt.':'Settings saved. Select records and save access in Shared memory, then restart your AI.':'Choose the AI app you already use on this Mac.';
+ $('setupAgentStatus').textContent=connections.length?connections.some(x=>x.used)?'Your AI has requested context. Check its answer and the disclosure receipt.':'Context selected. Restart your AI and paste the question below.':'Choose the AI app you already use on this Mac.';
  $('setupTry').hidden=!connections.length;
  $('finishSetup').hidden=!complete.every(Boolean);
  $('setupReadyTitle').textContent=connections.some(x=>x.used)?'Your AI has requested context.':'One last step: try it in your AI.';
- $('setupReadyText').textContent=connections.some(x=>x.used)?'You can see the filtered context in Privacy → What was shared.':'Choose records and save access in Shared memory first. Restart your AI app, enable Airlock, then paste this prompt into a new chat.';
+ $('setupReadyText').textContent=connections.some(x=>x.used)?'You can see the filtered context in Privacy → What was shared.':'Restart your AI app, enable Airlock if prompted, then paste this question into a new chat.';
  $('setupQuestion').textContent=prompt;
  $('setupAi').textContent=connections.length?'Connect another AI':'Connect my AI';
- $('contextDoneNote').textContent=connections.length?'Ask your connected AI to use Airlock.':'Next, connect your AI from the setup screen. Gmail is optional.';
+ $('contextDoneNote').textContent=connections.length?'Ask your connected AI to use Airlock.':'Next, choose what to share and connect your AI.';
 }
 async function pollGmail(){
  clearTimeout(gmailTimer);
