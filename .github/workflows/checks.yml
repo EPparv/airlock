@@ -19,7 +19,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements.lock
-      - run: python -m pip install --only-binary :all: -r requirements.lock
+      - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
       - name: Check updated browser scripts
         run: |
           node --check ui/safe-test.js
@@ -46,7 +46,7 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements.lock
-      - run: python -m pip install --only-binary :all: -r requirements.lock
+      - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
       - name: Verify macOS action sandbox
         id: sandbox
         continue-on-error: true
@@ -130,7 +130,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install --only-binary :all: -r requirements.lock
+      - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
       - uses: actions/download-artifact@v4
         with:
           name: airlock-website
