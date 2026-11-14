@@ -325,7 +325,7 @@ class SafeTest:
             near_auth = secrets.compare_digest(headers.get(b'authorization',b''),('Bearer '+owner_token).encode())
             near_path = path in ('/near-demo','/near-setup','/near-setup.js','/near.js','/near.css')
             near_api = path.startswith('/api/near-') and near_auth
-            near_asset = near_app and path in ('/ui.js','/ui.css','/context.js','/workbench.js','/onboarding.js')
+            near_asset = near_app and path in ('/ui.js','/ui.css','/memory.css','/context.js','/workbench.js','/onboarding.js')
             near_dashboard = near_app and near_auth and path == '/api/dashboard'
             if near_path or near_api or near_asset or near_dashboard:
                 if near_app is None:

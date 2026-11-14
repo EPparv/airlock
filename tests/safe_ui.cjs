@@ -27,6 +27,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  if(process.argv[4]){fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],'safe-test-desktop.png'),Buffer.from(shot.data,'base64'));}
  await click('nearDemo');await until("document.getElementById('nearSetupLink') && document.getElementById('nearNotes')?.textContent.includes('Maya')");
  await click('nearSetupLink');await until("document.getElementById('status')?.textContent.includes('Add a NEAR key')");
+ assert.equal(await evaluate("[...document.styleSheets].some(s=>s.href?.endsWith('/memory.css') && s.cssRules.length>0)"),true);
  assert.equal(await evaluate("document.getElementById('apiKey').type"),'password');
  assert.equal(await evaluate("document.getElementById('probe').disabled"),true);
  await evaluate("document.getElementById('apiKey').value='sk-fictional-browser-test';document.getElementById('keyForm').requestSubmit()");

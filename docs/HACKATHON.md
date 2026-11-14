@@ -17,13 +17,14 @@ git diff --stat origin/pre-hackathon..origin/hackathon-submission
 git diff origin/pre-hackathon..origin/hackathon-submission -- privacy_layer/near_provider.py privacy_layer/agent_memory.py privacy_layer/memory_demo.py
 ```
 
-[Review the published feature diff](https://github.com/EPparv/airlock/compare/pre-hackathon...hackathon-submission).
+[Review the original prepared feature diff](https://github.com/EPparv/airlock/compare/pre-hackathon...hackathon-submission). That fixed snapshot predates the in-app NEAR setup. [Compare the baseline with the current release source](https://github.com/EPparv/airlock/compare/pre-hackathon...main) to include the setup, verifier installation and fictional live test. Numbered releases record the exact published revision.
 
 For a ZIP download without Git history, [FEATURE_DIFF.patch](FEATURE_DIFF.patch) contains the exact implementation diff for the Python, UI, tests, optional NEAR requirements and launchers. It excludes submission prose and packaging changes. This makes the feature scope inspectable before GitHub publication too.
 
 | Addition | Implementation |
 | --- | --- |
 | Confidential NEAR route with fail-closed verification and encrypted application fields | `privacy_layer/near_provider.py`, `requirements-near.txt` |
+| In-app key setup, reviewed deployment evidence and fictional live test | `privacy_layer/near_setup.py`, `ui/near-setup.*`, `tests/test_near_setup.py` |
 | Selected records and permissions for each agent; inherited source restrictions | `privacy_layer/agent_memory.py` |
 | Proposed memories with owner acceptance and cross-agent reuse | `privacy_layer/agent_memory.py`, `privacy_layer/shared.py` |
 | Separate approval of exact inference input and result disclosure | `privacy_layer/agent_memory.py`, `privacy_layer/server.py` |

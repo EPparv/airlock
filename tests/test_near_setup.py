@@ -127,6 +127,7 @@ def test_safe_start_near_demo_does_not_open_personal_sources(tmp_path):
     assert client.get('/near-demo').status_code==200
     assert client.get('/near-setup').status_code==200
     response=client.post('/api/near-state',headers=headers,json={})
+    assert client.get('/memory.css').status_code==200
     assert response.status_code==200 and response.json()['loaded']
     assert controller.personal is None
     assert client.post('/api/near-setup-status',headers=headers,json={}).status_code==200

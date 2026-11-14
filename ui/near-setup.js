@@ -17,5 +17,5 @@ $('discover').onclick=()=>run('discover',{},'Verifying hardware and deployment e
 $('consent').onchange=buttons;
 $('approve').onclick=()=>{if($('consent').checked&&state?.deployment_review)run('approve',{review_id:state.deployment_review.id,approved:true});};
 $('probe').onclick=()=>run('probe',{approved:true},'Running the approved fictional test and checking its response signature…');
-for(const id of ['home','memory','demo'])$(id).onclick=e=>{e.preventDefault();location.assign($(id).getAttribute('href').split('#')[0]+'#'+token);};
+for(const id of ['home','demo'])$(id).onclick=e=>{e.preventDefault();location.assign($(id).getAttribute('href').split('#')[0]+'#'+token);};
 run('status');
