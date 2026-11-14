@@ -2,6 +2,10 @@
 
 ## Requirements
 
+For the packaged Mac app, download the current build from https://epparv.github.io/airlock/. Open it, then choose **Open NEAR setup and demo → Set up NEAR private AI**. The setup panel installs the verifier, accepts a key for this session only, presents verified deployment configurations for review, and runs an explicitly approved fictional live test. See [NEAR_LIVE.md](NEAR_LIVE.md) for the recording walkthrough. This route does not open personal sources.
+
+The following commands are the alternative source-code workflow.
+
 Python 3.12 or later and internet access for the initial dependency installation. The memory walkthrough runs locally on loopback. It starts with four fictional records and creates its own `.agent-demo` workspace; it does not open the owner's existing vault or Gmail.
 
 ```sh
@@ -35,6 +39,8 @@ Use Ollama on the same computer with `qwen3:4b-instruct` installed, or set `AIRL
 
 ## Optional NEAR inference
 
+The Mac app's setup panel is the easiest route. Developers may instead install and configure the same SDK from the command line:
+
 ```sh
 .venv/bin/python -m pip install -r requirements-near.txt
 ```
@@ -47,6 +53,6 @@ Live NEAR generation remains unverified in this release. Missing SDK, credential
 
 The [public GitHub Actions run](https://github.com/EPparv/airlock/actions/runs/43510072813) passed 347 tests, with 4 skipped and 2 deselected, on Linux. Website links, archive scope and checksum checks also passed. These are standalone application checks; live provider calls and native client sessions were not tested by that run.
 
-Run the four modules listed in the root README for the standalone judge checks. For the broader suite, use the command in SHARED_MEMORY.md. Three modules and two cases require the omitted companion application. Three Mac sandbox cases cannot run inside the current restricted session. The SDK encryption module skips when the optional SDK is absent. These limitations are distinct from successful tests, and CI logs are the authority for a particular GitHub run.
+The current workflow runs the full suite with bundled adapters and the pinned NEAR SDK, a real-browser walkthrough, and package checks on Apple Silicon and Intel Macs. Releases also require signed-update and recovery checks on both platforms. Use `python -m pytest -q tests` for the suite; macOS sandbox and socket tests require an environment that permits them. The SDK encryption module skips if its optional SDK is absent. CI logs linked from each revision are the authority for that build; automated provider tests do not prove a live NEAR request.
 
-The hosted preview is a download page, not a cloud-hosted vault. Native IronClaw sessions, a rebuilt Mac installer, live NEAR inference and automatic local-app updates are not claimed.
+The hosted page distributes a local Mac app, not a cloud-hosted vault. The current app includes an in-app updater and the NEAR setup flow. Native IronClaw sessions and live NEAR inference remain unverified. A live pass requires the owner's actual service test; it is never inferred from CI success.
