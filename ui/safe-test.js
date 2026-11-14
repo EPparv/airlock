@@ -48,3 +48,4 @@ $('personal').onclick=action(async()=>{const r=await api('open-personal',{approv
 $('closePersonal').onclick=action(async()=>{await api('close-personal');sessionStorage.removeItem('private-ai-owner');$('personalConsent').checked=false;notice('Personal access is closed. Already shared facts cannot be recalled.');});
 async function poll(){if(!document.hidden&&!busy){try{await refresh();}catch(e){notice(e.message,true);}}setTimeout(poll,4000);}
 poll();
+$('nearDemo').onclick=event=>{event.preventDefault();location.assign('/near-demo#'+owner);};

@@ -55,7 +55,7 @@ def accept_deployment(deployment, allowed):
 
 
 @asynccontextmanager
-async def sdk_client(key):
+async def sdk_client(key, *, settings=None, observer=None):
     # Import errors, unsupported native verifier builds and SDK drift fail closed.
     from importlib.metadata import version
     if version('nearai-inference-sdk') != SDK_VERSION:
@@ -64,9 +64,9 @@ async def sdk_client(key):
         InferenceClient, AttestationPolicy, ModelAttestationPolicy,
         GatewayVerificationOptions, ModelVerificationOptions, AttestationVerifiers,
     )
-    gateway_pins = pins('NEARAI_GATEWAY_COMPOSE_SHA256')
-    model_pins = pins('NEARAI_MODEL_COMPOSE_SHA256')
-    if not gateway_pins or not model_pins:
+    gateway_pins = settings['gateway_pins'] if settings is not None else pins('NEARAI_GATEWAY_COMPOSE_SHA256')
+    model_pins = settings['model_pins'] if settings is not None else pins('NEARAI_MODEL_COMPOSE_SHA256')
+    if observer is None and (not gateway_pins or not model_pins):
         raise Denied('Review and configure NEAR deployment hashes before live inference.')
     # Suppress third-party HTTP diagnostics; exceptions are never logged or echoed.
     for name in ('httpx', 'httpcore', 'nearai_inference_sdk'):
@@ -78,12 +78,12 @@ async def sdk_client(key):
         gateway_verification=GatewayVerificationOptions(
             include_spki_fingerprint=True,
             policy=AttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
-            verifiers=AttestationVerifiers(deployment=lambda d: accept_deployment(d, gateway_pins)),
+            verifiers=AttestationVerifiers(deployment=lambda d: observer('gateway', d) if observer else accept_deployment(d, gateway_pins)),
         ),
         model_verification=ModelVerificationOptions(
             policy=ModelAttestationPolicy(accepted_tcb_statuses=('UpToDate',), gpu_evidence='required'),
         ),
-        deployment_policy=lambda model, d: accept_deployment(d, model_pins),
+        deployment_policy=lambda model, d: observer('model', d) if observer else accept_deployment(d, model_pins),
     ) as client:
         yield client
 

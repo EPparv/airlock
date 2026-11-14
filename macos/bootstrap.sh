@@ -50,6 +50,7 @@ progress 'Opening Airlock…'
 /usr/bin/ditto "$payload/builtin" "$app/builtin"
 /usr/bin/ditto "$payload/vendor" "$app/vendor"
 /bin/cp "$payload/release.json" "$app/release.json"
+/bin/cp "$payload/requirements-near.txt" "$app/requirements-near.txt"
 if [ ! -e "$app/.venv" ]; then /bin/ln -s "$runtime/venv" "$app/.venv"; fi
 cd "$app"
 exec "$runtime/venv/bin/python" -m privacy_layer.launcher --no-open

@@ -6,7 +6,7 @@ nearPage.innerHTML=`
 <div class="near-heading"><div><p class="eyebrow">AIRLOCK · FOUNDER DEMO</p><h1>A follow-up, without oversharing.</h1><p class="lede">Give your assistant the meeting notes. Keep the financials private.</p></div><button id="nearReset" class="text-button">Reset demo</button></div>
 <div class="near-modebar"><label for="nearMode">Generate with</label><select id="nearMode"><option value="local">Local AI · Ollama on this Mac</option><option value="live">NEAR · confidential inference</option><option value="rehearsal">Scripted backup · no AI call</option></select><span id="nearModeBadge" class="pill"></span><button id="nearCheck" class="text-button">Check connection</button></div>
 <p id="nearReadiness" class="near-status" role="status"></p>
-<details id="nearSetup" class="near-details" hidden><summary>What NEAR needs before sending</summary><ul id="nearMissing"></ul><p>Create an API key at <a href="https://cloud.near.ai" target="_blank" rel="noreferrer">NEAR AI Cloud</a>, then follow NEAR_DEMO.md for the verifier and reviewed deployment hashes. Keep your key out of chats and recordings.</p></details>
+<p><a id="nearSetupLink" href="/near-setup">Set up NEAR private AI</a></p><details id="nearSetup" class="near-details" hidden><summary>What NEAR needs before sending</summary><ul id="nearMissing"></ul><p>Create an API key at <a href="https://cloud.near.ai" target="_blank" rel="noreferrer">NEAR AI Cloud</a>, then use Set up NEAR private AI above to install the verifier and review the deployment. Keep your key out of chats and recordings.</p></details>
 <p class="near-fiction">All notes are fictional. This workspace has no access to your real memories or email.</p>
 <div class="near-workspace">
 <section class="near-panel near-context"><div class="near-step"><span>1</span><h2>Choose what AI can use</h2></div><div id="nearNotes" class="near-notes"></div><button id="nearGrant" class="primary">Allow meeting notes for 10 minutes</button><div class="near-access"><p id="nearAccess"></p><button id="nearRevoke" class="text-button">Revoke access</button></div></section>
@@ -19,7 +19,7 @@ nearPage.innerHTML=`
 <section class="near-boundary"><div><h3>Test the boundary</h3><p>Ask the assistant to include the financial note.</p></div><button id="nearRestricted">Try restricted request</button></section>
 </div></div>`;
 document.querySelector('main').insertBefore(nearPage,document.querySelector('main footer'));
-const nearNav=el('button','↗  Founder demo','nav');nearNav.dataset.page='near';document.querySelector('nav').append(nearNav);
+const nearNav=el('button','↗  NEAR / Founder demo','nav');nearNav.dataset.page='near';document.querySelector('nav').append(nearNav);
 const nearLabels={local:'LOCAL AI · OLLAMA',live:'NEAR · VERIFIED MODEL SIGNATURE',rehearsal:'SCRIPTED BACKUP · NO AI CALL'};
 function nearActive(){return !!nearState?.grant&&!nearState.grant.revoked&&nearState.grant.expires*1000>Date.now();}
 function nearButtons(){
@@ -107,6 +107,7 @@ $('nearSend').onclick=nearAction(async()=>{
 });
 $('nearCopy').onclick=nearAction(async()=>{await navigator.clipboard.writeText($('nearDraft').textContent);$('nearCopy').textContent='Copied';});
 function openStandaloneDemo(){
+ if(location.pathname==='/near-demo'&&!dashboard?.demo_only){window.nearReady=nearNav.onclick({});return;}
  if(!dashboard?.demo_only)return;
  if(!nearDemoOpened){nearDemoOpened=true;document.body.classList.add('near-demo-only');$('nearMode').value='local';for(const nav of document.querySelectorAll('nav [data-page]'))nav.hidden=nav.dataset.page!=='near';document.title='Airlock · Founder demo';}
  window.nearReady=nearNav.onclick({});
@@ -114,3 +115,5 @@ function openStandaloneDemo(){
 // Expiry only updates controls; server permissions remain authoritative at send.
 setInterval(()=>{if(!nearPage.hidden&&nearState){nearButtons();if(nearReview&&nearReview.expires*1000<=Date.now()){clearNearReview();nearMessage('Approval expired. Review the request again.','blocked');}}},1000);
 window.addEventListener('private-ai-refresh',openStandaloneDemo);if(dashboard)openStandaloneDemo();
+
+$("nearSetupLink").onclick=event=>{event.preventDefault();location.assign("/near-setup#"+owner);};

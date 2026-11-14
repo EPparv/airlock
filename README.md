@@ -6,7 +6,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 6**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.6.0 alpha 8**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
@@ -52,6 +52,18 @@ python3 scripts/check_site.py
 ```
 
 Expected: tests pass; the site check reports a valid archive and checksum. Provider tests use explicit mocks. These commands do not call live NEAR or prove hardware attestation. Open the local UI with `bash Run-Airlock.command` and follow the action/result table in [JUDGE.md](docs/JUDGE.md).
+
+## Use NEAR from the app
+
+On the first screen, choose **Open NEAR setup and demo**, then **Set up NEAR private AI**. This workspace uses fictional data and does not open personal sources.
+
+1. Get a key from [NEAR AI Cloud](https://cloud.near.ai) or [NEAR Builders hackathon credits](https://nearbuilders.org/dashboard). Paste it into Airlock's local masked field. Keys remain in process memory only and are cleared on restart.
+2. Click **Install NEAR verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
+3. Click **Verify deployment without sending a prompt**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
+4. Click **Approve and run this test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
+5. Open **Founder demo**, choose **NEAR**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
+
+The setup route is local and owner-authenticated. It has no Incognito or unverified fallback. The cloud API key is never stored beside the fictional vault key. Live operation still needs the user's key, available credits, supported verification hardware evidence, reviewed deployment configurations and network access. See [the NEAR demo and submission guide](docs/NEAR_LIVE.md).
 
 ## How NEAR fits
 

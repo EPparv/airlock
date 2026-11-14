@@ -76,7 +76,7 @@ class DemoBoundary:
         path=scope.get('path','')
         if path=='/':return await RedirectResponse('/memory')(scope,receive,send)
         allowed=('memory-state','memory-scope','memory-policy','memory-decide','memory-send','memory-release','memory-forget','memory-local-check','memory-demo-reset','memory-demo-call','revoke')
-        if path.startswith('/api/') and path[5:] not in allowed:
+        if path.startswith('/api/') and path[5:] not in allowed and not path.startswith('/api/near-setup-'):
             return await JSONResponse({'error':'Only fictional shared-memory operations are enabled here.'},status_code=403)(scope,receive,send)
         return await self.app(scope,receive,send)
 

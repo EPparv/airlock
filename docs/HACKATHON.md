@@ -17,20 +17,21 @@ git diff --stat origin/pre-hackathon..origin/hackathon-submission
 git diff origin/pre-hackathon..origin/hackathon-submission -- privacy_layer/near_provider.py privacy_layer/agent_memory.py privacy_layer/memory_demo.py
 ```
 
-[Review the published feature diff](https://github.com/EPparv/airlock/compare/pre-hackathon...hackathon-submission).
+[Review the original prepared feature diff](https://github.com/EPparv/airlock/compare/pre-hackathon...hackathon-submission). That fixed snapshot predates the in-app NEAR setup. [Compare the baseline with the current release source](https://github.com/EPparv/airlock/compare/pre-hackathon...main) to include the setup, verifier installation and fictional live test. Numbered releases record the exact published revision.
 
 For a ZIP download without Git history, [FEATURE_DIFF.patch](FEATURE_DIFF.patch) contains the exact implementation diff for the Python, UI, tests, optional NEAR requirements and launchers. It excludes submission prose and packaging changes. This makes the feature scope inspectable before GitHub publication too.
 
 | Addition | Implementation |
 | --- | --- |
 | Confidential NEAR route with fail-closed verification and encrypted application fields | `privacy_layer/near_provider.py`, `requirements-near.txt` |
+| In-app key setup, reviewed deployment evidence and fictional live test | `privacy_layer/near_setup.py`, `ui/near-setup.*`, `tests/test_near_setup.py` |
 | Selected records and permissions for each agent; inherited source restrictions | `privacy_layer/agent_memory.py` |
 | Proposed memories with owner acceptance and cross-agent reuse | `privacy_layer/agent_memory.py`, `privacy_layer/shared.py` |
 | Separate approval of exact inference input and result disclosure | `privacy_layer/agent_memory.py`, `privacy_layer/server.py` |
 | Fictional, isolated, reproducible walkthrough | `privacy_layer/memory_demo.py`, `ui/memory.*` |
 | Boundary, permission and encryption checks | `tests/test_agent_memory.py`, `tests/test_near_demo.py`, `tests/test_near_encryption.py` |
 
-This is a source preview, not the complete companion Mac application. The baseline and current source omit historical personal reports and credentials. Packaging and judge documentation are new supporting work, not a new claim about underlying AI inference.
+The current release includes a Mac package and a source preview. The baseline and current source omit historical personal reports and credentials. Packaging and judge documentation are new supporting work, not a new claim about underlying AI inference.
 
 ## Readiness
 
@@ -40,7 +41,7 @@ This is a source preview, not the complete companion Mac application. The baseli
 | Public repository and inspectable feature diff | [EPparv/airlock](https://github.com/EPparv/airlock), with baseline and submission review branches |
 | License | MIT, root LICENSE |
 | Dependency and pre-existing work disclosure | Root README and this document |
-| Live NEAR inference proof | Not verified; do not claim it |
+| Live NEAR inference proof | In-app setup and synthetic verification test implemented; actual live inference still requires a key and successful run |
 | Public X demo post | Still required; for this local-only prototype, attach a video |
 | Payout wallet, contact details and team size | Team must supply/confirm; do not commit the application payload |
 | Final application | Not sent; review the exact payload before submission |

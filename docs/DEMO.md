@@ -21,3 +21,7 @@ I built Airlock's shared-memory upgrade at NEAR HACKATHON: scoped agent access, 
 @NEARProtocol #NEARHackathon
 
 Attach the real demo video, then add the public repository and preview links in a reply or thread. If the post is too long for the account, shorten it while retaining the event name, tag and hashtag. The team publishes the post and supplies its public URL for the application. No post has been sent by this draft.
+
+## NEAR recording gate
+
+Before recording a live NEAR claim, open the app's NEAR setup, add a key locally, install the verifier, inspect and approve the verified deployment, and pass the fictional connection test. Record its checks without showing the key. Then record the Founder demo in NEAR mode. If the live test is blocked, say so and do not label a mock or local result as NEAR.

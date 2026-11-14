@@ -315,9 +315,24 @@ class SafeTest:
             except Exception:return JSONResponse({'error':'The test could not finish. Review the workspace status, or reopen Airlock to close personal access.'},status_code=400)
 
         test_app=Starlette(routes=[Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+        near_app = None
         async def dispatch(scope, receive, send):
+            nonlocal near_app
             if scope['type']!='http':return await test_app(scope,receive,send)
             path=scope.get('path','');headers=dict(scope.get('headers',[]))
+            # Explicit, separate fictional NEAR workspace. It never constructs
+            # LocalSources or opens personal memory. Agent test tools stay unchanged.
+            near_auth = secrets.compare_digest(headers.get(b'authorization',b''),('Bearer '+owner_token).encode())
+            near_path = path in ('/near-demo','/near-setup','/near-setup.js','/near.js','/near.css')
+            near_api = path.startswith('/api/near-') and near_auth
+            near_asset = near_app and path in ('/ui.js','/ui.css','/memory.css','/context.js','/workbench.js','/onboarding.js')
+            near_dashboard = near_app and near_auth and path == '/api/dashboard'
+            if near_path or near_api or near_asset or near_dashboard:
+                if near_app is None:
+                    from .demo_server import make_app
+                    near_app = make_app(self.state/'near-fictional',owner_token,port)
+                if path == '/near-demo': scope={**scope,'path':'/','raw_path':b'/'}
+                return await near_app(scope,receive,send)
             personal_app, token = self.personal_app, self.personal_token
             personal_auth = token and secrets.compare_digest(headers.get(b'authorization',b''),('Bearer '+token).encode())
             personal_asset = path not in ('/','/safe-test.js','/safe-test.css','/icon.svg') and not path.startswith('/api/')
