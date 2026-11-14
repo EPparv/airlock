@@ -2,11 +2,11 @@
 
 One line: For people using AI agents, Airlock runs approved private tasks through NEAR while keeping their wider context under local control.
 
-The Build City hackpack recommends one concrete sensitive-data problem, a Confidential TEE model and a reproducible demo. Airlock uses `z-ai/glm-5.3-flash` at `https://cloud-api.near.ai/v1`, with thinking disabled for the short demo. This is not the Incognito tier. The SDK still verifies both gateway and model evidence and checks the model response signature.
+The Build City hackpack recommends one concrete sensitive-data problem, a Confidential TEE model and a reproducible demo. Airlock uses `z-ai/glm-5.3-flash` at `https://cloud-api.near.ai/v1`, with thinking disabled for the short task. This is not the Incognito tier. The SDK still verifies both gateway and model evidence and checks the model response signature.
 
 ## Where to find it
 
-First screen → Open NEAR setup and demo → Set up NEAR private AI. In the personal workspace, use NEAR / Founder demo or the setup link under Shared memory's private tasks.
+First screen → Open NEAR private AI → Set up NEAR private AI. In the personal workspace, use NEAR / Private AI walkthrough or the setup link under Shared memory's private tasks.
 
 ## Before recording
 

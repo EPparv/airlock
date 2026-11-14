@@ -59,20 +59,24 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
  await click('personalConsent');await click('personal');await until("location.pathname==='/personal'&&document.getElementById('serviceStatus')?.textContent==='Running on this Mac'");
  assert.equal(await evaluate('location.hash'),'');
- await click('setupAi');await until("document.querySelectorAll('#connectRecords input[type=checkbox]').length===2");
+ await click('setupAi');await until("document.querySelectorAll('#connectRecords input[type=checkbox]').length===3");
  assert.equal(await evaluate("document.getElementById('connectAgent').disabled"),true);
  assert.equal(await evaluate("document.getElementById('otherAgents').open"),false);
  assert.equal(await evaluate("document.getElementById('connectionOptions').open"),false);
  assert.equal(await evaluate("document.getElementById('connectRecords').textContent.includes('FICTIONAL_PRIVATE_PERSONAL')"),false);
  await evaluate("document.querySelector('#connectRecords input[type=checkbox]').click()");
- assert.equal(await evaluate("document.getElementById('selectionCount').textContent"),'1 record selected');
+ assert.equal(await evaluate("document.getElementById('connectRecords').textContent.includes('Sensitive · private task only')"),true);
+ await evaluate("[...document.querySelectorAll('.connect-record')].find(r=>r.textContent.includes('Medical appointment')).querySelector('input').click()");
+ assert.equal(await evaluate("document.getElementById('selectionCount').textContent"),'2 records selected');
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
  assert.equal(await evaluate("document.getElementById('connectDialog').getBoundingClientRect().width<=390"),true);
  if(process.argv[4]){const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],'connect-context-mobile.png'),Buffer.from(shot.data,'base64'));}
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
- await click('connectAgent');await until("document.getElementById('setupDialog').open && document.getElementById('setupMessage').textContent.includes('1 selected')");
+ await click('connectAgent');await until("document.getElementById('setupDialog').open && document.getElementById('setupMessage').textContent.includes('2 selected')");
  assert.equal(await evaluate("document.getElementById('setupTitle').textContent"),'Open your AI.');
  assert.equal(await evaluate("document.getElementById('connectionState').textContent.includes('Waiting for your AI')"),true);
+ const permissions=await evaluate("api('memory-state').then(s=>s.connections.find(g=>g.agent==='codex'&&!g.revoked).scope)");
+ assert.equal(permissions.compute,true);assert.equal(permissions.disclose,true);assert.equal(permissions.records.length,2);assert.equal(permissions.disclose_records.length,1);
  const migrated=fs.readFileSync(path.join(tmp,'profile/.codex/config.toml'),'utf8');
  assert.ok(migrated.includes('model = "fixture"') && !migrated.includes('/old-source/') && migrated.includes('mcp_servers.airlock-test'));
  await evaluate("document.querySelector('#setupDialog [data-close]').click()");

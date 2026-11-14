@@ -37,7 +37,7 @@ class FounderDemo:
         self.local_provider = local_provider
 
     def _data(self, data):
-        if 'founder_demo' not in data: raise Denied('Load the fictional demo first.')
+        if 'founder_demo' not in data: raise Denied('Load the fictional walkthrough first.')
         return data['founder_demo']
 
     def reset(self):
@@ -106,7 +106,7 @@ class FounderDemo:
 
     def review(self, ids, mode='live'):
         if mode not in ('live', 'local', 'rehearsal') or not isinstance(ids, list) or not ids or len(ids)>4 or any(not isinstance(x,str) for x in ids):
-            raise Denied('Choose a valid demo request.')
+            raise Denied('Choose a valid walkthrough request.')
         with self.store.transaction() as data:
             d = self._data(data)
             # Clear stale approval even when a new request is blocked.

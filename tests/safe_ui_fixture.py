@@ -19,7 +19,7 @@ from privacy_layer.core import EncryptedStore
 from privacy_layer.context import ContextHub
 store=EncryptedStore(state/'state/connections.enc',b'b'*32)
 hub=ContextHub(store,home=profile)
-p=hub.preview('fictional.json',json.dumps({'memories':['Cypress launch is November 20.',{'text':'FICTIONAL_PRIVATE_PERSONAL','device_only':True}],'skills':['Use two concise bullets.']}).encode())
+p=hub.preview('fictional.json',json.dumps({'memories':['Cypress launch is November 20.','Medical appointment is Thursday.',{'text':'FICTIONAL_PRIVATE_PERSONAL','device_only':True}],'skills':['Use two concise bullets.']}).encode())
 hub.commit(p['id'],list(range(len(p['items']))),[])
 c=SafeTest(root,state/'state',profile_home=profile)
 uvicorn.run(c.app('fictional-browser-owner',int(sys.argv[2])),host='127.0.0.1',port=int(sys.argv[2]),log_level='error')

@@ -42,7 +42,7 @@ class MemoryDemoSources:
 
 
 def reset_demo(g):
-    if not getattr(g.sources,'memory_demo',False): raise Denied('Reset is only available in the isolated fictional demo.')
+    if not getattr(g.sources,'memory_demo',False): raise Denied('Reset is only available in the isolated fictional walkthrough.')
     with g.store.transaction() as d:
         if any(t['status'] in ('verifying','dispatched') for t in d.get('private_tasks',{}).values()):
             raise Denied('Wait for the current generation to finish before resetting.')
@@ -75,7 +75,7 @@ class DemoBoundary:
     async def __call__(self,scope,receive,send):
         path=scope.get('path','')
         if path=='/':return await RedirectResponse('/memory')(scope,receive,send)
-        allowed=('memory-state','memory-scope','memory-policy','memory-decide','memory-send','memory-release','memory-forget','memory-local-check','memory-demo-reset','memory-demo-call','revoke')
+        allowed=('memory-state','memory-scope','memory-policy','memory-decide','memory-send','memory-release','memory-screen','memory-forget','memory-local-check','memory-demo-reset','memory-demo-call','revoke')
         if path.startswith('/api/') and path[5:] not in allowed and not path.startswith('/api/near-setup-'):
             return await JSONResponse({'error':'Only fictional shared-memory operations are enabled here.'},status_code=403)(scope,receive,send)
         return await self.app(scope,receive,send)

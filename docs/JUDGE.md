@@ -2,7 +2,7 @@
 
 ## Requirements
 
-For the packaged Mac app, download the current build from https://epparv.github.io/airlock/. Open it, then choose **Open NEAR setup and demo → Set up NEAR private AI**. The setup panel installs the verifier, accepts a key for this session only, presents verified deployment configurations for review, and runs an explicitly approved fictional live test. See [NEAR_LIVE.md](NEAR_LIVE.md) for the recording walkthrough. This route does not open personal sources.
+For the packaged Mac app, download the current build from https://epparv.github.io/airlock/. Open it, then choose **Open NEAR private AI → Set up NEAR private AI**. The setup panel installs the verifier, accepts a key for this session only, presents verified deployment configurations for review, and runs an explicitly approved fictional live test. See [NEAR_LIVE.md](NEAR_LIVE.md) for the recording walkthrough. This route does not open personal sources.
 
 The following commands are the alternative source-code workflow.
 
@@ -29,7 +29,7 @@ The launcher opens the authenticated browser panel after both listeners are read
 | In Coding agent access, select the new memory and its meeting/style parents, then Save access | Coding agent can reuse the new memory on its next read. |
 | Try the financial record | Local denial; no provider request. |
 | Revoke Writing agent and try again | Local denial, even with its old credential. |
-| Reset demo | Fictional state resets and earlier demo tokens are revoked. |
+| Reset walkthrough | Fictional state resets and earlier demo tokens are revoked. |
 
 The Coding/Writing buttons are **simulated callers using the real gateway**. They are not live Codex or IronClaw sessions. Local memory writes, encryption and scope checks are real.
 

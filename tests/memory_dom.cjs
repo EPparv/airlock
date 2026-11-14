@@ -25,6 +25,12 @@ $('simAgent').value='ironclaw';await click('request');let card=$('tasks').queryS
 let c=card.querySelector('input[type=checkbox]');c.checked=true;c.onchange();await click(button('Approve and generate'));
 card=$('tasks').querySelector('.task');check(outbound.length===1,'One provider call');check(!outbound[0].includes('FINANCE-ORCHID-9247'),'Restricted value absent');check(JSON.parse(outbound[0]).messages.some(m=>m.content.includes('Maya')),'Approved context reaches mock');check(card.querySelector('textarea').value.startsWith('MOCK AI OUTPUT'),'Generated fixture distinctly labelled');
 await click(button('Read result as requesting agent'));check(JSON.parse($('simOutput').textContent).text===null,'Result hidden before second approval');
+const edited=card.querySelector('textarea');edited.value+='\nContact alice@example.com.';edited.oninput();
+c=card.querySelector('input[type=checkbox]');c.checked=true;c.onchange();await click(button('Release this result'));
+check($('notice').textContent.includes('Output screening'),'Edited PII blocks release');
+await click(button('Read result as requesting agent'));check(JSON.parse($('simOutput').textContent).text===null,'Blocked edit remains private');
+await click(button('Screen edits'));check(!edited.value.includes('alice@example.com'),'Screen edits removes the address');
+check(!c.checked && button('Release this result').disabled,'Screening resets consent for changed text');
 c=$('tasks').querySelector('input[type=checkbox]');check(button('Release this result').disabled,'Separate result consent');c.checked=true;c.onchange();await click(button('Release this result'));await click(button('Read result as requesting agent'));check(JSON.parse($('simOutput').textContent).text.startsWith('MOCK AI OUTPUT'),'Released result available');
 await click('refresh');check($('records').children.length===5,'Saved memory persists');
 const writing=$('connections').querySelector('[data-agent=ironclaw]');await click(button('Revoke',writing));await click('read');check($('simOutput').textContent.includes('Blocked locally'),'Revocation enforced');

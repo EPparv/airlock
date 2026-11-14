@@ -77,7 +77,7 @@ function capture(name){
  assert($('nearSend').disabled,'Unconfigured NEAR must stay blocked');
  assert(!$('nearSetup').hidden);
  oldServer=true;await w.document.querySelector('[data-page="near"]').onclick({});
- assert($('nearBlocked').textContent.includes('older demo server'));
+ assert($('nearBlocked').textContent.includes('older Airlock service'));
  assert($('nearPrepare').disabled);
  console.log(JSON.stringify({status:'passed',checks:35,transport:'real ASGI in process; all production frontend scripts in JSDOM',provider:'scripted rehearsal + explicitly mocked Ollama HTTP',api_calls:calls.length}));
 })().catch(error=>{console.error(error);process.exitCode=1;}).finally(()=>{w.close();fs.rmSync(state,{recursive:true,force:true});});

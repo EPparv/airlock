@@ -44,7 +44,7 @@ class LocalProvider:
             raise Denied('Choose a local chat model with at least 4,096 context tokens.')
         thinking=(info.get('thinking') or {}).get('values')
         if str(metadata.get('general.finetune','')).lower()=='thinking' or isinstance(thinking,list) and True in thinking and False not in thinking:
-            raise Denied('Use an instruction model for this short demo, such as qwen3:4b-instruct.')
+            raise Denied('Use an instruction model for this short task, such as qwen3:4b-instruct.')
         return info
 
     async def check(self):
@@ -63,7 +63,7 @@ class LocalProvider:
             payload=json.loads(body)
             if payload['model']!=local_model_name():raise Denied('Local model changed. Review the request again.')
             if len(body)+payload['options']['num_predict']+1024>payload['options']['num_ctx']:
-                raise Denied('Selected context exceeds the local demo budget. Nothing sent for inference.')
+                raise Denied('Selected context exceeds the local prompt budget. Nothing sent for inference.')
             async with asyncio.timeout(self.timeout):
                 async with self.client() as client:
                     info=await self._preflight(client,payload['model'])

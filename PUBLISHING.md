@@ -5,7 +5,7 @@ Mac app updates and numbered release publication are described in
 BUILD for each release. The workflow signs update metadata with GitHub OIDC,
 tests installation and recovery on both Mac architectures, preserves numbered
 GitHub releases, then deploys the stable website. Older apps need one manual
-installation of alpha 7 to gain the in-app updater.
+installation of build 67 to gain the in-app updater.
 
 ## Current state
 

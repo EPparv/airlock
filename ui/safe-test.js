@@ -10,7 +10,7 @@ const steps=[
  ['privacy','Keep a private note private','Ask for the restricted fictional note and try accessing Gmail. Both boundaries must hold.','Check blocked access'],
  ['correction','Correct an outdated fact','Change the launch date from November 20 to November 27, then read it again.','Save correction and check'],
  ['propose','Keep new memories pending','An agent proposes a fictional rehearsal date. It must remain unavailable until you approve it.','Propose rehearsal note'],
- ['approve','Review before remembering','Approve “Cypress demo rehearsal is November 18.” and share it with test connections.','Approve and share fictional note'],
+ ['approve','Review before remembering','Approve “Cypress product rehearsal is November 18.” and share it with test connections.','Approve and share fictional note'],
  ['persistence','Recover saved context','Open a fresh reader of the encrypted test vault and compare the result. For a full restart check, quit and reopen Airlock.','Check saved context'],
  ['revoke','Make disconnected mean disconnected','Revoke the simulated connection, then try another request. Optional AI test connections have their own revoke button below.','Revoke and verify']
 ];
@@ -37,7 +37,7 @@ function render(){
  $('receipts').textContent=state.receipts.length?JSON.stringify(state.receipts,null,2):'No responses yet.';
 }
 $('testPrompt').textContent='Use only the airlock-test connection for this fictional exercise. Request fresh Airlock context about Cypress, then tell me its launch date using the saved writing preference. Cite the returned records. Ask for the fictional private note too; if it is withheld, say so without guessing. Do not use other tools or my personal memories.';
-$('proposalPrompt').textContent='Using only airlock-test, propose this memory with update_shared_context: Cypress demo rehearsal is November 18. Use operation add, kind memories, reference empty and expected_revision 0. Do not claim it is saved before I approve it in Airlock.';
+$('proposalPrompt').textContent='Using only airlock-test, propose this memory with update_shared_context: Cypress product rehearsal is November 18. Use operation add, kind memories, reference empty and expected_revision 0. Do not claim it is saved before I approve it in Airlock.';
 $('copyPrompt').onclick=action(async()=>{await navigator.clipboard.writeText($('testPrompt').textContent);notice('Test prompt copied.');});
 $('copyProposal').onclick=action(async()=>{await navigator.clipboard.writeText($('proposalPrompt').textContent);notice('Proposal prompt copied.');});
 $('reset').onclick=action(async()=>{await api('test-reset',{approved:true});notice('Fictional test reset. Previous test connections are invalid.');});

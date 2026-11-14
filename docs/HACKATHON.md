@@ -37,12 +37,12 @@ The current release includes a Mac package and a source preview. The baseline an
 
 | Requirement | State |
 | --- | --- |
-| Working, reproducible local prototype | Setup and expected observations in JUDGE.md |
+| Working, reproducible local application | Setup and expected observations in JUDGE.md |
 | Public repository and inspectable feature diff | [EPparv/airlock](https://github.com/EPparv/airlock), with baseline and submission review branches |
 | License | MIT, root LICENSE |
 | Dependency and pre-existing work disclosure | Root README and this document |
 | Live NEAR inference proof | In-app setup and synthetic verification test implemented; actual live inference still requires a key and successful run |
-| Public X demo post | Still required; for this local-only prototype, attach a video |
+| Public X demo post | Still required; for this local application, attach a video |
 | Payout wallet, contact details and team size | Team must supply/confirm; do not commit the application payload |
 | Final application | Not sent; review the exact payload before submission |
 

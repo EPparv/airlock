@@ -1,6 +1,6 @@
-# Airlock demo recording
+# Airlock recording
 
-Record the actual local application with fictional data. Frame only the app content, hiding the address bar, owner URL, tokens, terminal and unrelated windows. The local prototype needs a video in the public X demo post under the event's current rules. Do not substitute an animated mockup or a screenshot slideshow for proof of execution.
+Record the actual local application with fictional data. Frame only the app content, hiding the address bar, owner URL, tokens, terminal and unrelated windows. The local application needs a video in the public X demo post under the event's current rules. Do not substitute an animated mockup or a screenshot slideshow for proof of execution.
 
 ## 90-second script
 
@@ -24,4 +24,4 @@ Attach the real demo video, then add the public repository and preview links in 
 
 ## NEAR recording gate
 
-Before recording a live NEAR claim, open the app's NEAR setup, add a key locally, install the verifier, inspect and approve the verified deployment, and pass the fictional connection test. Record its checks without showing the key. Then record the Founder demo in NEAR mode. If the live test is blocked, say so and do not label a mock or local result as NEAR.
+Before recording a live NEAR claim, open the app's NEAR setup, add a key locally, install the verifier, inspect and approve the verified deployment, and pass the fictional connection test. Record its checks without showing the key. Then record the Private AI walkthrough in NEAR mode. If the live test is blocked, say so and do not label a mock or local result as NEAR.

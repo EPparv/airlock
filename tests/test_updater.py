@@ -32,7 +32,7 @@ def archive(entries):
 def app(path, build=67):
     (path / 'Contents/Resources/payload').mkdir(parents=True)
     (path / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': u.APP_ID, 'CFBundleVersion': str(build)}))
-    (path / 'Contents/Resources/payload/release.json').write_text(json.dumps({'version': f'0.6.0-alpha.{build-60}', 'build': build, 'commit': 'a'*40}))
+    (path / 'Contents/Resources/payload/release.json').write_text(json.dumps({'version': u.VERSION if build == u.BUILD else f'0.6.0-alpha.{build-60}', 'build': build, 'commit': 'a'*40}))
     return path
 
 

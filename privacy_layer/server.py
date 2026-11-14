@@ -171,6 +171,7 @@ def owner_app(gateway, owner_token, port=8791):
                 elif action=='memory-decide': result=memory.decide(**body)
                 elif action=='memory-send': result=await private_tasks.send(**body)
                 elif action=='memory-release': result=private_tasks.release(**body)
+                elif action=='memory-screen': result=private_tasks.screen(**body)
                 elif action=='memory-forget': result=private_tasks.forget(**body)
                 elif action=='memory-local-check': result=await private_tasks.local.check()
                 elif action=='memory-connect':

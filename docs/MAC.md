@@ -1,6 +1,6 @@
 # Mac app: first-use acceptance
 
-Download the current app at https://epparv.github.io/airlock/. No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. This alpha is ad-hoc signed, not Apple-notarized.
+Download the current app at https://epparv.github.io/airlock/. No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. This app is ad-hoc signed, not Apple-notarized.
 
 ## Start with fictional data
 

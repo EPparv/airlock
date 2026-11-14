@@ -1,6 +1,6 @@
 # App updates and version history
 
-Install alpha 7 once by replacing the older app and moving it to Applications.
+Install build 67 or later once by replacing the older app and moving it to Applications.
 After that, choose **Airlock → Check for Updates → Update and Restart** in the
 Mac menu bar. Airlock also checks on launch; turn that off in the same menu if
 desired. “About Airlock” shows the installed version. Installation always needs
@@ -48,7 +48,7 @@ rollback compatibility before being published.
 Airlock must be in a writable folder, normally Applications. Read-only disks or
 macOS App Translocation can block replacement; move the app, reopen it and retry.
 The updater does not request administrator access or modify Gatekeeper settings.
-The beta is still not Apple-notarized; release verification is a separate control.
+The Mac app is not Apple-notarized; release verification is a separate control.
 
 The prior bundle is retained in a private `.Airlock-update-*` folder beside the
 installed app; its exact path is recorded in Application Support's

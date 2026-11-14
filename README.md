@@ -1,12 +1,10 @@
 # Airlock
 
-Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives a selected view. Proposed memories, inference inputs and returned results require owner approval.
-
-**NEAR HACKATHON 2026 track: Privacy & Private AI (`privacy`).** This is a new feature on an existing Airlock application. See [the hackathon scope and baseline diff](docs/HACKATHON.md#eligible-work-and-baseline), [the judge walkthrough](docs/JUDGE.md) and [the demo script](docs/DEMO.md).
+Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives selected, locally filtered context. Sensitive records use private tasks with separate input and result approvals. Useful preferences stay available across sessions.
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 8**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.7.0**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
@@ -19,7 +17,7 @@ This is **0.6.0 alpha 8**, now packaged as a Mac app with the shared memory feat
 Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
 
 
-The alpha is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. From alpha 7, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before alpha 7 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
+The Mac app is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
 
 Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
 
@@ -29,15 +27,25 @@ The main setup shows common desktop AIs and the records to share together. Manua
 
 Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. A saved settings file is not proof that an AI connected: the UI waits for a real context request.
 
+## Privacy by default
+
+Connect my AI grants filtered excerpt access only to non-sensitive selections. Detected medical, financial, identity and other sensitive records default to private tasks; mixed selections can still share ordinary preferences immediately. Never-share records remain unavailable for either route. Existing grants are not expanded or revoked by an update.
+
+Airlock strips detected PII and secrets locally, selects relevant sentences, and assigns stable connection-specific pseudonyms to explicitly labelled people and organizations. Core preferences and full skill instructions preserve continuity. Generated results and owner edits are screened before release, and checked again when the agent retrieves them. No external redaction service receives the original records.
+
+Detection is rule-based and incomplete. Unlabelled names, unusual secrets and combinations of ordinary facts can still identify a person. The agent/provider can retain the text it receives. See [the privacy architecture and limits](docs/PRIVACY.md).
+
 ## Continuity across sessions
 
-The updated transfer prompt captures a core profile, detailed projects, dated decisions, corrections, open loops, full workflows and explicit coverage gaps. Up to six owner-selected core records accompany every authorized automatic or scoped context request, even without matching keywords. Larger recall results are paginated; long records are returned in explicit parts instead of silently losing the ending.
+The updated transfer prompt captures a core profile, detailed projects, dated decisions, corrections, open loops, full workflows and explicit coverage gaps. Up to six owner-selected core records accompany every authorized automatic or scoped context request, even without matching keywords. Larger recall results are paginated. Relevant memory sentences are selected locally and marked when shortened; core preferences and full skill instructions remain intact. Long selected text is returned in explicit parts.
 
 Shared memory lets the owner pin core records, correct imported facts and retire outdated ones. New approved agent notes record source hashes and are withheld if their sources change. Connections show their last successful context request. To learn from ongoing work, enable memory proposals, review them, and include approved notes in the relevant agents' scopes.
 
 Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Retrieval remains local lexical ranking with aliases, not semantic embeddings. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
 
 ## Developer walkthrough
+
+**NEAR HACKATHON 2026 track: Privacy & Private AI (`privacy`).** This is a new feature on an existing Airlock application. See [the hackathon scope and baseline diff](docs/HACKATHON.md#eligible-work-and-baseline), [the judge walkthrough](docs/JUDGE.md) and [the demo script](docs/DEMO.md).
 
 The source walkthrough uses fictional records and simulated agent requests. It requires Python 3.12+ and `bash Run-Airlock.command`. Its permission checks and MCP calls are real. Optional inference setup is documented in [SHARED_MEMORY.md](SHARED_MEMORY.md).
 
@@ -55,13 +63,13 @@ Expected: tests pass; the site check reports a valid archive and checksum. Provi
 
 ## Use NEAR from the app
 
-On the first screen, choose **Open NEAR setup and demo**, then **Set up NEAR private AI**. This workspace uses fictional data and does not open personal sources.
+On the first screen, choose **Open NEAR private AI**, then **Set up NEAR private AI**. This workspace uses fictional data and does not open personal sources.
 
 1. Get a key from [NEAR AI Cloud](https://cloud.near.ai) or [NEAR Builders hackathon credits](https://nearbuilders.org/dashboard). Paste it into Airlock's local masked field. Keys remain in process memory only and are cleared on restart.
 2. Click **Install NEAR verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
 3. Click **Verify deployment without sending a prompt**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
 4. Click **Approve and run this test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
-5. Open **Founder demo**, choose **NEAR**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
+5. Open **Private AI walkthrough**, choose **NEAR**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
 
 The setup route is local and owner-authenticated. It has no Incognito or unverified fallback. The cloud API key is never stored beside the fictional vault key. Live operation still needs the user's key, available credits, supported verification hardware evidence, reviewed deployment configurations and network access. See [the NEAR demo and submission guide](docs/NEAR_LIVE.md).
 
@@ -69,7 +77,7 @@ The setup route is local and owner-authenticated. It has no Incognito or unverif
 
 The optional remote route uses **NEAR AI Cloud**, via the official [nearai/inference-sdk](https://github.com/nearai/inference-sdk) pinned in `requirements-near.txt`. `privacy_layer/near_provider.py` requests field encryption, verifies gateway and model evidence, enforces reviewed deployment hashes, checks the model response signature, and rechecks permission immediately before dispatch. Verification failures block the operation; there is no unverified-cloud fallback. The owner approves the exact application prompt before the call and separately reviews the answer before an agent can retrieve it.
 
-**Live NEAR inference has not been verified for this release.** No live key and reviewed deployment hashes were available during validation. Passing mock tests or local SDK cryptographic tests does not prove live NEAR compatibility. This project does not deploy a smart contract, make on-chain payments, or use NEAR Intents. It is not a universal traffic interceptor or a verified native IronClaw extension.
+**Live NEAR inference has not been verified for this release.** Real attestation requests with an owner-supplied key returned HTTP 401 on November 14, 2026, including an explicit retry and a direct endpoint check. No inference prompt was sent and no cryptographic verification passed. See [the exact verification evidence](docs/NEAR_VERIFICATION.md). Passing mock tests or local SDK cryptographic tests does not prove live NEAR compatibility. This project does not deploy a smart contract, make on-chain payments, or use NEAR Intents. It is not a universal traffic interceptor or a verified native IronClaw extension.
 
 ## Existing work and dependencies
 

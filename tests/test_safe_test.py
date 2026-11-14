@@ -162,7 +162,7 @@ def test_new_personal_connection_is_closed_until_owner_selects_records(tmp_path,
         grant=r.json();args=grant['args'];token=Path(args[args.index('--token-file')+1]).read_text()
         with pytest.raises(Denied):g.call(token,'get_private_context',{'query':'project'})
         state=c.post('/api/memory-state',json={},headers=h).json()
-        assert state['connections'][0]['scope']=={'records':[],'disclose':False,'compute':False}
+        assert state['connections'][0]['scope']=={'records':[],'disclose':False,'compute':False,'disclose_records':[]}
         refs=[r['ref'] for r in state['records']]
         r=c.post('/api/memory-scope',json={'identifier':grant['id'],'records':refs,'disclose':True,'compute':False,'proposals':True},headers=h)
         assert r.status_code==200,r.text

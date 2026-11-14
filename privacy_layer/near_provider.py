@@ -54,6 +54,49 @@ def accept_deployment(deployment, allowed):
         raise Denied('NEAR deployment is outside the reviewed configuration allowlist. Nothing sent.')
 
 
+def failure_detail(error):
+    """Allowlisted SDK diagnostic codes; never include response bodies or keys."""
+    try:
+        from nearai_inference_sdk.utils.errors import get_sdk_error
+        sdk_error = get_sdk_error(error)
+        if sdk_error:
+            code = sdk_error.failure.code
+            details = sdk_error.failure.details or {}
+            status = details.get('status', details.get('status_code'))
+            if code == 'api.http_status' and type(status) is int:
+                return f' NEAR returned HTTP {status}.'
+            if isinstance(code, str) and re.fullmatch(r'[a-z_]+\.[a-z_]+', code):
+                return f' Verifier code: {code}.'
+    except (ImportError, AttributeError):
+        pass
+    return ''
+
+
+def verification_receipt(evidence, receipt, body):
+    """Public proof identifiers and digests, never application prompt/answer text."""
+    def attestation(report):
+        deployment = getattr(report, 'deployment', None)
+        raw = getattr(deployment, 'app_compose', None)
+        signer = getattr(report, 'signer', None)
+        tls = getattr(report, 'tls_binding', None)
+        return {'signing_address': getattr(signer, 'signing_address', None),
+                'signing_algo': getattr(signer, 'signing_algo', None),
+                'tcb_status': getattr(report, 'tcb_status', None),
+                'gpu_evidence': getattr(report, 'gpu_evidence', None),
+                'deployment_sha256': hashlib.sha256(raw.encode()).hexdigest() if isinstance(raw,str) else None,
+                'deployment_provenance': getattr(report, 'deployment_provenance', 'not_checked'),
+                'tls_spki_fingerprint': getattr(tls, 'spki_fingerprint', None)}
+    signature = getattr(receipt, 'signature', None)
+    return {'completion_id': getattr(receipt, 'id', None),
+            'verified_at': getattr(evidence, 'verified_at', None),
+            'application_request_sha256': hashlib.sha256(body).hexdigest(),
+            'signature_kind': receipt.signature_kind,
+            'signed_text': getattr(signature, 'signed_text', None),
+            'signature': getattr(signature, 'signature', None),
+            'gateway': attestation(evidence.gateway),
+            'models': [attestation(m) for m in evidence.models]}
+
+
 @asynccontextmanager
 async def sdk_client(key, *, settings=None, observer=None):
     # Import errors, unsupported native verifier builds and SDK drift fail closed.
@@ -97,7 +140,7 @@ def validate_preflight(evidence):
         raise Denied('Gateway TLS binding is unverified. Nothing sent.')
     for report in (gateway, *models):
         if getattr(report, 'tcb_status', None) != 'UpToDate' or getattr(report, 'advisory_ids', ()):
-            raise Denied('NEAR hardware status or advisories do not meet this demo policy. Nothing sent.')
+            raise Denied('NEAR hardware status or advisories do not meet Airlock’s verification policy. Nothing sent.')
     if any(getattr(m, 'gpu_evidence', None) != 'verified' for m in models):
         raise Denied('Model GPU evidence is required. Nothing sent.')
     return {'gateway': 'passed', 'model': 'passed', 'tls': 'passed', 'response_signature': 'pending'}
@@ -151,15 +194,16 @@ class NearProvider:
                         if not isinstance(text, str) or not text.strip(): raise ValueError('Empty draft')
                         checks['response_signature'] = 'passed (model TEE)'
                         checks['encryption'] = 'official SDK client-side encryption to attested model key'
-                        return {'draft': text, 'checks': checks, 'mode': 'live', 'inference_calls': 1}
+                        return {'draft': text, 'checks': checks, 'mode': 'live', 'inference_calls': 1,
+                                'receipt': verification_receipt(evidence, receipt, body)}
                     finally:
                         await response.aclose()
         except Denied:
             raise
         except TimeoutError:
             raise Denied('NEAR timed out. ' + ('An approved request may have reached NEAR; response withheld.' if dispatched else 'No inference request sent.') + ' No retry or fallback.') from None
-        except Exception:
-            raise Denied('NEAR verification or provider request failed. ' + ('An approved request may have reached NEAR; response withheld.' if dispatched else 'No inference request sent.') + ' No retry or fallback.') from None
+        except Exception as error:
+            raise Denied('NEAR verification or provider request failed.' + failure_detail(error) + ' ' + ('An approved request may have reached NEAR; response withheld.' if dispatched else 'No inference request sent.') + ' No retry or fallback.') from None
 
 
 class RehearsalProvider:

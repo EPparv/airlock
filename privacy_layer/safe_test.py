@@ -15,7 +15,7 @@ from .core import Gateway, EncryptedStore, Denied, digest, normalized
 from .context import ContextHub
 from .agent_memory import AgentMemory
 
-REHEARSAL = 'Cypress demo rehearsal is November 18.'
+REHEARSAL = 'Cypress product rehearsal is November 18.'
 PRIVATE = 'FICTIONAL-ORCHID-7429'
 ALLOWED = ('privacy_status', 'get_private_context', 'context_status', 'update_shared_context')
 

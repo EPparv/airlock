@@ -13,6 +13,7 @@ CORE_CHARS=4000
 def select(gateway, grant, rows, query):
     """Caller supplies only authorized, filtered rows. Cursors are connection-bound."""
     from .automatic import ranked
+    from .privacy_engine import minimize
     fingerprint=digest(sorted(rows,key=lambda row:row['ref']))
     offset=0
     if query.startswith(PAGE_PREFIX):
@@ -29,10 +30,13 @@ def select(gateway, grant, rows, query):
     # Long records remain available in explicit consecutive parts, never discarded.
     parts=[]
     for row in candidates:
-        text=row['text'];total=max(1,(len(text)+11999)//12000)
+        text=row['text']; minimized=False
+        if row['kind']!='skills': text,minimized=minimize(text,query)
+        total=max(1,(len(text)+11999)//12000)
         for i in range(total):
             parts.append({**row,'text':text[i*12000:(i+1)*12000],
-                          'part':i+1,'parts':total,'text_complete':total==1})
+                          'part':i+1,'parts':total,'text_complete':total==1 and not minimized,
+                          'context_minimized':minimized})
     selected=[{**row,'part':1,'parts':1,'text_complete':True,'selection':'core profile'} for row in core]
     size=sum(len(row['text']) for row in selected);end=offset
     while end<len(parts) and len(selected)<PAGE_ITEMS:

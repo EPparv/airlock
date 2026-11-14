@@ -34,7 +34,7 @@ PYTHONPATH=. .venv/bin/python -m privacy_layer.memory_demo --no-open
 ```
 
 The private browser link is in `.agent-demo/launch.json`. Do not share that file.
-Ctrl+C stops the service. **Reset demo** replaces only this isolated fictional
+Ctrl+C stops the service. **Reset walkthrough** replaces only this isolated fictional
 workspace and revokes the previous demo tokens. It never opens real Gmail or the
 original vault. Demo tokens in `.agent-demo/*.token` are updated during reset.
 
@@ -72,7 +72,7 @@ embeddings, remote ranking or background summarization is added.
 
 | Operation | Enforced behavior |
 |---|---|
-| Read context | Requires a selected record and `disclose` permission. Raw excerpts reach that host/provider after local filtering. |
+| Read context | Requires a selected record and `disclose` permission. Only non-sensitive, locally filtered excerpts reach that host/provider. Sensitive selections require private tasks. |
 | Compute-only access | Raw retrieval denied. `request_private_task` returns only task metadata. Empty record selection means this connection's selected records. |
 | Private task | Owner reviews exact application prompt, destination and model. Single-use approval expires after at most ten minutes. |
 | Local route | Fixed loopback Ollama endpoint; local GGUF/model/context preflight; no redirects/proxies/fallback. |
@@ -180,7 +180,7 @@ provenance verification. Attestation does not prove absence of software bugs.
 
 SDK installation upgraded cryptography to 50.0.2 in the tested environment through
 its transitive dependencies; the base-only app is separately pinned by
-`requirements.lock`. No NEAR API key or reviewed hashes were available here.
+`requirements.lock`. Real preflight attempts with an owner-supplied key returned HTTP 401 on November 14, 2026; no inference was dispatched. See [the exact evidence](docs/NEAR_VERIFICATION.md).
 
 Official sources:
 - https://docs.near.ai/cloud/models

@@ -141,7 +141,8 @@ def connection_context(gateway):
     memory=AgentMemory(gateway);rows=memory.snapshot();protected=gateway.sources.protected()
     available=[dict(ref=ref,kind=r['kind'],text=suggest_redaction(r['text'],protected),
                     title=r.get('title') or r.get('origin') or r['kind'],
-                    text_hash=digest(r['text']),parents=r['parents'])
+                    text_hash=digest(r['text']),parents=r['parents'],
+                    sensitive=memory.requires_compute(ref,rows),access='private task only' if memory.requires_compute(ref,rows) else 'filtered excerpts')
                for ref,r in rows.items() if memory.allowed(ref,rows)]
     return {'records':available,'withheld':len(rows)-len(available)}
 
@@ -155,7 +156,9 @@ def selected_scope(gateway, selection, proposals=False):
         if not memory.allowed(ref,rows):raise Denied('A selected record is no longer shareable. Refresh the selection.')
         if digest(rows[ref]['text'])!=expected_hash:raise Denied('A selected record changed. Refresh and review it before connecting.')
         if any(parent not in selection for parent in rows[ref]['parents']):raise Denied('Select the linked source records too, or leave out the derived note.')
-    return {'records':list(selection),'disclose':bool(selection),'compute':False,'proposals':proposals}
+    excerpts = [ref for ref in selection if not memory.requires_compute(ref,rows)]
+    return {'records':list(selection),'disclose':bool(excerpts),'disclose_records':excerpts,
+            'compute':len(excerpts)<len(selection),'proposals':proposals}
 
 
 def connection_status(gateway, identifier):

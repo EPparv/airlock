@@ -110,9 +110,9 @@ class NearSetup:
         except Denied:
             self.pending = None
             raise
-        except Exception:
+        except Exception as error:
             self.pending = None
-            raise Denied('NEAR deployment verification failed. Check the key, credits and network. No inference prompt was sent; no fallback was used.') from None
+            raise Denied('NEAR deployment verification failed.' + provider.failure_detail(error) + ' Check the key, credits and network. No inference prompt was sent; no fallback was used.') from None
         finally:
             self.busy = False
 
@@ -165,6 +165,7 @@ class NearSetup:
                 raise Denied('The signed response did not match the expected test output. Live test is not marked passed.')
             self.last_test = {'passed':True, 'at':self.clock(), 'model':provider.model_name(),
                               'checks':result['checks'], 'inference_calls':result['inference_calls'],
+                              'receipt':result.get('receipt'),
                               'elapsed_ms':round((time.monotonic()-started)*1000), 'fictional_data_only':True}
             return self.status()
         except Denied as error:

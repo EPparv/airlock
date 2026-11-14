@@ -115,11 +115,11 @@ def redact_loyalty_amounts(value):
     return LOYALTY_BALANCE.sub('[loyalty amount withheld]',value)
 
 
-def sanitize(value, protected=(), *, email=False):
+def sanitize(value, protected=(), *, email=False, allow_sensitive=False):
     """Return an extract, never a generated paraphrase; None withholds the record."""
     value=clean(value)
     if email:value=clean(mail_text(value))
-    if len(value)>2_000_000 or PRIVATE.search(value) or PRIVATE_DOCUMENT.search(value):return None
+    if len(value)>2_000_000 or PRIVATE.search(value) or (not allow_sensitive and PRIVATE_DOCUMENT.search(value)):return None
     if email and ACCOUNT_DOCUMENT.search(value):return None
     # HTML tables often separate a building number from its locality. Recognize
     # this structure before excerpting or identifier replacement breaks it apart.
@@ -138,6 +138,7 @@ def sanitize(value, protected=(), *, email=False):
     for secret in sorted((clean(p) for p in protected if isinstance(p,str) and len(p.strip())>=2),key=len,reverse=True):
         value=re.sub(re.escape(secret),'[private value withheld]',value,flags=re.I)
     # Filter before clipping so a secret straddling an excerpt boundary cannot leak.
+    value=re.sub(r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b|\b(?:github_pat_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[A-Za-z0-9_-]{30,})\b|\bBearer\s+[A-Za-z0-9._~+/=-]{8,}', '[credential withheld]', value, flags=re.I)
     value=SECRET.sub('[credential withheld]',value)
     value=IDENTIFIER.sub('[identity detail withheld]',value)
     value=EMAIL.sub('[email withheld]',value)
@@ -161,7 +162,7 @@ def sanitize(value, protected=(), *, email=False):
     value=FILE_REFERENCE.sub('[file reference withheld]',value)
     value=re.sub(r'\[[^\]\n]*withheld\]\.'+FILE_EXTENSIONS+r'\b','[file reference withheld]',value,flags=re.I)
     value=re.sub(r'\b[A-Za-z0-9+/=_-]{40,}\b','[opaque value withheld]',value)
-    value=MONEY.sub('[amount withheld]',value)
+    if not allow_sensitive:value=MONEY.sub('[amount withheld]',value)
     value=re.sub(r'(?:[*xX•]{2,}[ -]*)+\d{2,8}\b','[masked identifier withheld]',value)
     if email:
         value=BARE_DOMAIN.sub('[link withheld]',value)
@@ -188,7 +189,7 @@ def sanitize(value, protected=(), *, email=False):
         if email and re.fullmatch(r'[\w:._\-<>/]{0,25}\s*\[(?:code|identifier|tracking detail) withheld\][\W_]*',piece):continue
         if email and re.search(r'\b(?:style|href|target|class|data-[\w-]+|aria-[\w-]+)\s*=|\b(?:font-family|font-size|padding|margin|display)\s*:',piece,re.I):continue
         inspection=piece.replace('[private value withheld]','')
-        if INJECTION.search(inspection) or SENSITIVE_LINE.search(inspection):
+        if INJECTION.search(inspection) or (not allow_sensitive and SENSITIVE_LINE.search(inspection)):
             kept.append('[private passage withheld]');continue
         if email and (re.match(r'^(?:From|To|Cc|Bcc|Reply-To|Message-ID|Delivered-To):',piece,re.I) or re.match(r'^(?:Dear|Hello|Hi|Regards|Best regards|Sincerely)[, :]',piece,re.I)):
             continue
@@ -320,9 +321,11 @@ class Automatic:
         from .agent_memory import AgentMemory
         memory=AgentMemory(self.g);rows=memory.snapshot()
         raw=[dict(row,device_only=not memory.allowed(ref,rows)) for ref,row in rows.items()]
-        protected=self.g.sources.protected();eligible=[];withheld=0
+        eligible=[];withheld=0
+        from .privacy_engine import PrivacyEngine
+        engine=PrivacyEngine(self.g,self.grant)
         for row in raw:
-            text=None if row.get('device_only') else sanitize(row['text'],protected)
+            text=None if row.get('device_only') else engine.filter(row['text'])
             if not text:withheld+=1;continue
             eligible.append({**row,'text':text})
         candidates=[];seen=set()
@@ -332,7 +335,8 @@ class Automatic:
             if row.get('shared_reference'):item.update(shared_reference=row['shared_reference'],revision=row['revision'],evidence_type='agent-authored shared note; not independently verified')
             candidates.append(item);seen.add(row['text'])
         from .continuity import select
-        result=select(self.g,self.grant,candidates,query)
+        for item in candidates: item['text']=engine.pseudonymize(item['text'])
+        result=select(self.g,self.grant,candidates,engine.pseudonymize(query))
         for item in result['items']:item['excerpt_truncated']=not item['text_complete']
         return {**result,'library_counts':dict(Counter(r['kind'] for r in raw)),'withheld_records':withheld,
                 'coverage':'Core profile plus locally ranked, filtered context. Follow next_query for remaining matches or long-record parts. A search miss is not proof of absence. Retired, stale and restricted records are excluded. No hidden chat-history synchronization.'}
