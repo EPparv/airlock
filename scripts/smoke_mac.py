@@ -44,7 +44,17 @@ def check(app, cached_runtime=None):
                       {'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':tool,'arguments':args}}]
             result=subprocess.run([entry['command'],*entry['args']],input='\n'.join(map(json.dumps,messages))+'\n',text=True,capture_output=True,env=env,timeout=45)
             response=next(json.loads(line) for line in result.stdout.splitlines() if json.loads(line).get('id')==2)
-            assert not response.get('error'),response
+            if response.get('error'):
+                assert denied,response
+                # A revoked/closed credential fails before MCP dispatch. Confirm
+                # an actual 401 from the live service, not an unavailable server.
+                api('test-state')
+                args=entry['args'];token=Path(args[args.index('--token-file')+1]).read_text().strip()
+                req=Request(launch['mcp_url'],data=json.dumps(messages[0]).encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json, text/event-stream'})
+                try:opener.open(req,timeout=10)
+                except HTTPError as error:assert error.code==401,error.code
+                else:raise AssertionError('Expected an authentication denial')
+                return {'denied_at_http_boundary':True}
             assert bool(response['result'].get('isError'))==denied,response
             return json.loads(response['result']['content'][0]['text'])
         def stop():

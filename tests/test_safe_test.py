@@ -179,3 +179,25 @@ def test_native_proposal_can_be_approved_after_simulated_revocation(safe):
     assert safe.check('approve')['passed']
     with pytest.raises(Denied):safe.g.call(old,'get_private_context',{'query':'Cypress'})
     assert REHEARSAL in str(safe.g.call(live['token'],'get_private_context',{'query':'Cypress rehearsal'}))
+
+
+def test_real_mcp_http_authentication_and_revocation(safe):
+    from privacy_layer.server import mcp_app
+    app,_=mcp_app(GatewayRouter(safe),8792)
+    token=safe.metadata()['local']['token']
+    headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json, text/event-stream'}
+    with TestClient(app,base_url='http://127.0.0.1:8792') as c:
+        init={'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'safe-test','version':'1'}}}
+        r=c.post('/mcp',json=init,headers=headers)
+        assert r.status_code==200,r.text
+        assert 'serverInfo' in r.json()['result']
+        request={'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'get_private_context','arguments':{'query':'Cypress'}}}
+        r=c.post('/mcp',json=request,headers=headers)
+        assert r.status_code==200 and not r.json()['result'].get('isError'),r.text
+        assert 'November 20' in r.text and PRIVATE not in r.text
+        request['params']={'name':'search_gmail','arguments':{'query':'anything'}}
+        r=c.post('/mcp',json=request,headers=headers)
+        assert r.json()['result']['isError']
+        safe.g.revoke(safe.metadata()['local']['id'])
+        assert c.post('/mcp',json=init,headers=headers).status_code==401
+        assert c.post('/mcp',json=init,headers={**headers,'Authorization':'Bearer unknown'}).status_code==401
