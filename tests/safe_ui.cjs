@@ -25,8 +25,10 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  assert.equal(await evaluate("document.getElementById('connect').disabled"),true);
  assert.equal(await evaluate("document.getElementById('personal').disabled"),true);
  if(process.argv[4]){fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],'safe-test-desktop.png'),Buffer.from(shot.data,'base64'));}
+ await evaluate("document.querySelector('#privacyChecks summary').click()");
+ assert.equal(await evaluate("document.getElementById('privacyChecks').open"),true);
  for(const [i,id] of ['recall','privacy','correction','propose','approve','persistence','revoke'].entries()){
-  await until(`!document.querySelector('[data-step="${id}"] button').disabled`);
+  await until(`!document.querySelector('[data-step="${id}"] button').disabled && document.querySelector('[data-step="${id}"] button').getClientRects().length>0`);
   await evaluate(`document.querySelector('[data-step="${id}"] button').click()`);
   await until(`document.getElementById('progress').textContent==='${i+1} of 7 checks passed'`);
  }

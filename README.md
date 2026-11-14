@@ -6,7 +6,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 5**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.6.0 alpha 6**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
