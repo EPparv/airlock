@@ -1,6 +1,6 @@
 [project]
 name = "airlock-privacy"
-version = "0.6.0a7"
+version = "0.6.0a8"
 description = "Local privacy control panel and personal context for MCP agents"
 requires-python = ">=3.12"
 dependencies = ["mcp==1.30.0", "cryptography==50.0.2", "pyyaml==6.0.3", "sigstore==4.5.1"]

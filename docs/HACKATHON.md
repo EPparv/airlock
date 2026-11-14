@@ -30,7 +30,7 @@ For a ZIP download without Git history, [FEATURE_DIFF.patch](FEATURE_DIFF.patch)
 | Fictional, isolated, reproducible walkthrough | `privacy_layer/memory_demo.py`, `ui/memory.*` |
 | Boundary, permission and encryption checks | `tests/test_agent_memory.py`, `tests/test_near_demo.py`, `tests/test_near_encryption.py` |
 
-This is a source preview, not the complete companion Mac application. The baseline and current source omit historical personal reports and credentials. Packaging and judge documentation are new supporting work, not a new claim about underlying AI inference.
+The current release includes a Mac package and a source preview. The baseline and current source omit historical personal reports and credentials. Packaging and judge documentation are new supporting work, not a new claim about underlying AI inference.
 
 ## Readiness
 
@@ -40,7 +40,7 @@ This is a source preview, not the complete companion Mac application. The baseli
 | Public repository and inspectable feature diff | [EPparv/airlock](https://github.com/EPparv/airlock), with baseline and submission review branches |
 | License | MIT, root LICENSE |
 | Dependency and pre-existing work disclosure | Root README and this document |
-| Live NEAR inference proof | Not verified; do not claim it |
+| Live NEAR inference proof | In-app setup and synthetic verification test implemented; actual live inference still requires a key and successful run |
 | Public X demo post | Still required; for this local-only prototype, attach a video |
 | Payout wallet, contact details and team size | Team must supply/confirm; do not commit the application payload |
 | Final application | Not sent; review the exact payload before submission |

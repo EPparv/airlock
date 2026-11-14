@@ -46,17 +46,20 @@ class FounderDemo:
                 'grant': None, 'pending': None, 'result': None, 'events': []}
         return self.state()
 
+    def readiness(self):
+        return self.provider.readiness() if hasattr(self.provider, 'readiness') else readiness()
+
     def state(self):
         with self.store.transaction() as data:
             d = data.get('founder_demo')
             return {'workflow_version':2,'loaded': bool(d), 'records': copy.deepcopy(d['records']) if d else {},
                 'grant': copy.deepcopy(d['grant']) if d else None, 'result': copy.deepcopy(d['result']) if d else None,
-                'events': copy.deepcopy(d['events'][-10:]) if d else [], 'readiness': readiness(), 'model': model_name(), 'destination': DESTINATION,
+                'events': copy.deepcopy(d['events'][-10:]) if d else [], 'readiness': self.readiness(), 'model': model_name(), 'destination': DESTINATION,
                 'local_model':local_model_name(), 'local_destination':LOCAL_DESTINATION}
 
     async def check(self, mode):
         if mode=='local':return await (self.local_provider or LocalProvider()).check()
-        if mode=='live':return readiness()
+        if mode=='live':return self.readiness()
         raise Denied('Choose local AI or NEAR to check setup.')
 
     def grant(self):
@@ -98,7 +101,7 @@ class FounderDemo:
             'messages': [{'role': 'system', 'content': SYSTEM},
                          {'role': 'user', 'content': PROMPT + '\n\nSelected meeting notes:\n' + '\n\n'.join(selected)}]}
         if mode=='local':payload.update(options={'num_predict':700,'num_ctx':4096,'temperature':0.3})
-        else:payload['max_tokens']=700
+        else:payload.update(max_tokens=700, chat_template_kwargs={'enable_thinking':False})
         return canonical(payload)
 
     def review(self, ids, mode='live'):
@@ -121,7 +124,7 @@ class FounderDemo:
             return {'blocked': False, 'approval_id': pending['id'], 'payload': pending['body'], 'sha256': pending['hash'],
                 'expires': pending['expires'], 'mode': mode, 'model': pending['model'],
                 'destination': DESTINATION if mode=='live' else LOCAL_DESTINATION if mode=='local' else 'This device only · scripted rehearsal',
-                'stays_local': [FINANCE], 'readiness': readiness()}
+                'stays_local': [FINANCE], 'readiness': self.readiness()}
 
     def _check(self, d, p):
         if p['expires'] <= self.clock() or d['generation'] != p['generation'] or not d['grant'] or d['grant']['id'] != p['grant_id']:

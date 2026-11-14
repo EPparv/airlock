@@ -117,12 +117,15 @@ class AuthBoundary:
 
 def owner_app(gateway, owner_token, port=8791):
     from .founder_demo import FounderDemo
-    founder_demo = FounderDemo(gateway)
+    from .near_setup import NearSetup
+    near_setup = NearSetup()
+    founder_demo = FounderDemo(gateway, provider=near_setup)
     from .agent_memory import AgentMemory, PrivateTasks
-    memory, private_tasks = AgentMemory(gateway), PrivateTasks(gateway)
+    memory, private_tasks = AgentMemory(gateway), PrivateTasks(gateway, near=near_setup)
     async def asset(req):
-        filename={'/':'index.html','/ui.js':'ui.js','/context.js':'context.js','/workbench.js':'workbench.js','/onboarding.js':'onboarding.js','/ui.css':'ui.css','/icon.svg':'icon.svg'}.get(req.url.path)
-        if req.url.path in ('/near.js','/near.css'): filename = req.url.path[1:]
+        filename={'/':'index.html','/near-demo':'index.html','/ui.js':'ui.js','/context.js':'context.js','/workbench.js':'workbench.js','/onboarding.js':'onboarding.js','/ui.css':'ui.css','/icon.svg':'icon.svg'}.get(req.url.path)
+        if req.url.path in ('/near.js','/near.css','/near-setup.js'): filename = req.url.path[1:]
+        if req.url.path == '/near-setup': filename = 'near-setup.html'
         if req.url.path in ('/memory','/memory.js','/memory.css'):
             filename = 'memory.html' if req.url.path == '/memory' else req.url.path[1:]
         if not filename: return Response(status_code=404)
@@ -140,14 +143,25 @@ def owner_app(gateway, owner_token, port=8791):
             body=json.loads(raw or '{}'); action=req.path_params['action']
             if not isinstance(body,dict):raise Denied('Invalid request.')
             hub=ContextHub(gateway.store,getattr(gateway.sources,'context_home',None),gateway.clock)
-            if action.startswith('memory-'):
+            if action.startswith('near-setup-'):
+                expected = {'near-setup-status':set(), 'near-setup-key':{'api_key'}, 'near-setup-clear':set(),
+                            'near-setup-discover':set(), 'near-setup-approve':{'review_id','approved'},
+                            'near-setup-probe':{'approved'}, 'near-setup-install':{'approved'}}
+                if action not in expected or set(body) != expected[action]: raise Denied('Invalid NEAR setup request.')
+                if action == 'near-setup-key': result = near_setup.configure(**body)
+                elif action == 'near-setup-discover': result = await near_setup.discover()
+                elif action == 'near-setup-approve': result = near_setup.approve(**body)
+                elif action == 'near-setup-probe': result = await near_setup.probe(**body)
+                elif action == 'near-setup-install': result = await near_setup.install(**body)
+                else: result = getattr(near_setup, action.removeprefix('near-setup-'))()
+            elif action.startswith('memory-'):
                 if action=='memory-state':
                     result=memory.state()
                     from .core import digest
                     for t in result['tasks']:
                         if t.get('result'):t['result_hash']=digest(t['result'])
                     from .near_provider import readiness
-                    result['near']=readiness()
+                    result['near']=near_setup.readiness()
                     result['demo']=getattr(gateway.sources,'memory_demo',False)
                 elif action=='memory-scope': result=memory.configure(**body)
                 elif action=='memory-policy': result=memory.keep_local(**body)
@@ -291,7 +305,7 @@ def owner_app(gateway, owner_token, port=8791):
             return JSONResponse(result,headers={'Cache-Control':'no-store'})
         except Denied as e: return JSONResponse({'error':str(e)},status_code=400)
         except Exception: return JSONResponse({'error':'This source is unavailable. Check the local app’s Gmail connection or source selection; no agent access was granted.'},status_code=400)
-    return Starlette(routes=[Route('/',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+    return Starlette(routes=[Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
 
 
 def main():

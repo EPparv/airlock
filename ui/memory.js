@@ -53,3 +53,5 @@ $('refresh').onclick=guard(refresh);
 $('checkLocal').onclick=guard(async()=>{const r=await api('memory-local-check');notice(r.message,!r.ready);});
 $('connect').onclick=guard(async()=>{const r=await api('memory-connect',{agent:$('newAgent').value,approved:true,lifetime:86400,max_calls:100,install:false,scope:{records:[],disclose:false,compute:false,proposals:false}});$('config').textContent=r.config+(r.credential_path?'\n# Scoped credential file (local owner only): '+r.credential_path:'');$('config').hidden=false;await refresh();notice(r.message||'Created with no record access. Select records and permissions, then copy the setup into the agent.');});
 guard(refresh)();
+
+$("nearSetupLink").onclick=event=>{event.preventDefault();location.assign("/near-setup#"+owner);};

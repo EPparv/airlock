@@ -297,7 +297,7 @@ class PrivateTasks:
         if route == 'local':
             payload.update(think=False, options={'temperature': 0.2, 'num_predict': 600, 'num_ctx': 8192})
         else:
-            payload.update(temperature=0.2, max_tokens=600)
+            payload.update(temperature=0.2, max_tokens=600, chat_template_kwargs={'enable_thinking':False})
         body = canonical(payload)
         if len(body) > 6000: raise Denied('Choose less context for this task (6 KB prompt limit).')
         return body, {r['ref']: r['source_digest'] for r in rows}, LOCAL_DESTINATION if route == 'local' else DESTINATION
