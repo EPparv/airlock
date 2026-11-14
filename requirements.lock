@@ -6,7 +6,8 @@ cffi==2.1.1
 charset-normalizer==3.5.2
 click==8.5.1
 colorama==0.4.6 ; sys_platform == 'win32'
-cryptography==50.0.2
+cryptography==48.0.1 ; platform_machine == 'x86_64' and sys_platform == 'darwin'
+cryptography==50.0.2 ; platform_machine != 'x86_64' or sys_platform != 'darwin'
 dnspython==2.9.2
 email-validator==2.3.0
 h11==0.16.0

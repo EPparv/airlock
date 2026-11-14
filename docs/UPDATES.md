@@ -74,3 +74,13 @@ Only after the update tests pass does the workflow create the numbered release
 and deploy Pages. Existing version tags/assets are never overwritten. To revert
 a bug, revert the source in Git and publish it with a higher build number. This
 keeps monotonic update checks and a clear audit history.
+
+## Intel dependency constraint
+
+Cryptography 49 and later stopped publishing Intel Mac wheels. The lock uses
+48.0.1 (the last official universal wheel) on Intel Macs and 50.0.2 elsewhere;
+Sigstore 4.5.1 is used on both. Installation forbids source builds, including in
+CI, so a user never needs Rust or Xcode. Keep this compatibility pin under review
+when updating dependencies. Airlock uses authenticated vault encryption and
+certificate/signature verification, not the PKCS7 message-decryption API fixed
+in cryptography 50.
