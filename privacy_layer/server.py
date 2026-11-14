@@ -224,7 +224,7 @@ def owner_app(gateway, owner_token, port=8791):
                 library=gateway.sources.library()
                 with gateway.store.transaction() as data:
                     onboarding=data.get('onboarding',{})
-                    used={x['agent'] for x in data['audit'] if x['status']=='released' and x['tool'] in ('get_private_context','search_gmail','read_gmail')}
+                    used={x['agent'] for x in data['audit'] if x['status']=='released' and x['tool']=='get_private_context'}
                 connections=[dict(g,used=g['id'] in used) for g in gateway.list_grants() if g['agent']!='test']
                 result={'counts':{kind:sum(x['kind']==kind for x in library) for kind in ('memories','skills')},'connections':connections,'clients':catalog(getattr(gateway.sources,'context_home',None)),'saved_dot':saved_dot_available(gateway),'gmail':gateway.sources.gmail_state(),'onboarding':onboarding,'demo_only':getattr(gateway.sources,'demo_only',False)}
             elif action=='onboarding':
@@ -233,7 +233,8 @@ def owner_app(gateway, owner_token, port=8791):
                     data.setdefault('onboarding',{}).update(body);result=data['onboarding']
             elif action=='client-connect':
                 if not isinstance(body,dict) or set(body)-{'agent','approved','lifetime','max_calls','install'}:raise Denied('Invalid connection settings.')
-                result=await asyncio.to_thread(connect,gateway,home=getattr(gateway.sources,'context_home',None),**body)
+                result=await asyncio.to_thread(connect,gateway,home=getattr(gateway.sources,'context_home',None),scope={'records':[],'disclose':False,'compute':False,'proposals':False},**body)
+                result['message']='Connection saved with no record access. Open Shared memory, select the exact records this AI may receive, and save its access before testing.'
             elif action=='gmail-check':
                 await asyncio.to_thread(gateway.sources.google,'/profile')
                 result={'connected':True,'message':'Gmail is connected with read-only access.'}
@@ -286,19 +287,26 @@ def owner_app(gateway, owner_token, port=8791):
 
 
 def main():
-    from .sources import LocalSources
-    parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,default=ROOT/'.private');parser.add_argument('--owner-port',type=int,default=8791);parser.add_argument('--mcp-port',type=int,default=8792);args=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,default=ROOT/'.private');parser.add_argument('--owner-port',type=int,default=8791);parser.add_argument('--mcp-port',type=int,default=8792);parser.add_argument('--safe-start',action='store_true');args=parser.parse_args()
     logging.getLogger('httpx').setLevel(logging.CRITICAL)
-    sources=LocalSources(context_home=os.environ.get('PRIVATE_AI_PROFILE_HOME'));gateway=Gateway(EncryptedStore(args.state/'connections.enc',sources.key),sources)
-    sources.connection_store=gateway.store
     owner_token=secrets.token_urlsafe(32)
+    if args.safe_start:
+        from .safe_test import SafeTest,GatewayRouter
+        controller=SafeTest(ROOT,args.state,profile_home=os.environ.get('PRIVATE_AI_PROFILE_HOME'))
+        gateway=GatewayRouter(controller)
+        owner=controller.app(owner_token,args.owner_port)
+    else:
+        from .sources import LocalSources
+        sources=LocalSources(context_home=os.environ.get('PRIVATE_AI_PROFILE_HOME'));gateway=Gateway(EncryptedStore(args.state/'connections.enc',sources.key),sources)
+        sources.connection_store=gateway.store
+        owner=owner_app(gateway,owner_token,args.owner_port)
     release=json.loads((ROOT/'release.json').read_text()) if (ROOT/'release.json').exists() else {}
     args.state.mkdir(parents=True,exist_ok=True,mode=0o700)
     fd=os.open(args.state/'launch.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
-    with os.fdopen(fd,'w') as f: json.dump({'url':f'http://127.0.0.1:{args.owner_port}/?v=privacy-layer-1#'+owner_token,'owner_token':owner_token,'mcp_url':f'http://127.0.0.1:{args.mcp_port}/mcp','pid':os.getpid(),'version':release.get('version','source')},f)
+    with os.fdopen(fd,'w') as f: json.dump({'url':f'http://127.0.0.1:{args.owner_port}/?v=privacy-layer-1#'+owner_token,'owner_token':owner_token,'mcp_url':f'http://127.0.0.1:{args.mcp_port}/mcp','pid':os.getpid(),'version':release.get('version','source'),'mode':'safe-test' if args.safe_start else 'personal'},f)
     async def serve():
         app,_=mcp_app(gateway,args.mcp_port)
-        configs=[uvicorn.Config(owner_app(gateway,owner_token,args.owner_port),host='127.0.0.1',port=args.owner_port,log_level='error',access_log=False),uvicorn.Config(app,host='127.0.0.1',port=args.mcp_port,log_level='error',access_log=False)]
+        configs=[uvicorn.Config(owner,host='127.0.0.1',port=args.owner_port,log_level='error',access_log=False),uvicorn.Config(app,host='127.0.0.1',port=args.mcp_port,log_level='error',access_log=False)]
         await asyncio.gather(*(uvicorn.Server(c).serve() for c in configs))
     asyncio.run(serve())
 

@@ -31,10 +31,12 @@ def start():
                     if response.status==200:return record
             except Exception:return None
         record=running()
-        if record:return record
+        if record:
+            if record.get("mode")!="safe-test":raise RuntimeError("An older personal service is running. Quit Airlock completely, then reopen this version to start the isolated test.")
+            return record
         log=state/'service.log';fd=os.open(log,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
         with os.fdopen(fd,'ab') as out:
-            args=[sys.executable,'-m','privacy_layer.server']
+            args=[sys.executable,'-m','privacy_layer.server','--safe-start']
             if (ROOT/'release.json').exists():
                 with socket.socket() as owner_socket,socket.socket() as mcp_socket:
                     owner_socket.bind(('127.0.0.1',0));mcp_socket.bind(('127.0.0.1',0))
@@ -48,6 +50,12 @@ def start():
 def main():
     p=argparse.ArgumentParser();p.add_argument('--no-open',action='store_true');a=p.parse_args()
     record=start()
+    if record.get('mode')=='safe-test':
+        if not a.no_open:
+            if sys.platform=='darwin':subprocess.run(['/usr/bin/open',record['url']],check=True)
+            else:webbrowser.open(record['url'])
+        print('Airlock is ready in an isolated fictional test workspace.')
+        return
     # Restoring an already approved connection changes neither its scope nor
     # lifetime. Expired/revoked grants remain closed and require owner review.
     try:

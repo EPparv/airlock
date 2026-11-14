@@ -51,25 +51,30 @@ def server_entry(token_path):
 def owned(entry):
     return isinstance(entry,dict) and entry.get('command')==str(ROOT/'.venv/bin/python') and isinstance(entry.get('args'),list) and entry['args'][:2]==[str(ROOT/'privacy_layer/stdio.py'),'--token-file']
 
-def json_config(original, entry):
+def json_config(original, entry, server_name=SERVER):
+    if server_name not in (SERVER,'airlock-test'):raise Denied('Invalid connection name.')
     value=json.loads(original or '{}')
     if not isinstance(value,dict) or not isinstance(value.get('mcpServers',{}),dict):raise Denied('The existing agent settings are not valid. They were left unchanged.')
     servers=value.setdefault('mcpServers',{})
-    if SERVER in servers and not owned(servers[SERVER]):raise Denied('An unrelated connection already uses this name. Its settings were left unchanged.')
-    if LEGACY_SERVER in servers and owned(servers[LEGACY_SERVER]):servers.pop(LEGACY_SERVER)
-    servers[SERVER]=entry
+    if server_name in servers and not owned(servers[server_name]):raise Denied('An unrelated connection already uses this name. Its settings were left unchanged.')
+    if server_name==SERVER and LEGACY_SERVER in servers and owned(servers[LEGACY_SERVER]):servers.pop(LEGACY_SERVER)
+    servers[server_name]=entry
     return json.dumps(value,ensure_ascii=False,indent=2)+'\n'
 
-def codex_config(original,entry):
+def codex_config(original,entry,server_name=SERVER):
+    if server_name not in (SERVER,'airlock-test'):raise Denied('Invalid connection name.')
     before=tomllib.loads(original)
     servers=before.get('mcp_servers',{})
     if not isinstance(servers,dict):raise Denied('Codex settings are not valid. They were left unchanged.')
-    start='# Airlock managed connection — begin'
-    end='# Airlock managed connection — end'
+    label='Airlock' if server_name==SERVER else 'Airlock Test'
+    start=f'# {label} managed connection — begin'
+    end=f'# {label} managed connection — end'
     removed=[];ranges=[]
     # Migrate only verified entries belonging to this installation. Preserve
     # unrelated settings, and keep the same token/limits during a brand migration.
-    for name,left,right in [(SERVER,start,end),(LEGACY_SERVER,'# Private AI managed connection — begin','# Private AI managed connection — end')]:
+    entries=[(server_name,start,end)]
+    if server_name==SERVER:entries.append((LEGACY_SERVER,'# Private AI managed connection — begin','# Private AI managed connection — end'))
+    for name,left,right in entries:
         if name in servers:
             if not owned(servers[name]):
                 if name==LEGACY_SERVER:continue
@@ -80,16 +85,16 @@ def codex_config(original,entry):
             ranges.append((a,b));removed.append(name)
         elif left in original or right in original:raise Denied('The previous connection settings need review. No settings were changed.')
     for a,b in sorted(ranges,reverse=True):original=original[:a]+original[b:]
-    block=f'{start}\n[mcp_servers.{SERVER}]\ncommand = {json.dumps(entry["command"])}\nargs = {json.dumps(entry["args"])}\n{end}\n'
+    block=f'{start}\n[mcp_servers.{server_name}]\ncommand = {json.dumps(entry["command"])}\nargs = {json.dumps(entry["args"])}\n{end}\n'
     candidate=original.rstrip()+'\n\n'+block
     after=tomllib.loads(candidate)
     expected=copy.deepcopy(before);expected.setdefault('mcp_servers',{})
     for name in removed:expected['mcp_servers'].pop(name)
-    expected['mcp_servers'][SERVER]=entry
+    expected['mcp_servers'][server_name]=entry
     if after!=expected:raise Denied('Could not preserve the existing Codex settings. Nothing was changed.')
     return candidate
 
-def install_config(agent,entry,home=None):
+def install_config(agent,entry,home=None,server_name=SERVER):
     if agent not in RELATIVE_CONFIGS:raise Denied('Choose a local agent to install.')
     home=Path(home or Path.home());path=home/RELATIVE_CONFIGS[agent]
     if path.is_symlink():raise Denied('This settings file is linked elsewhere. Use the exported setup instead.')
@@ -100,7 +105,7 @@ def install_config(agent,entry,home=None):
     with open(lock_path,'a') as lock:
         os.chmod(lock_path,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
         existed=path.exists();original=path.read_text() if existed else ''
-        try:candidate=codex_config(original,entry) if agent=='codex' else json_config(original,entry)
+        try:candidate=codex_config(original,entry,server_name) if agent=='codex' else json_config(original,entry,server_name)
         except (ValueError,TypeError):raise Denied('The existing settings could not be read. They were left unchanged.') from None
         if (path.read_text() if path.exists() else '')!=original:raise Denied('Settings changed during setup. Try again.')
         if existed:private_write(ROOT/f'.private/clients/backups/{agent}-{time.time_ns()}.txt',original)

@@ -62,7 +62,7 @@
  dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Open control panel";self.detail.stringValue=@"Ready. Keep this app open while your AI uses your context.";[[NSWorkspace sharedWorkspace] openURL:self.url];[self.window orderOut:nil];});
 }
 - (void)failed {
- dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Setup could not finish. Check your internet connection and allow any macOS Keychain prompt, then try again. Your data has not been reset.";[self.window makeKeyAndOrderFront:nil];});
+ dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Setup could not finish. Check your internet connection, then try again. Your data has not been reset.";[self.window makeKeyAndOrderFront:nil];});
 }
 - (void)prepare {
  if(self.preparing)return;self.preparing=YES;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
@@ -70,7 +70,7 @@
   NSString *resource=NSBundle.mainBundle.resourcePath;
   NSDictionary *release=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[resource stringByAppendingPathComponent:@"payload/release.json"]] options:0 error:nil];
   NSDictionary *existing=[self session];
-  if(existing&&[existing[@"version"] isEqual:release[@"version"]]){[self ready:existing];return;}
+  if(existing&&[existing[@"version"] isEqual:release[@"version"]]&&[existing[@"mode"] isEqual:@"safe-test"]){[self ready:existing];return;}
   if(existing){
    // Replace only this installation's authenticated service; keep its vault and key.
    int pid=[existing[@"pid"] intValue];if(pid<=1){[self failed];return;}

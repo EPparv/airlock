@@ -22,6 +22,16 @@ from privacy_layer.sources import LocalSources
 from privacy_layer.core import Gateway, EncryptedStore
 from privacy_layer.server import owner_app
 from starlette.testclient import TestClient
+from privacy_layer.safe_test import SafeTest
+safe=SafeTest(Path.cwd(),Path('isolated-test'))
+with TestClient(safe.app('safe-owner',8791),base_url='http://127.0.0.1:8791') as c:
+    h={'Authorization':'Bearer safe-owner'}
+    for asset in ('/','/safe-test.js','/safe-test.css'):
+        assert c.get(asset).status_code==200
+    for step in ('recall','privacy','correction','propose','approve','persistence','revoke'):
+        r=c.post('/api/test-check',json={'step':step},headers=h)
+        assert r.status_code==200 and r.json()['passed'],r.text
+    assert safe.personal is None
 s=LocalSources(key=b'x'*32,context_home=Path('empty-profile'))
 g=Gateway(EncryptedStore(Path('test-state.enc'),s.key),s)
 s.connection_store=g.store

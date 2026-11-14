@@ -22,12 +22,17 @@ jobs:
       - run: python -m pip install -r requirements.lock
       - name: Check updated browser scripts
         run: |
+          node --check ui/safe-test.js
+          node --check ui/ui.js
+          node --check ui/onboarding.js
           node --check ui/context.js
           node --check ui/memory.js
       - name: Full app tests, including bundled adapters
         env:
           PYTHONPATH: .
         run: python -m pytest -q tests
+      - name: Guided test screen in a real browser
+        run: node tests/safe_ui.cjs "$(command -v python)" "$(command -v google-chrome)"
   mac:
     strategy:
       fail-fast: false
@@ -50,7 +55,7 @@ jobs:
           python -m pytest -q tests/test_workbench.py
       - name: Build universal Mac app from this revision
         run: python macos/package.py artifacts/Airlock_Mac_Latest.zip --app-destination artifacts/Airlock.app
-      - name: Fresh install, import, connect, retrieve and revoke
+      - name: Fresh install, isolation, scoped access and revocation
         run: python scripts/smoke_mac.py artifacts/Airlock.app
       - name: Require action sandbox checks
         if: steps.sandbox.outcome != 'success'

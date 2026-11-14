@@ -8,7 +8,7 @@ let dashboard=null, selectedAgent='codex', exportConfig='', library=null, librar
 let mode='library', found=[], chosen=new Map(), created=null, phrasesDirty=false;
 const names={dot:'Dot',codex:'Codex','claude-desktop':'Claude Desktop','claude-code':'Claude Code',cursor:'Cursor',mcp:'Other agent',test:'Local verification',ironclaw:'IronClaw'};
 const marks={dot:'D',codex:'⌘','claude-desktop':'✳','claude-code':'C',cursor:'↗',mcp:'+'};
-const prompt='Use Airlock to suggest what I should focus on this week, using my memories, skills and relevant Gmail. Cite what you found, distinguish facts from suggestions, and do not change or send any email.';
+const prompt='Request fresh Airlock context from my selected memories and skills. Suggest what I should focus on this week. Cite what you found and distinguish facts from suggestions. If access is not enabled, tell me to select records and save access in Airlock Shared memory.';
 function notice(text,error=false){$('notice').textContent=text;$('notice').hidden=!text;$('notice').classList.toggle('error',error);}
 async function api(action,body={}){
  const response=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+owner},body:JSON.stringify(body),cache:'no-store'});
@@ -26,14 +26,14 @@ function stateLabel(c){return c.revoked?'Disconnected':c.expires*1000<=Date.now(
 function avatar(agent){return el('span',marks[agent]||'+','agent-avatar');}
 function connectionRow(c,compact=false){
  const row=el('div',undefined,'connection');row.append(avatar(c.agent));const info=el('div',undefined,'agent-info'),title=el('div',undefined,'agent-title');title.append(el('strong',names[c.agent]||'Agent'),el('span',stateLabel(c),'pill'+(active(c)?'':' off')));info.append(title);
- const automatic=c.mode==='automatic';info.append(el('p',automatic?'Automatic context · memories, skills & Gmail':`${c.counts.memories} memories · ${c.counts.skills} skills · ${c.counts.gmail} reviewed emails`));
+ const automatic=c.mode==='automatic';info.append(el('p',c.scope?(c.scope.disclose?`${c.scope.records.length} selected records · sharing enabled`:'No record sharing · choose access in Shared memory'):automatic?'Existing broad context · memories, skills & Gmail':`${c.counts.memories} memories · ${c.counts.skills} skills · ${c.counts.gmail} reviewed emails`));
  info.append(el('p',`${c.remaining} calls left · ${active(c)?'Until':'Ended'} ${new Date(c.expires*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}`));row.append(info);
  const actions=el('div',undefined,'connection-actions');
  if(compact){const manage=el('button','Manage');manage.onclick=()=>switchPage('agents');actions.append(manage);}
  else if(active(c)){
   const disconnect=el('button','Disconnect');disconnect.onclick=guard(async()=>{await api('revoke',{id:c.id});await refresh();notice((names[c.agent]||'Agent')+' disconnected. Future context requests are blocked.');});actions.append(disconnect);
   const options=el('details'),summary=el('summary','•••');summary.setAttribute('aria-label','More options for '+(names[c.agent]||'agent'));options.append(summary);const menu=el('div',undefined,'menu');
-  const toggle=el('button',automatic?'Use reviewed excerpts only':'Use automatic context');toggle.onclick=guard(async()=>{await api('automatic',{identifier:c.id,enabled:!automatic,approved:true});await refresh();notice(automatic?'Automatic sharing is off. Only previously reviewed excerpts can be returned.':'Automatic context enabled. Expiry and call limits are unchanged.');});menu.append(toggle);options.append(menu);actions.append(options);
+  const toggle=el('button',automatic?'Use reviewed excerpts only':'Use automatic context');toggle.onclick=guard(async()=>{await api('automatic',{identifier:c.id,enabled:!automatic,approved:true});await refresh();notice(automatic?'Automatic sharing is off. Only previously reviewed excerpts can be returned.':'Automatic context enabled. Expiry and call limits are unchanged.');});if(!c.scope){menu.append(toggle);options.append(menu);actions.append(options);}const access=el('a','Choose access');access.href='/memory';actions.append(access);
  }else{const reconnect=el('button','Connect again');reconnect.onclick=()=>openConnect(c.agent);actions.append(reconnect);}
  row.append(actions);return row;
 }
@@ -57,7 +57,7 @@ async function refresh(){
  if(!owner)throw Error('Open the Airlock app to connect this browser.');
  dashboard=await api('dashboard');$('serviceStatus').textContent='Running on this Mac';$('memoryCount').textContent=dashboard.counts.memories;$('skillCount').textContent=dashboard.counts.skills;
  const gmail=dashboard.gmail;$('gmailSummary').textContent=gmail.sign_in==='connected'?'Connected':gmail.error?'Needs attention':gmail.account?'Sign-in saved':'Not connected';
- $('autoSummary').textContent=`All ${dashboard.counts.memories} memories and ${dashboard.counts.skills} skills are available for local selection. Gmail is searched live when relevant.`;
+ $('autoSummary').textContent=`All ${dashboard.counts.memories} memories and ${dashboard.counts.skills} skills are available for local selection. New connections receive nothing until you select their records in Shared memory.`;
  renderConnections();renderClients();window.dispatchEvent(new Event('private-ai-refresh'));
 }
 $('refresh').onclick=guard(refresh);

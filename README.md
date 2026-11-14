@@ -6,14 +6,18 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.6.0 alpha 3**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+This is **0.6.0 alpha 4**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
 
 ## Open and run on Mac
 
 1. Download and unzip **Airlock_Mac_Latest.zip**. Move **Airlock.app** to Applications and open it.
 2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
-3. Import memories and skills. Gmail is optional. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
-4. Choose your existing Codex, Claude or Cursor app. Restart that AI, enable Airlock if prompted, and paste the test question. Keep Airlock open.
+3. Run the seven checks in the **fictional test workspace**. Your existing personal library, Gmail and source files stay closed.
+4. Optionally add the separate **airlock-test** connection to Codex, Claude or Cursor. Restart that AI and use the prompts shown. Only allowed fictional records are available through this connection; the AI's other tools and memories are outside Airlock's control.
+5. When ready, explicitly open the personal workspace. Import context, connect an AI, select its records in **Shared memory** and save access. New connections start with no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
+
+Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
+
 
 The alpha is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. Updates currently require replacing the app; your encrypted Application Support data is preserved.
 
@@ -74,6 +78,6 @@ See [PUBLISHING.md](PUBLISHING.md) for the one-time connection, custom domain an
 
 ## Tests
 
-The required companion adapters are now bundled in `vendor/`. CI runs the full Python suite on Linux and a fresh Mac install, import, agent connection and MCP retrieval smoke test. The Mac smoke test does not run a real AI conversation, Google login or Finder/Gatekeeper interaction. Live Ollama, live NEAR and native agent conversations are not exercised by CI.
+The required companion adapters are now bundled in `vendor/`. CI runs the full Python suite on Linux and a fresh Mac install, isolated test, explicit personal opt-in, initially closed agent connection and MCP retrieval smoke test. The Mac smoke test does not run a real AI conversation, Google login or Finder/Gatekeeper interaction. Live Ollama, live NEAR and native agent conversations are not exercised by CI.
 
 MIT licensed. See [LICENSE](LICENSE).
