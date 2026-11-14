@@ -7,9 +7,11 @@ import json
 import shutil
 import subprocess
 import zipfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '0.6.0-alpha.6'
+sys.path.insert(0, str(ROOT))
+from privacy_layer.version import VERSION, BUILD
 ARCHIVE = 'Airlock_Source_Latest.zip'
 MAC_ARCHIVE = 'Airlock_Mac_Latest.zip'
 SOURCE_DIRS = ('privacy_layer', 'ui', 'builtin', 'integrations', 'tests', 'macos', 'scripts', 'web', '.github', 'docs', 'vendor/private_ai')
@@ -75,6 +77,10 @@ def build(mac_archive=None):
         metadata.update(kind='mac-app-and-source',mac=dict(archive=MAC_ARCHIVE,sha256=mac_hash,notarized=False,runtime='installed-automatically-on-first-open'))
         (out/'release.json').write_text(json.dumps(metadata,indent=2)+'\n')
         with (out/'SHA256SUMS').open('a') as sums:sums.write(f'{mac_hash}  {MAC_ARCHIVE}\n')
+        update=dict(schema=1,version=VERSION,build=BUILD,commit=commit,archive=MAC_ARCHIVE,
+                    sha256=mac_hash,size=(out/MAC_ARCHIVE).stat().st_size,minimum_macos='12.0.0',
+                    notes=(ROOT/'docs/RELEASE_NOTES.md').read_text().strip())
+        (out/'updates.json').write_text(json.dumps(update,indent=2)+'\n')
     page = out / 'index.html'
     page.write_text(page.read_text().replace('{{VERSION}}', html.escape(VERSION))
                     .replace('{{REVISION}}', html.escape((commit[:8] if commit else source_hash[:8]) + (' (local)' if dirty else '')))

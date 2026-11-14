@@ -1,5 +1,12 @@
 # Publishing Airlock
 
+Mac app updates and numbered release publication are described in
+[UPDATES.md](docs/UPDATES.md). Increase `privacy_layer/version.py`'s VERSION and
+BUILD for each release. The workflow signs update metadata with GitHub OIDC,
+tests installation and recovery on both Mac architectures, preserves numbered
+GitHub releases, then deploys the stable website. Older apps need one manual
+installation of alpha 7 to gain the in-app updater.
+
 ## Current state
 
 This repository is prepared for GitHub Pages and, alternatively, Netlify. The existing public Airlock preview remains separate until a repository deployment succeeds. The workflow does not publish until Pages is enabled and its `PUBLISH_PAGES` repository variable is set to `true`.

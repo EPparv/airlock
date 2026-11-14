@@ -14,6 +14,11 @@
 @property NSNumber *serverPID;
 @property BOOL preparing;
 @property BOOL quitting;
+@property BOOL updating;
+@property BOOL updateReady;
+@property BOOL checkedAutomatically;
+@property NSTask *updateTask;
+@property NSMenuItem *automaticUpdatesItem;
 @end
 
 @implementation PrivacyLauncher
@@ -54,12 +59,23 @@
  self.spinner=[[NSProgressIndicator alloc] initWithFrame:NSMakeRect(215,50,30,30)];self.spinner.style=NSProgressIndicatorStyleSpinning;[self.window.contentView addSubview:self.spinner];
  self.button=[NSButton buttonWithTitle:@"Open control panel" target:self action:@selector(openPanel:)];self.button.frame=NSMakeRect(130,20,200,30);self.button.hidden=YES;[self.window.contentView addSubview:self.button];
  NSMenu *menu=[NSMenu new];NSMenuItem *item=[NSMenuItem new];[menu addItem:item];NSMenu *appMenu=[NSMenu new];item.submenu=appMenu;
+ [appMenu addItemWithTitle:@"About Airlock" action:@selector(about:) keyEquivalent:@""].target=self;
  [appMenu addItemWithTitle:@"Open control panel" action:@selector(openPanel:) keyEquivalent:@"o"].target=self;
+ [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""].target=self;
+ self.automaticUpdatesItem=[appMenu addItemWithTitle:@"Check for updates on launch" action:@selector(toggleUpdates:) keyEquivalent:@""];self.automaticUpdatesItem.target=self;
+ [NSUserDefaults.standardUserDefaults registerDefaults:@{@"AirlockCheckUpdatesOnLaunch":@YES}];self.automaticUpdatesItem.state=[NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"]?NSControlStateValueOn:NSControlStateValueOff;
+ [appMenu addItemWithTitle:@"Version history" action:@selector(versionHistory:) keyEquivalent:@""].target=self;
+ [appMenu addItem:NSMenuItem.separatorItem];
  [appMenu addItemWithTitle:@"Quit Airlock" action:@selector(terminate:) keyEquivalent:@"q"];NSApp.mainMenu=menu;
  [self.window center];[self.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];[self prepare];
 }
 - (void)ready:(NSDictionary *)record {
- dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Open control panel";self.detail.stringValue=@"Ready. Keep this app open while your AI uses your context.";[[NSWorkspace sharedWorkspace] openURL:self.url];[self.window orderOut:nil];});
+ dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Open control panel";self.detail.stringValue=@"Ready. Keep this app open while your AI uses your context.";[[NSWorkspace sharedWorkspace] openURL:self.url];[self.window orderOut:nil];
+  if(!self.checkedAutomatically){self.checkedAutomatically=YES;
+   if([NSProcessInfo.processInfo.arguments containsObject:@"--update-restored"])[self alert:@"Previous version restored" message:@"The update could not start. Airlock restored the previous app. Your library has not been reset."];
+   if(![NSProcessInfo.processInfo.arguments containsObject:@"--no-update-check"]&&[NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"])[self checkUpdates:NO];
+  }
+ });
 }
 - (void)failed {
  dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Setup could not finish. Check your internet connection, then try again. Your data has not been reset.";[self.window makeKeyAndOrderFront:nil];});
@@ -87,9 +103,61 @@
   if(self.quitting)return;NSDictionary *record=[self session];if(task.terminationStatus==0&&record)[self ready:record];else[self failed];
  });
 }
-- (void)openPanel:(id)sender { if(self.preparing){[self.window makeKeyAndOrderFront:nil];return;}[self prepare]; }
+- (void)alert:(NSString *)title message:(NSString *)message {
+ NSAlert *alert=[NSAlert new];alert.messageText=title;alert.informativeText=message;[alert addButtonWithTitle:@"OK"];[NSApp activateIgnoringOtherApps:YES];[alert runModal];
+}
+- (void)about:(id)sender {
+ NSDictionary *release=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"payload/release.json"]] options:0 error:nil];
+ [self alert:@"Airlock" message:[NSString stringWithFormat:@"Version %@\n\nUpdates are checked against a signed release from Airlock’s GitHub build. Checks send no library content. Installation requires your click.",release[@"version"]?:@"Unknown"]];
+}
+- (void)versionHistory:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://github.com/EPparv/airlock/releases"]]; }
+- (void)toggleUpdates:(id)sender {
+ BOOL value=![NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"];[NSUserDefaults.standardUserDefaults setBool:value forKey:@"AirlockCheckUpdatesOnLaunch"];self.automaticUpdatesItem.state=value?NSControlStateValueOn:NSControlStateValueOff;
+}
+- (NSTask *)updateCommand:(NSArray *)arguments {
+ NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:[self.base stringByAppendingPathComponent:@"runtime/venv/bin/python"]];
+ task.currentDirectoryURL=[NSURL fileURLWithPath:[self.base stringByAppendingPathComponent:@"app"]];
+ task.arguments=[@[@"-m",@"privacy_layer.updater"] arrayByAddingObjectsFromArray:arguments];
+ NSMutableDictionary *env=[NSProcessInfo.processInfo.environment mutableCopy];[env removeObjectForKey:@"PYTHONPATH"];[env removeObjectForKey:@"PYTHONHOME"];env[@"PYTHONDONTWRITEBYTECODE"]=@"1";task.environment=env;
+ task.standardInput=[NSFileHandle fileHandleForReadingAtPath:@"/dev/null"];task.standardError=[NSFileHandle fileHandleForWritingAtPath:@"/dev/null"];return task;
+}
+- (void)checkForUpdates:(id)sender { [self checkUpdates:YES]; }
+- (void)checkUpdates:(BOOL)manual {
+ if(self.preparing||self.updating){if(manual)[self alert:@"Airlock is busy" message:@"Let the current setup or update finish, then try again."];return;}
+ self.updating=YES;
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+  NSTask *task=[self updateCommand:@[@"check",@"--base",self.base]];self.updateTask=task;NSPipe *pipe=[NSPipe pipe];task.standardOutput=pipe;
+  NSError *error=nil;BOOL launched=[task launchAndReturnError:&error];NSDictionary *result=nil;
+  if(launched){dispatch_after(dispatch_time(DISPATCH_TIME_NOW,90*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{if(task.running)[task terminate];});NSData *data=[pipe.fileHandleForReading readDataToEndOfFile];[task waitUntilExit];if(data.length<32768)result=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];}
+  dispatch_async(dispatch_get_main_queue(),^{self.updating=NO;if(self.quitting)return;
+   if(!launched||task.terminationStatus!=0||![result isKindOfClass:NSDictionary.class]||result[@"error"]){if(manual)[self alert:@"Could not check for updates" message:result[@"error"]?:@"Check your connection and try again. Your current app is unchanged."];return;}
+   if(![result[@"available"] boolValue]){if(manual)[self alert:@"You’re up to date" message:[NSString stringWithFormat:@"Airlock %@ is installed.",result[@"current"]]];return;}
+   if(![result[@"compatible"] boolValue]){if(manual)[self alert:@"A newer version needs a newer macOS" message:@"Your current Airlock will keep working. See Version history for the new version’s requirements."];return;}
+   NSAlert *alert=[NSAlert new];alert.messageText=[NSString stringWithFormat:@"Airlock %@ is available",result[@"latest"]];alert.informativeText=[NSString stringWithFormat:@"%@\n\nUpdate and restart Airlock now? Your library and connections stay in place. Personal access closes on restart.",result[@"notes"]?:@""];[alert addButtonWithTitle:@"Update and Restart"];[alert addButtonWithTitle:@"Later"];[NSApp activateIgnoringOtherApps:YES];
+   if([alert runModal]==NSAlertFirstButtonReturn)[self installUpdate:result];
+  });
+ });
+}
+- (void)installUpdate:(NSDictionary *)release {
+ self.updating=YES;self.updateReady=NO;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];self.detail.stringValue=@"Downloading and verifying the update…";[self.window makeKeyAndOrderFront:nil];
+ NSString *status=[self.base stringByAppendingPathComponent:[NSString stringWithFormat:@"update-%@.json",NSUUID.UUID.UUIDString]];
+ NSMutableArray *args=[@[@"install",@"--app",NSBundle.mainBundle.bundlePath,@"--base",self.base,@"--expected-build",[release[@"build"] stringValue],@"--parent-pid",[NSString stringWithFormat:@"%d",getpid()],@"--status",status] mutableCopy];if(self.profileHome)[args addObjectsFromArray:@[@"--profile-home",self.profileHome]];
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+  NSTask *task=[self updateCommand:args];self.updateTask=task;task.standardOutput=[NSFileHandle fileHandleForWritingAtPath:@"/dev/null"];NSError *error=nil;BOOL launched=[task launchAndReturnError:&error];NSDictionary *state=nil;
+  NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:180];
+  while(launched&&task.running&&!self.quitting){
+   NSData *data=[NSData dataWithContentsOfFile:status];if(data.length&&data.length<8192)state=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+   if([state[@"phase"] isEqual:@"ready"]){dispatch_async(dispatch_get_main_queue(),^{self.updateReady=YES;[NSApp terminate:nil];});return;}
+   if([deadline timeIntervalSinceNow]<0){[task terminate];break;}[NSThread sleepForTimeInterval:.2];
+  }
+  NSData *data=[NSData dataWithContentsOfFile:status];if(data.length&&data.length<8192)state=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  [[NSFileManager defaultManager] removeItemAtPath:status error:nil];
+  dispatch_async(dispatch_get_main_queue(),^{self.updating=NO;if(self.quitting)return;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.detail.stringValue=@"Your current app is ready.";[self alert:@"Update not installed" message:state[@"message"]?:@"The update could not be verified or downloaded. Your current app is unchanged. Try again from Check for Updates."];});
+ });
+}
+- (void)openPanel:(id)sender { if(self.preparing||self.updating){[self.window makeKeyAndOrderFront:nil];return;}[self prepare]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self openPanel:nil];return YES; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];if(self.updateTask.running&&!self.updateReady)[self.updateTask terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
 @end
 int main(int argc,const char *argv[]){@autoreleasepool{umask(0077);NSApplication *app=NSApplication.sharedApplication;PrivacyLauncher *delegate=[PrivacyLauncher new];app.delegate=delegate;[app setActivationPolicy:NSApplicationActivationPolicyRegular];[app run];}return 0;}

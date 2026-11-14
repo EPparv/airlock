@@ -1,0 +1,1 @@
+Updates now happen inside Airlock. Choose “Check for Updates” in the Airlock menu, then “Update and Restart”. Release signatures and download checksums are verified before installation. The previous app is kept for recovery, and personal access closes on restart. GitHub Releases keeps numbered downloads and source history.
