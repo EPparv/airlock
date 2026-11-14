@@ -1,3 +1,4 @@
 # Official NEAR SDK release source, reviewed 2026-11-11. Optional live adapter.
-# Commit prepares v0.3.0; dependency installation requires network access.
-nearai-inference-sdk @ git+https://github.com/nearai/inference-sdk.git@ff591054d63a7fd218396d70f96024396280b6ff#subdirectory=py
+# Commit prepares v0.3.0. A hashed archive avoids requiring Git/Xcode on a clean Mac.
+# Dependency installation requires network access.
+nearai-inference-sdk @ https://github.com/nearai/inference-sdk/archive/ff591054d63a7fd218396d70f96024396280b6ff.tar.gz#sha256=2fb40df66b1df4377e1f4c09c5a73cd3d3033aed9d2754fcb0c25214f762f932&subdirectory=py
