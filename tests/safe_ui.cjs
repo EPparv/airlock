@@ -145,6 +145,32 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await home();await btn('Privacy & connections');await btn('Apps & data');await btn('Apple Mail');await btn('New email');
  for(const [k,v] of [['Label visible to the agent','Local action'],['Recipients','fictional@example.org'],['Subject','Local review'],['Message','Test only']])await type(k,v);
  await evaluate("Array.from(document.querySelectorAll('dialog label')).find(l=>l.textContent==='Cursor').querySelector('input').click()");await sheet('Save action');await contains('Local action');
+ // Open every secondary settings group through its normal parent, including an installed skill and source history.
+ async function visit(route,expected){
+   await home(); for(const label of route) await btn(label);
+   await contains(expected);await until("!document.querySelector('#app [aria-busy]')");
+   assert.equal(await evaluate("Array.from(document.querySelectorAll('#app button')).some(b=>b.textContent==='Try again')"),false,route.join(' / '));
+ }
+ await visit(['Context & memory','Skills','Skill packages'],'Add briefing skill');
+ await btn('Add briefing skill');await sheet('Install package');await contains('prepare-local-brief');
+ await visit(['Context & memory','Skills','Generated files'],'Files from local skill runs');
+ await visit(['Context & memory','Sources & imports'],'Claude Code memories');
+ await btn('Shared note history');await contains('No shared notes');
+ await visit(['Context & memory','Proposed changes'],'No changes waiting');
+ await visit(['Context & memory','Import context'],'Bring context from another agent');
+ await byText('summary','Bring context from another agent');await btn('Get transfer request');await contains('Copy request');
+ await visit(['Privacy & connections','Apps & data','Apple Calendar'],'New event');
+ await visit(['Privacy & connections','Apps & data','Files & databases'],'New view');
+ await visit(['Privacy & connections','Apps & data','JSON APIs'],'Add endpoint');
+ await visit(['Privacy & connections','Apps & data','Gmail search'],'Read-only');
+ await visit(['Privacy & connections','Approvals & activity','Private task approvals'],'No private tasks');
+ await visit(['Privacy & connections','Approvals & activity','Disclosure receipts'],'Refresh');
+ await visit(['Privacy & connections','Approvals & activity','Access log'],'Refresh');
+ await visit(['Privacy & connections','Private inference','Local model · Ollama'],'Check local model');
+ await visit(['Privacy & connections','Private inference','Confidential inference · NEAR'],'NEAR API key');
+ await visit(['Privacy & connections','Privacy checks','Test agent connection'],'Connect fictional workspace');
+ await visit(['Privacy & connections','Privacy checks','Private inference walkthrough'],'Run a private task');
+ await visit(['Privacy & connections','Connected agents'],'Cursor');
  await home();await btn('Privacy & connections');await btn('App settings');await btn('Lock workspace');await sheet('Lock workspace');
  await until("location.pathname==='/workspace' && document.querySelectorAll('nav button').length===3");assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
  if(process.argv[4]){
