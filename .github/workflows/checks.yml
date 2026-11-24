@@ -37,11 +37,12 @@ jobs:
         env:
           PYTHONPATH: .
         run: python -m pytest -q tests
-      - name: Guided test screen in a real browser
-        run: node tests/safe_ui.cjs "$(command -v python)" "$(command -v google-chrome)" artifacts/browser
       - name: Build standalone fictional preview
         run: PYTHONPATH=. python scripts/build_workspace_preview.py artifacts/browser/Airlock-Preview.html
+      - name: Guided test screen in a real browser
+        run: node tests/safe_ui.cjs "$(command -v python)" "$(command -v google-chrome)" artifacts/browser
       - uses: actions/upload-artifact@v4
+        if: '!cancelled()'
         with:
           name: workspace-preview
           path: |

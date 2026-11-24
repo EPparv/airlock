@@ -3,8 +3,8 @@
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),net=require('node:net'),{spawn}=require('node:child_process'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'airlock-safe-ui-'));
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-let service,chrome,n=0,buffer='',session;const pending=new Map(),errors=[];
-function send(method,params={},sessionId){return new Promise((resolve,reject)=>{const id=++n;const timer=setTimeout(()=>{pending.delete(id);reject(Error('Timed out: '+method));},10000);pending.set(id,{resolve,reject,timer});chrome.stdio[3].write(JSON.stringify({id,method,params,...(sessionId?{sessionId}: {})})+'\0');});}
+let service,chrome,n=0,buffer='',session,browserError='';const pending=new Map(),errors=[];
+function send(method,params={},sessionId){return new Promise((resolve,reject)=>{const id=++n;const timer=setTimeout(()=>{pending.delete(id);reject(Error('Timed out: '+method+' '+browserError));},sessionId?15000:45000);pending.set(id,{resolve,reject,timer});chrome.stdio[3].write(JSON.stringify({id,method,params,...(sessionId?{sessionId}: {})})+'\0');});}
 const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},session);if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
 async function until(expression){for(let i=0;i<80;i++){if(await evaluate(expression))return;await pause(100);}throw Error('UI did not reach: '+expression);}
 async function click(id){await evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);}
@@ -13,10 +13,18 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  const env={...process.env,PYTHONPATH:root};
  service=spawn(process.argv[2]||'python3',[path.join(__dirname,'safe_ui_fixture.py'),tmp,String(port)],{cwd:root,env,stdio:['ignore','ignore','pipe']});let serverError='';service.stderr.on('data',d=>serverError+=d);
  for(let i=0;i<60;i++){try{if((await fetch(`http://127.0.0.1:${port}/`)).ok)break;}catch{}if(i===59)throw Error(serverError||'Fixture did not start');await pause(100);}
- chrome=spawn(process.argv[3]||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--remote-debugging-pipe','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-background-networking','--user-data-dir='+path.join(tmp,'chrome'),'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe']});
+ chrome=spawn(process.argv[3]||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--remote-debugging-pipe','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-background-networking','--disable-dev-shm-usage','--disable-gpu','--user-data-dir='+path.join(tmp,'chrome'),'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe']});
+ chrome.stderr.on('data',chunk=>{browserError=(browserError+chunk.toString()).slice(-1500);});
  chrome.stdio[4].on('data',data=>{buffer+=data.toString();let at;while((at=buffer.indexOf('\0'))>=0){const raw=buffer.slice(0,at);buffer=buffer.slice(at+1);if(!raw)continue;const message=JSON.parse(raw),p=pending.get(message.id);if(p){pending.delete(message.id);clearTimeout(p.timer);message.error?p.reject(Error(JSON.stringify(message.error))):p.resolve(message.result);}else if(message.method==='Runtime.exceptionThrown')errors.push(message.params.exceptionDetails.text);}});
  chrome.on('exit',(code,signal)=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Chrome exited: '+(signal||code)));}pending.clear();});
- const target=await send('Target.createTarget',{url:'about:blank'});session=(await send('Target.attachToTarget',{targetId:target.targetId,flatten:true})).sessionId;
+ let tab;
+ for(let i=0;i<100&&!tab;i++){
+  const list=await send('Target.getTargets');
+  tab=list.targetInfos.find(t=>t.type==='page');
+  if(!tab)await pause(100);
+ }
+ if(!tab)throw Error('Chrome did not open its initial page. '+browserError);
+ session=(await send('Target.attachToTarget',{targetId:tab.targetId,flatten:true})).sessionId;
  await send('Runtime.enable',{},session);await send('Page.enable',{},session);
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace#fictional-browser-owner`},session);
