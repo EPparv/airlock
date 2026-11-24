@@ -133,7 +133,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await home();await btn('Connect agent');await btn('Cursor');await titled('Cursor');
  await byText('summary','Shared records · 0 selected');await type('Follow up about the revised fictional pilot.','excerpt','#app');
  assert.ok(!(await evaluate("document.querySelector('#app').innerText.includes('FICTIONAL_PRIVATE_PERSONAL')")));
- await btn('Connect Cursor');await until("document.querySelector('dialog[open] h2')?.textContent==='Connection configured'");
+ await btn('Connect Cursor');await until("document.querySelector('dialog[open] h2')?.textContent==='Settings saved'");
  await sheet('Check connection');await until("document.querySelector('dialog').innerText.includes('Waiting for the agent')");await sheet('Close');
  assert.ok(fs.existsSync(path.join(tmp,'profile/.cursor/mcp.json')));
  const savedCursor=await evaluate("api('workspace-state').then(s=>s.agents.find(g=>g.name==='cursor'&&g.status==='configured'))");assert.equal(savedCursor.scope.records.length,1);assert.equal(savedCursor.scope.disclose_records.length,1);

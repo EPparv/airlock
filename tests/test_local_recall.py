@@ -7,6 +7,7 @@ import zipfile
 import pytest
 
 from privacy_layer import semantic
+from privacy_layer.automatic import ranked
 from privacy_layer.agent_memory import AgentMemory
 from privacy_layer.context import ContextHub, parse_context
 from privacy_layer.core import Denied, EncryptedStore, Gateway
@@ -91,26 +92,50 @@ def test_native_bridge_uses_only_stdin_and_rejects_partial_or_invalid_results(mo
         assert semantic.apple_similarities('private fixture', ['one passage']) is None
 
 
+@pytest.mark.parametrize('background,expected', [(0.03, True), (0.22, False)])
+def test_native_selection_requires_separation_from_query_background(monkeypatch, background, expected):
+    row = {'ref': 'a', 'kind': 'memories', 'text': 'We repair bikes.'}
+    def score(query, texts):
+        assert texts[1:] == list(semantic.BACKGROUND)
+        return [0.2472788691520691, *([background] * len(semantic.BACKGROUND))]
+    monkeypatch.setattr(semantic, 'apple_similarities', score)
+    plan = semantic.related_plan([row], 'bicycle', [])
+    assert bool(plan['matches']) == expected
+    assert plan['model_passages'] == 1
+
+
 @pytest.mark.skipif(sys.platform != 'darwin', reason='Apple Natural Language needs macOS')
-def test_installed_native_model_ranks_an_actual_paraphrase():
-    scores = semantic.apple_similarities('How can I fix my bicycle?',
-                                         ['Can someone help repair my bike?', 'The soup contains carrots.'])
-    if scores is None:
-        # Distinguish a missing OS model from a broken script or invalid bridge.
+@pytest.mark.parametrize('query,paraphrase', [
+    ('How can I fix my bicycle?', 'Can someone help repair my bike?'),
+    ('How can I buy a car?', 'How can I purchase an automobile?'),
+])
+def test_installed_native_model_accepts_paraphrases_and_rejects_unrelated_passages(query, paraphrase, monkeypatch):
+    rows = [{'ref': str(i), 'kind': 'memories', 'text': text}
+            for i, text in enumerate([paraphrase, 'The soup contains carrots.', 'A violinist played the final chord.'])]
+    assert not ranked(rows, query)
+    observations = []
+    native = semantic.apple_similarities
+    def observe(question, texts):
+        scores = native(question, texts)
+        observations.append(scores)
+        return scores
+    monkeypatch.setattr(semantic, 'apple_similarities', observe)
+    plan = semantic.related_plan(rows, query, [])
+    if plan['model'] is None:
         probe = subprocess.run(['/usr/bin/swift', '-e',
                                 'import NaturalLanguage; print(NLEmbedding.sentenceEmbedding(for: .english) == nil)'],
                                capture_output=True, text=True, check=True)
         if probe.stdout.strip() == 'true':
             pytest.skip('English sentence embedding is unavailable on this Mac')
         pytest.fail('The installed Apple sentence embedding returned no scores')
-    assert scores[0] > scores[1]
-    assert scores[0] >= semantic.MIN_SIMILARITY
+    assert plan['matches'] == [['0', 0, 'sentence similarity']], observations
+    assert not semantic.related_plan(rows[1:], query, [])['matches'], observations
 
 
 def test_cursor_reuses_original_semantic_selection_when_model_availability_changes(env, monkeypatch):
     g, _ = env
     save(env, [f'Bicycle checkpoint {i} is open.' for i in range(14)] + ['We repair bikes nearby.'])
-    monkeypatch.setattr(semantic, 'apple_similarities', lambda q, texts: [.84] * len(texts))
+    monkeypatch.setattr(semantic, 'apple_similarities', lambda q, texts: [.84 if text not in semantic.BACKGROUND else .02 for text in texts])
     a = grant(g)
     result = read(g, a, 'bicycle')
     assert result['more_available']

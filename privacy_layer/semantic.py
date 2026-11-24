@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import re
+from statistics import median
 import subprocess
 import sys
 
@@ -11,7 +12,17 @@ from .automatic import query_terms, words
 
 MAX_MODEL_PASSAGES = 160
 MAX_RELATED = 4
-MIN_SIMILARITY = 0.60
+# Apple's cosine scores for real paraphrases can be around 0.25. Require
+# both an absolute floor and separation from unrelated text on this query.
+MIN_SIMILARITY = 0.16
+BACKGROUND_MARGIN = 0.07
+BACKGROUND = (
+    'The participants arranged chairs before the meeting.',
+    'How do I grow herbs on a windowsill?',
+    'A musician chose a slower tempo for the encore.',
+    'When is the next exhibition at the gallery?',
+    'Smooth pebbles covered the riverbank.',
+)
 QUALIFIER = re.compile(r'\b(?:not|never|no|only|unless|except|instead|but|however|correction|must)\b', re.I)
 
 
@@ -97,12 +108,15 @@ def related_plan(rows, query, lexical):
         model_candidates.extend((reference, index, sentence) for index, sentence in sample(segments, 3))
 
     model_candidates = sample(model_candidates, MAX_MODEL_PASSAGES)
-    scores = apple_similarities(query, [sentence for _, _, sentence in model_candidates])
-    if scores is not None:
-        plan.update(model='Apple English sentence embedding', model_passages=len(scores))
-        for (reference, index, _), score in zip(model_candidates, scores):
-            if score >= MIN_SIMILARITY and (reference not in hits or score > hits[reference][0]):
-                hits[reference] = (score, index, 'sentence similarity')
+    if model_candidates:
+        texts = [sentence for _, _, sentence in model_candidates]
+        scores = apple_similarities(query, [*texts, *BACKGROUND])
+        if scores is not None:
+            cutoff = max(MIN_SIMILARITY, median(scores[len(texts):]) + BACKGROUND_MARGIN)
+            plan.update(model='Apple English sentence embedding', model_passages=len(texts))
+            for (reference, index, _), score in zip(model_candidates, scores):
+                if score >= cutoff and (reference not in hits or score > hits[reference][0]):
+                    hits[reference] = (score, index, 'sentence similarity')
 
     for ref, (_, idx, basis) in sorted(hits.items(), key=lambda entry: -entry[1][0])[:MAX_RELATED]:
         plan['matches'].append([ref, idx, basis])
