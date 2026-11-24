@@ -1,15 +1,17 @@
 'use strict';
-const localAgents = ['claude-desktop', 'codex', 'cursor', 'claude-code'];
+const featuredAgents = ['muse-code', 'claude-desktop', 'codex', 'cursor', 'claude-code'];
+const otherLocalAgents = ['gemini-cli', 'vscode', 'openclaw'];
+const localAgents = [...featuredAgents, ...otherLocalAgents];
 addPage('connect', 'Connect agent', 'home', host => {
   const list = el('div', null, 'menu');
   host.append(list);
-  for (const id of localAgents) row(list, names[id], () => go('agent', {
+  for (const id of featuredAgents) row(list, names[id], () => go('agent', {
     agent: id
   }));
+  row(list, 'Cloud agents', () => go('remote-clients'));
   const more = details(host, 'Other clients');
-  for (const id of ['mcp', 'ironclaw', 'dot']) row(more, names[id], () => go('agent', {
-    agent: id
-  }));
+  for (const id of [...otherLocalAgents, 'mcp', 'ironclaw', 'dot']) row(more, names[id], () => id === 'ironclaw' && !preview ?
+    go('remote-create', {vendor: id}) : go('agent', {agent: id}));
   choose(more, 'Share exact excerpts', 'excerpts');
 }, false);
 
@@ -21,7 +23,7 @@ addPage('connections', 'Connected agents', 'privacy', async (host, options, bar)
   const list = el('div', null, 'menu');
   host.append(list);
   if (!current.length) empty(list, 'No agents connected.');
-  for (const a of current) item(list, names[a.name] || a.name, a.scope ? (a.scope.records.length +
+  for (const a of current) item(list, connectionName(a), a.scope ? (a.scope.records.length +
       ' selected · ' + (a.last_read ? 'Last read ' + when(a.last_read) : 'Waiting for first request')) :
     'Existing ' + a.mode + ' connection', () => go('agent', {
       id: a.id,
@@ -29,7 +31,7 @@ addPage('connections', 'Connected agents', 'privacy', async (host, options, bar)
     }));
   if (past.length) {
     const last = details(host, 'Past connections');
-    for (const a of past) item(last, names[a.name] || a.name, a.status === 'expired' ? 'Expired' : 'Revoked',
+    for (const a of past) item(last, connectionName(a), a.status === 'expired' ? 'Expired' : 'Revoked',
       () => go('agent', {
         id: a.id,
         agent: a.name
@@ -54,7 +56,7 @@ function limits(form) {
 }
 
 function revokeAgent(a) {
-  confirmAction('Revoke ' + (names[a.name] || a.name) + '?', 'This connection will lose access immediately.',
+  confirmAction('Revoke ' + (connectionName(a)) + '?', 'This connection will lose access immediately.',
     'Revoke connection', async () => {
       await api('revoke', {
         id: a.id
@@ -74,6 +76,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   const existing = opt.id && ws.agents.find(a => a.id === opt.id && a.name === agent);
   if (opt.id && !existing) throw Error('This connection no longer exists.');
   if (existing) {
+    bar.querySelector('h1').textContent = connectionName(existing);
     host.closest('.page').querySelector('.back').replaceWith(button('Connected agents', () => go(
       'connections'), 'back'));
     host.append(facts([
@@ -134,6 +137,12 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   const compute = check(devices, 'Allow private tasks on selected records', scope?.compute);
   note(devices, 'Sending mail and releasing a private task result each require your approval.');
   const readLimits = existing ? null : limits(details(form, 'Connection limits'));
+  let install;
+  if (!existing && !preview && localAgents.includes(agent)) {
+    const setup = details(form, 'Client settings');
+    install = check(setup, 'Save to the default profile on this Mac', true);
+    note(setup, 'For a custom profile, turn this off and copy the configuration after connecting.');
+  }
   if (existing && !existing.scope) {
     note(form, 'Saving assigns the selected records to this existing connection.');
     const mode = existing.mode === 'automatic',
@@ -175,6 +184,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
       proposals: proposals.checked,
       mail: mail.checked,
       calendar: calendar.checked,
+      ...(install ? {install: install.checked} : {}),
       ...(readLimits ? readLimits() : {})
     });
     if (existing) {
@@ -183,7 +193,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
       return;
     }
     await go('connections');
-    const f = modal(preview ? 'Connection added to preview' : 'Connection configured');
+    const f = modal(preview ? 'Connection added to preview' : response.installed ? 'Settings saved' : 'Finish in your agent');
     note(f, preview ? 'These permissions apply to this preview.' : response.message ||
       'Restart your agent and enable Airlock.');
     if (response.credential_path) f.append(facts([
@@ -191,8 +201,9 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
     ]));
     if (response.config) {
       const box = details(f, 'Connection configuration');
-      const v = typeof response.config === 'string' ? response.config : JSON.stringify(response.config,
-        null, 2);
+      const config = response.client_config || response.config;
+      const v = typeof config === 'string' ? config : JSON.stringify(config, null, 2);
+      if (response.installed === false) box.parentElement.open = true;
       put(box, el('pre', v), button('Copy configuration', () => copyText(v)));
     }
     const prompt = 'Use Airlock to check your access, then retrieve my selected context.';

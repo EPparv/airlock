@@ -13,17 +13,21 @@ from .agent_memory import AgentMemory
 from .clients import CLIENTS, RELATIVE_CONFIGS, connect, connection_context, selected_scope
 from .context import ContextHub
 from .core import Denied, digest, EMAIL
-from .data_view import api_settings, fetch_api, field_names, inspect_file, project, screened_view, select_fields
+from .data_view import api_settings, fetch_api, field_names, inspect_file, project, screened_view, select_fields, submit_api, write_payload
+from .live_data import append_file, append_payload, choose_file, inspect_live, live_payload, picker_available
 from .device_apps import ExampleApps
 from .privacy_engine import PrivacyEngine
 
-WORKSPACE_ASSETS = { '/'+name: name for name in ('workspace.css','workspace.js','workspace-agents.js','workspace-context.js','workspace-privacy.js','workspace-actions.js') }
+WORKSPACE_ASSETS = { '/'+name: name for name in ('workspace.css','workspace.js','workspace-agents.js','workspace-context.js','workspace-privacy.js','workspace-actions.js',
+                                                 'workspace-handoffs.js','workspace-remote.js','workspace-prompt.js') }
 
 TOOLS = {'list_private_actions': set(), 'request_private_action': {'reference'},
          'private_action_status': {'reference'}, 'read_private_fields': {'reference'},
          'prepare_private_followup': {'source','subject','body','request_key'}}
 MAX_ATTACHMENT = 4 * 1024 * 1024
-LABELS = {'email': 'Send email', 'event': 'Create calendar event', 'data': 'Read selected fields', 'api': 'Read API fields'}
+LABELS = {'email': 'Send email', 'event': 'Create calendar event', 'data': 'Read selected fields', 'api': 'Read API fields',
+          'live_data': 'Read live fields', 'api_write': 'Submit API request', 'file_append': 'Append to a text file'}
+READ_ACTIONS = {'data', 'live_data', 'api'}
 
 
 def short(value, maximum, title):
@@ -128,9 +132,10 @@ class Workspace:
         if kind not in LABELS or not isinstance(audience, list) or not 1 <= len(audience) <= 12 or any(not isinstance(x,str) for x in audience):
             raise Denied('Choose an action and at least one connected agent.')
         label = short(label, 80, 'the label visible to the agent')
-        if self.example and kind == 'api':
-            raise Denied('Live API access requires a personal workspace.')
-        payload = {'email': email_payload, 'event': event_payload, 'data': data_payload, 'api': api_payload}[kind](values)
+        if self.example and kind in ('api', 'api_write', 'live_data', 'file_append'):
+            raise Denied('Live connectors require a personal workspace.')
+        payload = {'email': email_payload, 'event': event_payload, 'data': data_payload, 'api': api_payload,
+                   'live_data': live_payload, 'api_write': write_payload, 'file_append': append_payload}[kind](values)
         item = dict(id=operation_id or secrets.token_hex(16), kind=kind, label=label, audience=sorted(set(audience)),
                     payload=payload, state='ready', created=self.g.clock(), applicant='', asked=0, completed=0)
         if grant:
@@ -192,8 +197,8 @@ class Workspace:
         with self.g.store.transaction() as d:
             return self.visible(d['device_actions'][key],grant)
 
-    def configure(self, agent, identifier, selection, proposals, mail, calendar, lifetime=86400, max_calls=100, excerpts=True, compute=None, excerpt_selection=None):
-        if self.example or agent not in CLIENTS or type(excerpts) is not bool or (compute is not None and type(compute) is not bool) or type(mail) is not bool or type(calendar) is not bool or not isinstance(identifier,str):
+    def configure(self, agent, identifier, selection, proposals, mail, calendar, lifetime=86400, max_calls=100, excerpts=True, compute=None, excerpt_selection=None, install=True):
+        if self.example or agent not in CLIENTS or type(install) is not bool or type(excerpts) is not bool or (compute is not None and type(compute) is not bool) or type(mail) is not bool or type(calendar) is not bool or not isinstance(identifier,str):
             raise Denied('Choose a supported agent and its permissions.')
         scope = selected_scope(self.g, selection, proposals)
         if excerpt_selection is not None:
@@ -213,7 +218,7 @@ class Workspace:
                 raise Denied('Choose an active scoped connection.')
             AgentMemory(self.g).configure(identifier, **scope)
         else:
-            result = connect(self.g, agent=agent, approved=True, install=agent in RELATIVE_CONFIGS, lifetime=lifetime, max_calls=max_calls, scope=scope, home=getattr(self.g.sources,'context_home',None))
+            result = connect(self.g, agent=agent, approved=True, install=install and agent in RELATIVE_CONFIGS, lifetime=lifetime, max_calls=max_calls, scope=scope, home=getattr(self.g.sources,'context_home',None))
         return result
 
     def call(self, grant, tool, args):
@@ -234,14 +239,17 @@ class Workspace:
             if tool == 'private_action_status':
                 return self.visible(item, grant)
             if tool == 'request_private_action':
-                if item['kind'] in ('api','data'):
+                if item['kind'] in READ_ACTIONS:
                     raise Denied('Use read_private_fields for this view.')
                 if item['state'] == 'ready':
                     item.update(state='pending', applicant=grant['id'], asked=self.g.clock(), policy_at_request=grant.get('policy_revision',0))
                 return self.visible(item, grant)
-            if item['kind'] not in ('api','data') or item['state'] != 'ready':
+            if item['kind'] not in READ_ACTIONS or item['state'] != 'ready':
                 raise Denied('This connection has no such data view.')
             data = copy.deepcopy(item['payload'])
+        if item['kind'] == 'live_data':
+            result = inspect_live(data['path'], data['table'], data['identity'], data['fields'])
+            return screened_view(PrivacyEngine(self.g,grant),data['fields'],result['rows'],result['truncated'])
         if item['kind'] == 'api':
             rows, truncated = fetch_api(data)
             return screened_view(PrivacyEngine(self.g,grant),data['fields'],project(rows,data['fields']),truncated)
@@ -270,9 +278,14 @@ class Workspace:
         if attachment:
             attachment = dict(name=attachment['name'], bytes=base64.b64decode(attachment['data'], validate=True))
         try:
-            if self.apps.perform(kind, payload, attachment) is not True:
-                raise RuntimeError()
-            status = 'sent' if kind == 'email' else 'created'
+            if kind == 'api_write':
+                status = 'submitted' if submit_api(payload) else 'unconfirmed'
+            elif kind == 'file_append':
+                status = 'appended' if append_file(payload) else 'unconfirmed'
+            else:
+                if self.apps.perform(kind, payload, attachment) is not True:
+                    raise RuntimeError()
+                status = 'sent' if kind == 'email' else 'created'
         except Exception:
             status = 'unconfirmed'
         with self.g.store.transaction() as d:
@@ -313,8 +326,8 @@ class Workspace:
         else:
             grants = [g for g in grants if g['agent'] != 'test']
         memory_state = memory.state()
-        return {'example':self.example, 'actions':actions[::-1], 'receipts':receipts[::-1],
-                'agents':[{'id':g['id'],'name':g['agent'],'scope':g['scope'], 'remaining':g['remaining'], 'expires':g['expires'], 'last_read':g['last_context_read'], 'mode':g['mode'], 'capabilities':g['capabilities'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
+        return {'example':self.example, 'local_file_picker':not self.example and picker_available(), 'actions':actions[::-1], 'receipts':receipts[::-1],
+                'agents':[{'id':g['id'],'name':g['agent'],'display_name':g.get('display_name'),'scope':g['scope'], 'remaining':g['remaining'], 'expires':g['expires'], 'last_read':g['last_context_read'], 'mode':g['mode'], 'capabilities':g['capabilities'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
                            'status':'revoked' if g['revoked'] else 'expired' if g['expires']<=self.g.clock() or not g['remaining'] else 'used' if g['last_context_read'] else 'configured'}
                           for g in grants],
                 'records':memory_state['records'], 'proposals':[p for p in memory_state['proposals'] if p['status']=='pending']}
@@ -401,6 +414,11 @@ class Workspace:
         if action == 'workspace-api-fields' and not self.example and set(body) == {'url','credential','array_key'}:
             rows, truncated = fetch_api(api_settings(**body))
             return {'fields':field_names(rows),'count':len(rows),'truncated':truncated}
+        if action == 'workspace-select-file' and not self.example and not body:
+            return {'path':choose_file()}
+        if action == 'workspace-live-fields' and not self.example and set(body) == {'path','table','identity'}:
+            result = inspect_live(body['path'], body['table'], body['identity'])
+            return {k: result[k] for k in ('identity','tables','fields')}
         if action == 'workspace-fields' and set(body) == {'name','data','table'}:
             tables, fields, rows, truncated = inspect_file(body['name'], body['data'], body['table'])
             return {'tables':tables,'fields':fields,'count':len(rows),'truncated':truncated}

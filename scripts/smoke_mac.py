@@ -26,6 +26,7 @@ def check(app, cached_runtime=None, window_probe=None):
         if cached_runtime:(base/'runtime').symlink_to(Path(cached_runtime).resolve(),target_is_directory=True)
         resources=Path(app).resolve()/'Contents/Resources'
         env={k:v for k,v in os.environ.items() if not k.startswith(('PYTHON','OLLAMA','NEAR_'))}
+        env.pop('XDG_CONFIG_HOME',None)
         env.update(PATH='/usr/bin:/bin:/usr/sbin:/sbin',PRIVATE_AI_PROFILE_HOME=str(home),PYTHONDONTWRITEBYTECODE='1')
         native_process=None
         launch=None;personal_owner=None;personal_initialized=False
@@ -106,7 +107,7 @@ def check(app, cached_runtime=None, window_probe=None):
             assert not (base/'app/.private/key.lock').exists()
             assert canary.read_bytes()==b'EXISTING_PERSONAL_VAULT_CANARY'
             parsed=urlsplit(launch['url']);origin=f'{parsed.scheme}://{parsed.netloc}'
-            for path in ('/','/safe-test.js','/safe-test.css','/workspace','/workspace.js','/workspace.css'):
+            for path in ('/','/safe-test.js','/safe-test.css','/workspace','/workspace.js','/workspace.css','/workspace-remote.js','/workspace-prompt.js','/workspace-handoffs.js'):
                 with opener.open(origin+path) as r:assert r.status==200
             for step in ('recall','privacy','correction','propose','approve','persistence','revoke'):
                 assert api('test-check',{'step':step})['passed'],step
@@ -146,7 +147,35 @@ def check(app, cached_runtime=None, window_probe=None):
             assert '415 555 0123' not in str(result)
             assert api('client-status',{'id':entry['id']},personal=True)['status']=='verified'
             assert raw not in (base/'app/.private/connections.enc').read_bytes()
+            # Two independently configured agents can share a record and pass one approved result.
+            muse=api('client-connect', {'agent':'muse-code','approved':True,'lifetime':3600,
+                     'max_calls':30,'selection':{r['ref']:r['text_hash'] for r in selectable}}, personal=True)
+            muse_config=json.loads((home/'.config/muse/settings.json').read_text())['mcp_servers']['airlock']
+            assert muse_config['transport']=='stdio' and muse_config['mode']=='optional'
+            assert all(muse_config[k]==muse[k] for k in ('command','args'))
+            assert muse['installed'] and 'November 20' in str(call(muse,'get_private_context',{'query':'Cypress'}))
+            assignment='Prepare the fictional release checklist.'
+            routing={'worker':entry['id'],'recipient':muse['id']}
+            reviewed=api('handoff-check-assignment',{**routing,'instruction':assignment},personal=True)
+            api('handoff-assign',{**routing,'instruction':reviewed['text'],
+                                  'approval':reviewed['approval'],'approved':True},personal=True)
+            handle=call(entry,'list_agent_handoffs',{})['handoffs'][0]['reference']
+            assert call(entry,'claim_agent_handoff',{'reference':handle})['instruction']==assignment
+            report='The release checklist is ready.'
+            call(entry,'submit_agent_handoff',{'reference':handle,'result':report,'memory_proposal_id':''})
+            assert call(muse,'list_agent_handoffs',{})['handoffs']==[]
+            job=api('handoff-state',personal=True)['handoffs'][0]
+            api('handoff-release',{'id':job['id'],'revision':job['revision'],'text':report,'approved':True},personal=True)
+            recipient_handle=call(muse,'list_agent_handoffs',{})['handoffs'][0]['reference']
+            assert recipient_handle!=handle and call(muse,'read_agent_handoff',{'reference':recipient_handle})['result']==report
+            model=api('prompt-create',{'name':'Local smoke','provider':'ollama','model':'fictional','approved':True},personal=True)
+            catalog_request=Request(model['base_url'].rstrip('/')+'/models',headers={'Authorization':'Bearer '+model['token']})
+            with opener.open(catalog_request,timeout=5) as response:
+                assert json.load(response)['data'][0]['id']=='airlock'
             api('close-personal');call(entry,'get_private_context',{'query':'Cypress'},denied=True)
+            try:opener.open(catalog_request,timeout=5)
+            except HTTPError as error:assert error.code in (401,403,404)
+            else:raise AssertionError('Model credential survived workspace lock')
             first=launch['pid'];stop();launch=start();assert launch['pid']!=first
             assert not api('test-state')['personal_open']
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
@@ -155,7 +184,7 @@ def check(app, cached_runtime=None, window_probe=None):
             assert 'November 20' in str(call(entry,'get_private_context',{'query':'Cypress launch'}))
             api('revoke',{'id':entry['id']},personal=True)
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'archived_executable':bool(window_probe),'native_window':bool(window_probe),'finder_ui_tested':False}))
+            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'approved_cross_agent_handoff':True,'personal_model_key_revoked_on_lock':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'archived_executable':bool(window_probe),'native_window':bool(window_probe),'finder_ui_tested':False}))
         finally:
             if native_process and native_process.poll() is None:
                 native_process.terminate()

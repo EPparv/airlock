@@ -207,3 +207,146 @@ def test_selection_failures_create_no_connection(bundle,tmp_path,monkeypatch,sel
         r=c.post('/api/client-connect',json={'agent':'codex','approved':True,'install':False,'selection':selection,'proposals':proposals},headers={'Authorization':'Bearer owner'})
         assert r.status_code==400,r.text
     assert not bundle[0].list_grants()
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile_environment(monkeypatch):
+    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE'):
+        monkeypatch.delenv(key,raising=False)
+
+
+PROFILE_FIXTURES = [
+    ('muse-code', '.config/muse/settings.json', ('mcp_servers',), {'transport':'stdio','mode':'optional'}),
+    ('gemini-cli', '.gemini/settings.json', ('mcpServers',), {}),
+    ('vscode', '.copilot/mcp-config.json', ('mcpServers',), {'type':'stdio'}),
+    ('openclaw', '.openclaw/openclaw.json', ('mcp','servers'), {'transport':'stdio'}),
+]
+
+
+def server_list(profile, keys):
+    for key in keys:
+        profile = profile[key]
+    return profile
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_client_profile_round_trip_scoped_and_revocable(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    gateway = bundle[0]
+    root, home = tmp_path/'Airlock App', tmp_path/'user profile'
+    monkeypatch.setattr(clients, 'ROOT', root)
+    original = {'theme':'custom'}
+    if agent=='muse-code':
+        original['schema_version']=1
+    servers = original
+    for key in keys:
+        servers = servers.setdefault(key,{})
+    servers['unrelated'] = {'command':'custom-tool','env':{'EXISTING_SETTING':'preserve'}}
+    settings = home/path
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps(original))
+    for _ in range(2):
+        result = clients.connect(gateway, agent=agent, approved=True, home=home)
+        assert result['installed'] and result['path']==str(settings)
+        exported = json.loads(result['config'])
+        entry = server_list(exported,keys)['airlock']
+        assert entry == {**options, 'command':result['command'], 'args':result['args']}
+        updated = json.loads(settings.read_text())
+        assert server_list(updated,keys).pop('airlock') == entry
+        assert updated == original
+        token_file = Path(entry['args'][entry['args'].index('--token-file')+1])
+        token = token_file.read_text()
+        assert stat.S_IMODE(token_file.stat().st_mode)==0o600
+        assert token not in settings.read_text() and token not in result['config']
+        with pytest.raises(Denied):
+            gateway.call(token,'get_private_context',{'query':''})
+        gateway.revoke(result['id'])
+        with pytest.raises(Denied):
+            gateway.call(token,'privacy_status',{})
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_client_export_only_never_touches_a_profile(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    result=clients.connect(bundle[0],agent=agent,approved=True,install=False,home=home)
+    assert not result['installed'] and not home.exists()
+    assert server_list(json.loads(result['config']), keys)['airlock']['command'] == result['command']
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_clients_reject_conflicting_names_and_keep_permissions(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    root, home = tmp_path/'app', tmp_path/'profile'
+    monkeypatch.setattr(clients, 'ROOT', root)
+    entry = clients.server_entry(root/'.private/custom.token')
+    profile=json.loads(clients.json_config('',entry,agent=agent))
+    server_list(profile,keys)['airlock']['env'] = {'OWNER_SETTING':'preserve'}
+    target=home/path
+    target.parent.mkdir(parents=True)
+    original=json.dumps(profile)
+    target.write_text(original)
+    with pytest.raises(Denied,match='unrelated'):
+        clients.connect(bundle[0],agent=agent,approved=True,home=home)
+    assert target.read_text()==original
+    assert all(g['revoked'] for g in bundle[0].list_grants())
+    assert not list((root/'.private/clients').glob('*.token'))
+
+
+@pytest.mark.parametrize('agent,content', [
+    ('gemini-cli','{ // settings with comments\n  "mcpServers": {},\n}'),
+    ('openclaw','{mcp: {servers: {}}, channels: {}}'),
+    ('openclaw','{"mcp":{"servers":{"$include":"./local-servers.json5"}}}'),
+])
+def test_custom_profile_format_offers_owner_manual_setup(bundle,tmp_path,monkeypatch,agent,content):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    target=home/clients.RELATIVE_CONFIGS[agent]
+    target.parent.mkdir(parents=True)
+    target.write_text(content)
+    result=clients.connect(bundle[0],agent=agent,approved=True,home=home)
+    assert not result['installed'] and result['config'] and target.read_text()==content
+    assert clients.connection_status(bundle[0],result['id'])['status']=='waiting'
+
+
+def test_custom_copilot_home_uses_export_without_writing_to_default(bundle,tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    monkeypatch.setenv('COPILOT_HOME',str(tmp_path/'custom'))
+    home=tmp_path/'profile'
+    result=clients.connect(bundle[0],agent='vscode',approved=True,home=home)
+    assert not result['installed'] and not home.exists()
+    assert 'custom client profile' in result['message']
+
+
+def test_workspace_can_export_configuration_for_a_custom_profile(bundle,tmp_path,monkeypatch):
+    from privacy_layer.workspace import Workspace
+    gateway,sources,*_=bundle
+    gateway.device_apps = object()
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    sources.context_home=tmp_path/'profile'
+    body = dict(agent='muse-code',identifier='',selection={},proposals=False,mail=False,calendar=False)
+    result=Workspace(gateway).owner('workspace-connect',{**body,'install':False})
+    assert not result['installed'] and 'mcp_servers' in result['config']
+    assert not (sources.context_home/'.config/muse/settings.json').exists()
+    with pytest.raises(Denied):
+        Workspace(gateway).owner('workspace-connect',{**body,'install':'false'})
+
+
+def test_muse_profile_respects_both_documented_config_spellings(bundle,tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    path=home/'.config/muse/settings.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"schema_version":1,"mcpServers":{"existing":{"command":"keep"}}}')
+    result=clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+    saved=json.loads(path.read_text())
+    assert set(saved) == {'schema_version','mcpServers'}
+    assert saved['mcpServers']['existing'] == {'command':'keep'}
+    assert saved['mcpServers']['airlock']['type']=='stdio'
+    assert saved['mcpServers']['airlock']['required'] is False
+    assert json.loads(result['config'])['mcpServers']['airlock']==saved['mcpServers']['airlock']
+    for declaration in ['{"mcpServers":{},"mcp_servers":{}}','{"schema_version":2}']:
+        path.write_text(declaration)
+        result=clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+        assert not result['installed'] and path.read_text()==declaration
+    path.unlink()
+    clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+    assert json.loads(path.read_text())['schema_version']==1

@@ -11,6 +11,10 @@ const names = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
   cursor: 'Cursor',
+  'muse-code': 'Muse Code',
+  'gemini-cli': 'Gemini CLI',
+  vscode: 'VS Code · GitHub Copilot',
+  openclaw: 'OpenClaw',
   mcp: 'Custom MCP client',
   dot: 'Dot',
   ironclaw: 'IronClaw'
@@ -276,7 +280,11 @@ const when = t => t ? new Date(t * 1000).toLocaleString(undefined, {
   hour: 'numeric',
   minute: '2-digit'
 }) : '';
-const agentName = (id, ws) => names[ws?.agents.find(a => a.id === id)?.name] || names[id] || 'Agent';
+const connectionName = a => a.display_name ? a.display_name + ' · ' + a.id.slice(-6) : names[a.name] || a.name;
+const agentName = (id, ws) => {
+  const match = ws?.agents.find(a => a.id === id);
+  return match ? connectionName(match) : names[id] || 'Agent';
+};
 const active = g => !['expired', 'revoked'].includes(g.status);
 
 function addPage(key, title, parent, draw, requiresPersonal = true) {

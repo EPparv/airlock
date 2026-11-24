@@ -33,7 +33,7 @@ function renderOnboarding(){
  $('setupGmail').disabled=!mailAvailable;
  $('reconnect').disabled=!mailAvailable;
  $('checkGmail').disabled=!hasMail;
- if(!mailAvailable)$('setupGmailStatus').textContent='Gmail sign-in is not configured in this public build. Continue to connect your AI; imported context works normally.';
+ if(!mailAvailable)$('setupGmailStatus').textContent='To connect Gmail, add your Google Desktop OAuth app in Privacy & connections → Apps & data → Gmail search.';
  $('setupAgentStatus').textContent=connections.length?connections.some(x=>x.used)?'Your AI has requested context. Check its answer and the disclosure receipt.':'Context selected. Restart your AI and paste the question below.':'Choose the AI app you already use on this Mac.';
  $('setupTry').hidden=!connections.length;
  $('finishSetup').hidden=!complete.every(Boolean);

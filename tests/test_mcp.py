@@ -14,6 +14,8 @@ from mcp.client.stdio import stdio_client
 from starlette.testclient import TestClient
 from privacy_layer.server import mcp_app,owner_app
 
+EXPECTED_TOOLS = {'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result','list_private_actions','request_private_action','private_action_status','read_private_fields','prepare_private_followup','list_agent_handoffs','claim_agent_handoff','submit_agent_handoff','read_agent_handoff'}
+
 @pytest.fixture
 def serving(bundle):
     g=bundle[0]
@@ -32,7 +34,7 @@ async def check_session(s):
     await s.initialize()
     tools=(await s.list_tools()).tools
     names={t.name for t in tools}
-    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result','list_private_actions','request_private_action','private_action_status','read_private_fields','prepare_private_followup'}
+    assert names == EXPECTED_TOOLS
     for tool in tools:
         if tool.name in ('get_private_context','search_gmail'):
             assert tool.inputSchema['properties']['query']['maxLength']==2000
@@ -170,7 +172,8 @@ def test_native_client_export_over_real_stdio(bundle,serving,tmp_path,monkeypatc
         async with stdio_client(StdioServerParameters(**config)) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                tools=await session.list_tools();assert len(tools.tools)==18
+                tools=await session.list_tools()
+                assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
                 context=await session.call_tool('get_private_context',{'query':'interview'})
                 assert not context.isError
                 assert 'Hyderabad' in context.content[0].text
@@ -209,3 +212,48 @@ def test_native_mcp_context_transfer_stages_only_until_owner_saves(bundle,servin
                     result=await session.call_tool('get_private_context',{'query':'Phoenix solar interview'})
                     assert not result.isError and 'November 12' in str(result) and 'solar launch example' in str(result)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('agent,keys', [
+    ('muse-code', ('mcp_servers',)),
+    ('gemini-cli', ('mcpServers',)),
+    ('vscode', ('mcpServers',)),
+    ('openclaw', ('mcp','servers')),
+])
+def test_new_client_profile_runs_shipped_bridge(bundle,serving,tmp_path,monkeypatch,agent,keys):
+    """Use the exact command in the installed profile against a temporary gateway."""
+    from privacy_layer import clients
+    gateway = bundle[0]
+    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE'):
+        monkeypatch.delenv(key,raising=False)
+    url, _ = serving
+    install_root = tmp_path/'Airlock App'
+    (install_root/'.venv/bin').mkdir(parents=True)
+    (install_root/'.venv/bin/python').symlink_to(sys.executable)
+    (install_root/'privacy_layer').symlink_to(Path(clients.__file__).resolve().parent)
+    (install_root/'release.json').write_text('{}')
+    (install_root/'.private').mkdir()
+    (install_root/'.private/launch.json').write_text(json.dumps({'mcp_url':url}))
+    monkeypatch.setattr(clients,'ROOT',install_root)
+    rows = clients.connection_context(gateway)['records']
+    chosen = next(r for r in rows if r['ref']=='skills:s1')
+    scope = clients.selected_scope(gateway,{chosen['ref']:chosen['text_hash']})
+    result = clients.connect(gateway,agent=agent,approved=True,home=tmp_path/'profile',scope=scope)
+    config = json.loads(Path(result['path']).read_text())
+    for key in keys:
+        config = config[key]
+    entry = config['airlock']
+
+    async def probe():
+        command = StdioServerParameters(command=entry['command'],args=entry['args'])
+        async with stdio_client(command) as (read,write), ClientSession(read,write) as session:
+            await session.initialize()
+            assert 'get_private_context' in {tool.name for tool in (await session.list_tools()).tools}
+            answer = await session.call_tool('get_private_context',{'query':''})
+            assert not answer.isError
+            assert 'Be concise' in answer.content[0].text and 'Hyderabad' not in answer.content[0].text
+            assert clients.connection_status(gateway,result['id'])['status'] == 'verified'
+            gateway.revoke(result['id'])
+            with pytest.raises(Exception):
+                await session.call_tool('privacy_status',{})
+    asyncio.run(probe())

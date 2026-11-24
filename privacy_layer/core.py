@@ -26,7 +26,7 @@ class Denied(ValueError):
     pass
 
 QUERY_LIMIT = 2000
-AGENTS = ('dot', 'codex', 'claude-desktop', 'claude-code', 'cursor', 'mcp', 'test', 'ironclaw')
+AGENTS = ('dot', 'codex', 'claude-desktop', 'claude-code', 'cursor', 'mcp', 'test', 'ironclaw', 'muse-code', 'gemini-cli', 'vscode', 'openclaw')
 
 
 def canonical(value):
@@ -210,7 +210,7 @@ class Gateway:
 
     def list_grants(self):
         with self.store.transaction() as data:
-            return [{'id':g['id'],'agent':g['agent'],'purpose':g['purpose'],'expires':g['expires'],
+            return [{'id':g['id'],'agent':g['agent'],'display_name':g.get('display_name'),'purpose':g['purpose'],'expires':g['expires'],
                      'remaining':g['remaining'],'revoked':g['revoked'],'mode':g.get('mode','reviewed'),'configured':g.get('client_setup',{}).get('installed'),
                      'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
@@ -219,7 +219,9 @@ class Gateway:
         if not isinstance(args, dict): raise Denied('Invalid tool arguments.')
         schemas = {'privacy_status':set(), 'get_private_context':{'query'}, 'search_gmail':{'query'}, 'read_gmail':{'reference'},'stage_context_import':{'transfer_code','memories','skills','scope'},'context_status':set(),'list_local_skills':{'query'},'read_local_skill':{'skill_id','resource','offset'},'run_local_skill':{'skill_id','script','topic','gmail_query'},'prepare_private_brief':{'topic','gmail_query','max_messages'},'update_shared_context':{'operation','kind','text','reference','expected_revision'},'request_private_task':{'instruction','records','route'},'get_private_task_result':{'task_id'}}
         from .workspace import TOOLS as device_tools, Workspace
+        from .agent_handoffs import TOOLS as handoff_tools, Handoffs
         schemas.update(device_tools)
+        schemas.update(handoff_tools)
         if tool not in schemas or set(args) != schemas[tool]: raise Denied('Unsupported tool or arguments.')
         query = args.get('query', '')
         if not isinstance(query, str) or len(query)>QUERY_LIMIT:
@@ -237,6 +239,8 @@ class Gateway:
                           'mode':'automatic' if automatic else 'reviewed',
                           'scope':('Automatic local selection across the full memory/skill library and live read-only Gmail search. Only filtered excerpts leave the Mac. Device-only records, detected secrets and identifiers are withheld. Filtering is not guaranteed anonymization. No sending or arbitrary file access.' if automatic else 'Only owner-reviewed memory, skill and email excerpts. No sending, raw files, credentials or unrestricted inbox.'),
                           'scope_selection':snapshot.get('scope'), 'expires':snapshot['expires'],'capabilities':snapshot.get('capabilities',{}),'local_actions':'Owner-enabled Python skill packages run offline with selected inputs. Generated outputs are owner-only; shared note updates are versioned and unverified.'}
+            elif tool in handoff_tools:
+                result = Handoffs(self).call(snapshot, tool, args)
             elif tool in device_tools:
                 result = Workspace(self).call(snapshot, tool, args)
             elif snapshot.get('scope') is not None:
@@ -344,6 +348,8 @@ class Gateway:
             with self.store.transaction() as data:
                 current = self._grant(data, token)
                 if any(current.get(k)!=snapshot.get(k) for k in ('views','mode','policy','policy_revision','capabilities','scope')): raise Denied('Sharing rules changed. Retry after owner review.')
+                if tool in handoff_tools:
+                    Handoffs(self).authorize_release(data, current, tool, args, result)
                 if tool in device_tools and current.get('device_actions_revision',0) != snapshot.get('device_actions_revision',0):
                     raise Denied('The assigned actions changed. Retry after owner review.')
                 self.audit(data,current,tool,'released',[i['ref'] for i in result.get('items',[])])

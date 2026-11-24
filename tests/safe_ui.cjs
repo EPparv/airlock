@@ -158,11 +158,33 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await btn('Shared note history');await contains('No shared notes');
  await visit(['Context & memory','Proposed changes'],'No changes waiting');
  await visit(['Context & memory','Import context'],'Bring context from another agent');
+ const chatFixture = [
+   {name:'First chat',chat_messages:[{sender:'human',text:'Fictional bicycle repair is Friday.'},
+     {sender:'assistant',text:'An unverified model reply.'},{sender:'human',text:'Leave this message out.'}]},
+   {name:'Second chat',chat_messages:[{sender:'human',text:'Other conversation.'}]}];
+ await type('Import as','chat','#app');await type('Paste context',JSON.stringify(chatFixture),'#app');
+ await btn('Review import');await sheet('Review messages');
+ await until("document.querySelectorAll('dialog[open] input[type=checkbox]').length===2");
+ assert.equal(await evaluate("document.querySelectorAll('dialog[open] input:checked').length"),0);
+ assert.ok(!(await evaluate("document.querySelector('dialog[open]').innerText.includes('An unverified model reply.')")));
+ await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");await sheet('Add selected records');
+ await until("document.querySelector('dialog[open]').innerText.includes('1 added')");
+ await sheet('View memories');await contains('Fictional bicycle repair is Friday.');
+ assert.ok(!(await evaluate("document.querySelector('#app').innerText.includes('Leave this message out.')")));
+ await visit(['Context & memory','Import context'],'Bring context from another agent');
  await byText('summary','Bring context from another agent');await btn('Get transfer request');await contains('Copy request');
  await visit(['Privacy & connections','Apps & data','Apple Calendar'],'New event');
  await visit(['Privacy & connections','Apps & data','Files & databases'],'New view');
  await visit(['Privacy & connections','Apps & data','JSON APIs'],'Add endpoint');
  await visit(['Privacy & connections','Apps & data','Gmail search'],'Read-only');
+ await visit(['Privacy & connections','Data protection','Filter model requests'],'No model connections');
+ await btn('Add model connection');await type('Connection name','Browser fixture');await type('Model installed in Ollama','fictional');
+ await sheet('Create connection');await until("document.querySelector('dialog[open] h2')?.textContent==='Configure your client'");
+ await sheet('Done');await contains('Browser fixture');
+ await evaluate("Array.from(document.querySelectorAll('#app .item-button')).find(b=>b.innerText.includes('Browser fixture')).click()");
+ await sheet('Revoke');await contains('No model connections');
+ await visit(['Privacy & connections','Approvals & activity','Agent handoffs'],'Agent handoffs');
+ await visit(['Connect agent','Cloud agents'],'Cloud agents');
  await visit(['Privacy & connections','Approvals & activity','Private task approvals'],'No private tasks');
  await visit(['Privacy & connections','Approvals & activity','Disclosure receipts'],'Refresh');
  await visit(['Privacy & connections','Approvals & activity','Access log'],'Refresh');

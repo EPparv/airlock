@@ -35,8 +35,7 @@ addPage('protection', 'Data protection', 'privacy', async host => {
     ['json', 'JSON object']
   ]));
   const conn = field(test, 'Connection', select([
-    ['', 'Temporary example'], ...ws.agents.filter(a => active(a) && a.scope).map(a => [a.id, names[a
-      .name] || a.name])
+    ['', 'Temporary example'], ...ws.agents.filter(a => active(a) && a.scope).map(a => [a.id, connectionName(a)])
   ]));
   const raw = field(test, 'Sample', el('textarea')),
     out = el('div');
@@ -50,6 +49,7 @@ addPage('protection', 'Data protection', 'privacy', async host => {
     out.replaceChildren(el('pre', typeof v.result === 'string' ? v.result : JSON.stringify(v.result,
       null, 2)));
   }), out);
+  choose(host, 'Filter model requests', 'prompt-gateway');
   const views = section(host, 'Field access');
   choose(views, 'File and database views', 'views');
   choose(views, 'API endpoints', 'apis');
@@ -74,12 +74,29 @@ addPage('gmail', 'Gmail search', 'apps', async host => {
     ['Status', g.sign_in.replaceAll('_', ' ')]
   ]));
   if (g.error) note(host, g.error);
-  if (!g.configured) {
-    note(host,
-      'Google sign-in has not been configured for this installation. Gmail accounts already in Apple Mail can use the Mail connector.'
-      );
-    choose(host, 'Apple Mail', 'mail');
-    return;
+  if (!g.configured || g.can_replace) {
+    if (!g.configured) note(host, 'Use your own Google Cloud Desktop app to connect Gmail. Enable the Gmail API in that project. If the app is in testing, add your Google account as a test user.');
+    host.append(button(g.configured ? 'Replace Google Desktop app' : 'Add Google Desktop app', () => {
+      if (preview) return nativeOnly('Add Google Desktop app');
+      const f = modal('Google Desktop app');
+      const file = field(f, 'Desktop OAuth client JSON', input('file'));
+      file.accept = '.json,application/json';
+      note(f, 'Airlock saves the app credentials in your encrypted local workspace. You choose your Google account on the next screen.');
+      formAction(f, 'Save on this Mac', async () => {
+        const picked = file.files[0];
+        if (!picked || picked.size > 65536) throw Error('Choose a Desktop app JSON file under 64 KB.');
+        let client;
+        try { client = JSON.parse(await picked.text()); }
+        catch { throw Error('Choose the Desktop app JSON downloaded from Google.'); }
+        await api('gmail-configure', {client, approved: true});
+        close();
+        await refresh();
+      });
+    }));
+    if (!g.configured) {
+      choose(host, 'Apple Mail', 'mail');
+      return;
+    }
   }
   host.append(button(g.account ? 'Reconnect Gmail' : 'Connect Gmail', async () => {
     if (preview) return nativeOnly('Connect Gmail');
@@ -112,6 +129,7 @@ addPage('activity', 'Approvals & activity', 'privacy', host => {
   host.append(m);
   for (const [label, key] of [
       ['Device actions', 'actions'],
+      ['Agent handoffs', 'handoffs'],
       ['Private task approvals', 'tasks'],
       ['Disclosure receipts', 'receipts'],
       ['Access log', 'audit']
@@ -437,7 +455,7 @@ addPage('settings', 'App settings', 'privacy', async host => {
   const native = window.webkit?.messageHandlers?.airlockSettings;
   const isOpen = preview ? false : testToken() ? (await testAPI('test-state')).personal_open : personal;
   host.append(facts([
-    ['Version', '0.9.0'],
+    ['Version', '0.10.0'],
     ['Workspace', preview ? 'Preview' : isOpen ? 'Unlocked' : 'Locked']
   ]));
   if (isOpen && testToken()) host.append(button('Lock workspace', lockWorkspace));

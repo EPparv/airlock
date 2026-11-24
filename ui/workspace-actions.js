@@ -3,7 +3,10 @@ const actionTypes = {
   email: 'Email',
   event: 'Calendar event',
   data: 'File or database',
-  api: 'API endpoint'
+  api: 'API endpoint',
+  api_write: 'API write',
+  live_data: 'Live file or database',
+  file_append: 'Append text to a file'
 };
 const actionStates = {
   ready: 'Ready',
@@ -11,13 +14,16 @@ const actionStates = {
   submitting: 'Check destination',
   unconfirmed: 'Check destination',
   sent: 'Sent to Mail',
+  submitted: 'Accepted by endpoint',
+  appended: 'Appended to file',
   created: 'Event created',
   declined: 'Declined'
 };
 async function actionPage(host, opt, bar, kind) {
   const call = opt.fixture ? testAPI : api;
   const ws = await call('workspace-state'),
-    visible = ws.actions.filter(a => !kind || a.kind === kind);
+    visible = ws.actions.filter(a => !kind || a.kind === kind ||
+      (kind === 'data' && ['live_data', 'file_append'].includes(a.kind)) || (kind === 'api' && a.kind === 'api_write'));
   if (!opt.fixture) bar.append(button(kind ? {
     email: 'New email',
     event: 'New event',
@@ -35,8 +41,8 @@ async function actionPage(host, opt, bar, kind) {
     item(list, a.label, (a.applicant ? agentName(a.applicant, ws) + ' · ' : '') + status, () => showAction(ws, a,
       call, Boolean(opt.fixture)));
   }
-  if (kind === 'data') note(host, 'Choose the visible fields in a CSV, JSON, or SQLite snapshot.');
-  if (kind === 'api') note(host, 'Choose a JSON endpoint and the fields agents may read.');
+  if (kind === 'data') note(host, 'Share selected fields from a live file or a saved snapshot.');
+  if (kind === 'api') note(host, 'Share selected fields or prepare a request to approve before sending.');
 }
 for (const [pageName, title, kind] of [
     ['actions', 'Device actions', ''],
@@ -67,8 +73,16 @@ function showAction(ws, a, call, fixture) {
     .toLocaleString()
   ], ['End', new Date(p.end).toLocaleString()]);
   if (a.kind === 'data') fields.push(['File', p.name], ['Visible fields', p.fields.join(', ')], ['Rows', p.count]);
+  if (a.kind === 'live_data') {
+    fields.push(['File', p.path], ['Visible fields', p.fields.join(', ')]);
+    if (p.table) fields.push(['Table', p.table]);
+  }
+  if (a.kind === 'file_append') fields.push(['File', p.path]);
+  if (a.kind === 'api_write') fields.push(['Method', p.method], ['Endpoint', p.url]);
   if (a.kind === 'api') fields.push(['Endpoint', p.url], ['Visible fields', p.fields.join(', ')]);
   f.append(facts(fields));
+  if (a.kind === 'file_append') f.append(el('pre', p.text));
+  if (a.kind === 'api_write') f.append(el('pre', p.body));
   if (a.kind === 'email') f.append(el('p', p.body, 'message'));
   const receipt = ws.receipts.find(r => r.response?.reference && r.response.reference === a.handles?.[r.agent]);
   if (receipt) details(f, 'Returned to ' + agentName(receipt.agent, ws), el('pre', JSON.stringify(receipt.response,
@@ -84,16 +98,16 @@ function showAction(ws, a, call, fixture) {
       await refresh();
       flash(r.status === 'unconfirmed' ? 'Check the destination app before trying again.' : !approve ?
         'Declined.' : ws.example ? 'Example approved.' : a.kind === 'event' ? 'Event created.' :
-        'Submitted to Mail.');
+        a.kind === 'file_append' ? 'Text appended.' : a.kind === 'api_write' ? 'Request accepted by endpoint.' : 'Submitted to Mail.');
     };
     f.append(button(ws.example ? 'Approve example' : a.kind === 'event' ? 'Approve and create event' :
-      'Approve and send', () => decide(true), 'primary'), button('Decline', () => decide(false)));
+      a.kind === 'file_append' ? 'Approve append' : a.kind === 'api_write' ? 'Approve API request' : 'Approve and send', () => decide(true), 'primary'), button('Decline', () => decide(false)));
   }
   if (ws.example && a.state !== 'pending') {
     const clients = field(f, 'Example agent', select(ws.agents.filter(x => a.audience.includes(x.id)).map(x => [x
-      .id, names[x.name] || x.name
+      .id, connectionName(x)
     ])));
-    const read = ['data', 'api'].includes(a.kind),
+    const read = ['data', 'api', 'live_data'].includes(a.kind),
       tool = read ? 'read_private_fields' : a.state === 'ready' ? 'request_private_action' :
       'private_action_status';
     f.append(button(read ? 'Read filtered fields' : a.state === 'ready' ? 'Request action' : 'Check receipt',
@@ -132,8 +146,11 @@ async function prepareAction(initialKind) {
   const type = field(f, 'Action', select([
     ['email', 'Send an email'],
     ['event', 'Create a calendar event'],
-    ['data', 'Share fields from a file or database'],
-    ['api', 'Share fields from an API']
+    ['data', 'Share fields from a snapshot'],
+    ['live_data', 'Share fields from a live file or database'],
+    ['file_append', 'Append text to a file'],
+    ['api', 'Share fields from an API'],
+    ['api_write', 'Send a JSON API request']
   ]));
   type.value = initialKind;
   const name = field(f, 'Label visible to the agent', input());
@@ -142,8 +159,25 @@ async function prepareAction(initialKind) {
   f.append(area);
   let getValues;
 
+  function filePicker(container, path, selected) {
+    if (!state.local_file_picker) return;
+    container.append(button('Choose file…', run(async () => {
+      const result = await api('workspace-select-file', {});
+      path.value = result.path;
+      if (selected) await selected();
+    })));
+  }
+
   function fieldsFor() {
     area.replaceChildren();
+    const native = preview && ['api', 'api_write', 'live_data', 'file_append'].includes(type.value);
+    name.parentElement.hidden = native;
+    fs.hidden = native;
+    save.hidden = native;
+    if (native) {
+      note(area, 'Open the Mac app to connect a live data source or approve device writes.');
+      return;
+    }
     if (type.value === 'email') {
       const to = field(area, 'Recipients', input());
       const source = select([
@@ -188,6 +222,64 @@ async function prepareAction(initialKind) {
           start: new Date(start.value).toISOString(),
           end: new Date(end.value).toISOString()
         };
+      };
+    } else if (type.value === 'file_append') {
+      const path = field(area, 'Full local file path', input()),
+        text = field(area, 'Text to append', el('textarea'));
+      path.placeholder = '/Users/you/Documents/notes.txt';
+      filePicker(area, path);
+      note(area, 'Use an existing .txt, .md, or .log file. You review the exact text before it is appended.');
+      getValues = async () => ({path: path.value.trim(), text: text.value});
+    } else if (type.value === 'api_write') {
+      const method = field(area, 'Method', select(['POST', 'PUT', 'PATCH'].map(x => [x, x]))),
+        url = field(area, 'JSON endpoint', input('url')),
+        credential = field(area, 'Bearer token (optional)', input('password')),
+        body = field(area, 'JSON body', el('textarea'));
+      url.placeholder = 'https://api.example.com/tasks';
+      credential.autocomplete = 'off';
+      body.placeholder = '{"status": "complete"}';
+      note(area, 'You review this exact request before Airlock sends it. The agent receives a receipt.');
+      getValues = async () => ({method: method.value, url: url.value.trim(), credential: credential.value, body: body.value});
+    } else if (type.value === 'live_data') {
+      const path = field(area, 'Full local file path', input()),
+        choices = el('div', null, 'form');
+      path.placeholder = '/Users/you/Documents/projects.sqlite';
+      note(area, 'CSV and JSON up to 1 MB, SQLite up to 32 MB. Airlock reads the file on each request.');
+      let table = '', identity = null, checked = [], version = 0;
+      function clear() {
+        version++;
+        choices.replaceChildren();
+        checked = [];
+      }
+      function reset() {
+        clear();
+        table = '';
+        identity = null;
+      }
+      path.oninput = reset;
+      async function inspect() {
+        clear();
+        const current = version;
+        const result = await api('workspace-live-fields', {path: path.value.trim(), table, identity});
+        if (current !== version) return;
+        identity = result.identity;
+        if (result.tables.length) {
+          const source = field(choices, 'Table', select([['', 'Choose a table'], ...result.tables.map(t => [t, t])]));
+          source.value = table;
+          source.onchange = run(async () => { table = source.value; await inspect(); });
+        }
+        if (result.fields.length) {
+          const fs = group(choices, 'Fields visible to the agent');
+          checked = result.fields.map(k => [k, check(fs, k)]);
+        }
+      }
+      const load = async () => { reset(); await inspect(); };
+      filePicker(area, path, load);
+      put(area, button('Load fields', run(load)), choices);
+      getValues = async () => {
+        const fields = checked.filter(([, c]) => c.checked).map(([k]) => k);
+        if (!identity || !fields.length) throw Error('Load fields and choose at least one.');
+        return {path: path.value.trim(), table, identity, fields};
       };
     } else if (type.value === 'api') {
       const url = field(area, 'JSON endpoint', input('url')),
@@ -280,11 +372,9 @@ async function prepareAction(initialKind) {
       };
     }
   }
-  type.onchange = fieldsFor;
-  fieldsFor();
   const fs = group(f, 'Agents with access'),
     checks = state.agents.filter(allowed).map(a => [a.id, check(fs, person(a.id))]);
-  formAction(f, 'Save action', async () => {
+  const save = formAction(f, 'Save action', async () => {
     await api('workspace-create', {
       kind: type.value,
       label: name.value,
@@ -295,4 +385,6 @@ async function prepareAction(initialKind) {
     await refresh();
     flash('Saved.');
   });
+  type.onchange = fieldsFor;
+  fieldsFor();
 }

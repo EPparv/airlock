@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import time
 import tomllib
 
@@ -23,6 +24,10 @@ CLIENTS = {
     'claude-desktop': {'name':'Claude Desktop', 'hint':'Local tools in the Claude Mac app', 'mark':'✳'},
     'claude-code': {'name':'Claude Code', 'hint':'Your Claude coding workspace', 'mark':'C'},
     'cursor': {'name':'Cursor', 'hint':'Personal context in your editor', 'mark':'↗'},
+    'muse-code': {'name':'Muse Code', 'hint':'Meta’s local command-line agent', 'mark':'M'},
+    'gemini-cli': {'name':'Gemini CLI', 'hint':'Google’s local command-line agent', 'mark':'G'},
+    'vscode': {'name':'VS Code · GitHub Copilot', 'hint':'Copilot sessions running on this Mac', 'mark':'V'},
+    'openclaw': {'name':'OpenClaw', 'hint':'An OpenClaw gateway running on this Mac', 'mark':'O'},
     'mcp': {'name':'Other agents', 'hint':'Standard MCP connection on this Mac', 'mark':'+'},
     'ironclaw': {'name':'IronClaw', 'hint':'HTTPS MCP extension; secure endpoint setup required', 'mark':'I'},
 }
@@ -31,15 +36,40 @@ RELATIVE_CONFIGS = {
     'claude-desktop':'Library/Application Support/Claude/claude_desktop_config.json',
     'claude-code':'.claude.json',
     'cursor':'.cursor/mcp.json',
+    'muse-code':'.config/muse/settings.json',
+    'gemini-cli':'.gemini/settings.json',
+    'vscode':'.copilot/mcp-config.json',
+    'openclaw':'.openclaw/openclaw.json',
 }
+
+# Some clients read the same MCP stdio command from different configuration schemas.
+PROFILES = {
+    'muse-code': (('mcp_servers',), {'transport':'stdio','mode':'optional'}),
+    'gemini-cli': (('mcpServers',), {}),
+    'vscode': (('mcpServers',), {'type':'stdio'}),
+    'openclaw': (('mcp','servers'), {'transport':'stdio'}),
+}
+SETUP_HINTS = {
+    'muse-code':'Merge the entry into your Muse Code user settings, then restart Muse Code and check /mcp.',
+    'gemini-cli':'Merge the entry into your Gemini CLI user settings, then start a new session and check /mcp list.',
+    'vscode':'Merge the entry into Copilot Global on this Mac, then start a local Copilot session in VS Code.',
+    'openclaw':'On the Mac running your gateway, open OpenClaw Settings → MCP and add Airlock using the stdio command and arguments shown. Verify with openclaw mcp doctor airlock --probe.',
+}
+
+
+class ManualSetup(Denied):
+    """The client has custom settings that should be edited in its own UI."""
+
 
 def catalog(home=None):
     home=Path(home or Path.home())
-    apps={'codex':('ChatGPT.app','ChatGPT 2.app','Codex.app'), 'claude-desktop':('Claude.app',), 'cursor':('Cursor.app',)}
+    apps={'codex':('ChatGPT.app','ChatGPT 2.app','Codex.app'), 'claude-desktop':('Claude.app',), 'cursor':('Cursor.app',), 'vscode':('Visual Studio Code.app',)}
+    commands = {'muse-code':'muse','gemini-cli':'gemini','openclaw':'openclaw','codex':'codex','claude-code':'claude'}
     result=[]
     for agent,details in CLIENTS.items():
         installed=any((p/name).exists() for name in apps.get(agent,()) for p in (Path('/Applications'),home/'Applications'))
-        if agent=='claude-code':installed=(ROOT/'.tools/node_modules/.bin/claude').exists()
+        if agent in commands: installed = installed or shutil.which(commands[agent]) is not None
+        if agent=='claude-code':installed=installed or (ROOT/'.tools/node_modules/.bin/claude').exists()
         result.append(dict(id=agent,**details,app_present=installed,can_install=agent in RELATIVE_CONFIGS))
     return result
 
@@ -66,14 +96,53 @@ def owned(entry):
     if '..' in token.parts or token.suffix!='.token':return False
     return len(args)==3 or args[3:]==['--session-file',str(root/'.private/launch.json')]
 
-def json_config(original, entry, server_name=SERVER):
-    if server_name not in (SERVER,'airlock-test'):raise Denied('Invalid connection name.')
-    value=json.loads(original or '{}')
-    if not isinstance(value,dict) or not isinstance(value.get('mcpServers',{}),dict):raise Denied('The existing agent settings are not valid. They were left unchanged.')
-    servers=value.setdefault('mcpServers',{})
-    if server_name in servers and not owned(servers[server_name]):raise Denied('An unrelated connection already uses this name. Its settings were left unchanged.')
-    if server_name==SERVER and LEGACY_SERVER in servers and owned(servers[LEGACY_SERVER]):servers.pop(LEGACY_SERVER)
-    servers[server_name]=entry
+def unique_keys(pairs):
+    values = {}
+    for key, value in pairs:
+        if key in values:
+            raise Denied('The settings contain duplicate keys. Choose manual setup to review them.')
+        values[key] = value
+    return values
+
+
+def json_config(original, entry, server_name=SERVER, agent='mcp'):
+    if server_name not in (SERVER,'airlock-test'):
+        raise Denied('Invalid connection name.')
+    path, options = PROFILES.get(agent, (('mcpServers',), {}))
+    try:
+        value = json.loads(original or '{}', object_pairs_hook=unique_keys)
+    except json.JSONDecodeError:
+        if agent in PROFILES:
+            raise ManualSetup('Airlock can merge plain JSON. Use manual setup for this settings format.') from None
+        raise
+    if agent == 'muse-code' and isinstance(value, dict):
+        if 'mcpServers' in value and 'mcp_servers' in value:
+            raise ManualSetup('Muse Code settings contain both MCP server keys. Keep one in the Muse settings editor.')
+        if type(value.setdefault('schema_version', 1)) is not int or value['schema_version'] != 1:
+            raise ManualSetup('This Muse settings version needs manual setup.')
+        if 'mcpServers' in value:
+            path, options = ('mcpServers',), {'type':'stdio','required':False}
+    servers = value
+    for key in path:
+        if not isinstance(servers, dict):
+            raise Denied('The agent settings have an unexpected structure. Review them in manual setup.')
+        if agent == 'openclaw' and '$include' in servers:
+            raise ManualSetup('These OpenClaw settings use an included file. Use OpenClaw’s settings editor.')
+        servers = servers.setdefault(key, {})
+    if not isinstance(servers, dict):
+        raise Denied('The server list has an unexpected structure. Review it in manual setup.')
+    if agent == 'openclaw' and '$include' in servers:
+        raise ManualSetup('These OpenClaw settings use an included file. Use OpenClaw’s settings editor.')
+
+    if server_name in servers:
+        previous = servers[server_name]
+        matches_options = isinstance(previous, dict) and all(previous.get(k) == v for k,v in options.items())
+        previous_bridge = {k:v for k,v in previous.items() if k not in options} if matches_options else None
+        if not owned(previous_bridge):
+            raise Denied('An unrelated connection already uses this name. Its settings were left unchanged.')
+    if server_name == SERVER and LEGACY_SERVER in servers and owned(servers[LEGACY_SERVER]):
+        servers.pop(LEGACY_SERVER)
+    servers[server_name] = {**options, **entry}
     return json.dumps(value,ensure_ascii=False,indent=2)+'\n'
 
 def codex_config(original,entry,server_name=SERVER):
@@ -112,7 +181,11 @@ def codex_config(original,entry,server_name=SERVER):
 def install_config(agent,entry,home=None,server_name=SERVER):
     if agent not in RELATIVE_CONFIGS:raise Denied('Choose a local agent to install.')
     home=Path(home or Path.home());path=home/RELATIVE_CONFIGS[agent]
-    if path.is_symlink():raise Denied('This settings file is linked elsewhere. Use the exported setup instead.')
+    if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
+        raise ManualSetup('These settings are linked elsewhere. Use the exported setup.')
+    overrides = {'muse-code':('XDG_CONFIG_HOME',), 'vscode':('COPILOT_HOME',), 'openclaw':('OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE')}
+    if any(os.environ.get(key) for key in overrides.get(agent, ())):
+        raise ManualSetup('A custom client profile is active. Apply this entry in that profile’s settings.')
     path.parent.mkdir(parents=True,exist_ok=True)
     # Serialize our writers and also verify that another app did not change the
     # file during preparation. Backups retain all pre-existing settings.
@@ -120,7 +193,7 @@ def install_config(agent,entry,home=None,server_name=SERVER):
     with open(lock_path,'a') as lock:
         os.chmod(lock_path,0o600);fcntl.flock(lock,fcntl.LOCK_EX)
         existed=path.exists();original=path.read_text() if existed else ''
-        try:candidate=codex_config(original,entry,server_name) if agent=='codex' else json_config(original,entry,server_name)
+        try:candidate=codex_config(original,entry,server_name) if agent=='codex' else json_config(original,entry,server_name,agent)
         except Denied:raise
         except (ValueError,TypeError):
             format_name='TOML' if agent=='codex' else 'JSON'
@@ -174,6 +247,8 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
     if agent=='dot':
         from .setup import saved_dot_available
         if not saved_dot_available(gateway):raise Denied('Set up the private Dot tunnel in Advanced setup first.')
+    if agent in PROFILES and scope is None:
+        scope = {'records':[], 'disclose':False, 'compute':False, 'proposals':False}
     grant=gateway.create(agent=agent,purpose='Personalized assistance through automatic local context selection',views=[],mode='automatic',approved=True,lifetime=lifetime,max_calls=max_calls)
     token_path=ROOT/f'.private/clients/{agent}-{grant["id"]}.token'
     result={'id':grant['id'],'agent':agent,'name':CLIENTS[agent]['name'],'expires':grant['expires'],'installed':False}
@@ -194,15 +269,26 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
                     data['grants'][grant['id']]['client_setup']={'installed':False,'at':gateway.clock()}
                 return result
             entry=server_entry(token_path)
-            exported={'mcpServers':{SERVER:entry}}
-            result['config']=json.dumps(exported,indent=2)
+            result['config'] = json_config('',entry,agent=agent)
+            if agent == 'codex':
+                result['client_config'] = codex_config('',entry).lstrip()
             result['command']=entry['command'];result['args']=entry['args']
+            result['message'] = SETUP_HINTS.get(agent,'Merge this entry into your local MCP client settings on this Mac.')
             if install and agent in RELATIVE_CONFIGS:
-                result['path']=install_config(agent,entry,home)
-                result['installed']=True
-                result['message']=f'Settings saved. Restart {CLIENTS[agent]["name"]} or reload its MCP connections, then enable Airlock if prompted.'
-            else:
-                result['message']='Copy this setup into a local MCP-compatible agent on this Mac. It contains local paths, not your private access key.'
+                try:
+                    result['path'] = install_config(agent,entry,home)
+                except ManualSetup as error:
+                    if agent not in PROFILES:
+                        raise
+                    result['message'] = f'{error} {SETUP_HINTS[agent]}'
+                else:
+                    if agent == 'muse-code':
+                        installed = json.loads(Path(result['path']).read_text())
+                        # Export only generated values, even if a client edits its file after install.
+                        if 'mcpServers' in installed:
+                            result['config'] = json_config('{"mcpServers":{}}',entry,agent=agent)
+                    result['installed'] = True
+                    result['message'] = f'Settings saved. Restart {CLIENTS[agent]["name"]} or reload its MCP connections, then enable Airlock if prompted.'
         with gateway.store.transaction() as data:
             data['grants'][grant['id']]['client_setup']={'installed':result['installed'],'at':gateway.clock()}
         return result

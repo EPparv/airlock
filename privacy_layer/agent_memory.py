@@ -201,6 +201,8 @@ class AgentMemory:
             eligible.append({'ref': self.alias(grant, ref), 'kind': row['kind'], 'text': text,'core':rows[ref].get('core',False),
                            'citation': f'[A{len(eligible)+1}]', 'evidence_type': 'owner-selected context; not independent verification',
                            'revision': rows[ref].get('revision', 0)})
+            if rows[ref].get('chat_source'):
+                eligible[-1]['evidence_type'] = 'Owner-selected conversation excerpt. It may be a question, quotation or historical statement.'
             if rows[ref].get('shared_reference'):
                 eligible[-1]['shared_reference'] = rows[ref]['shared_reference']
         from .continuity import select
@@ -249,7 +251,7 @@ class AgentMemory:
             pending = d.setdefault('memory_proposals', {})
             if sum(p['status'] == 'pending' for p in pending.values()) >= 50:
                 raise Denied('Review pending memory proposals before adding more.')
-            pending[key] = {'id': key, 'grant_id': grant['id'], 'agent': grant['agent'], 'operation': operation,
+            pending[key] = {'id': key, 'grant_id': grant['id'], 'agent': (grant['display_name']+' · '+grant['id'][-6:]) if grant.get('display_name') else grant['agent'], 'operation': operation,
                             'kind': kind, 'text': safe, 'reference': reference, 'expected_revision': expected_revision,
                             'parents': parents, 'source_hashes': {p: digest(rows[p]) for p in parents},
                             'policy_revision': grant.get('policy_revision'), 'at': self.g.clock(),
@@ -343,7 +345,7 @@ class PrivateTasks:
     def prepare(self, grant, instruction, records, route='local'):
         body, sources, destination = self.body(grant, instruction, records, route)
         task_id = 'task_' + secrets.token_hex(12)
-        task = {'id': task_id, 'grant_id': grant['id'], 'agent': grant['agent'], 'instruction': instruction,
+        task = {'id': task_id, 'grant_id': grant['id'], 'agent': (grant['display_name']+' · '+grant['id'][-6:]) if grant.get('display_name') else grant['agent'], 'instruction': instruction,
                 'records': records, 'route': route, 'destination': destination, 'payload': body.decode(),
                 'sha256': hashlib.sha256(body).hexdigest(), 'source_hashes': sources,
                 'policy_revision': grant.get('policy_revision'), 'expires': min(grant['expires'], self.g.clock()+600),

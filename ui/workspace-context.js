@@ -129,8 +129,8 @@ function reviewImport(result) {
   if (result.scope) note(f, result.scope);
   const rows = group(f, 'Records to add');
   rows.className = 'checklist';
-  result.items.forEach((r, i) => checks.push([i, check(rows, (r.kind === 'skills' ? 'Skill · ' : '') + r.text + (r
-    .device_only ? ' · device only' : ''), true)]));
+  result.items.forEach((r, i) => checks.push([i, check(rows, (r.chat_source ? r.chat_source + ' · ' : r.kind === 'skills' ? 'Skill · ' : '') + r.text + (r
+    .device_only ? ' · device only' : ''), !r.chat_source)]));
   formAction(f, 'Add selected records', async () => {
     const indices = checks.filter(([, c]) => c.checked).map(([i]) => i);
     if (!indices.length) throw Error('Select at least one record.');
@@ -161,18 +161,41 @@ addPage('import', 'Import context', 'context', async host => {
   const mode = field(f, 'Import as', select([
     ['auto', 'Detect automatically'],
     ['memories', 'Memories'],
-    ['skills', 'Skills']
+    ['skills', 'Skills'],
+    ['chat', 'ChatGPT or Claude conversation']
   ]));
   formAction(f, 'Review import', async () => {
     if (!file.files[0] && !text.value.trim()) throw Error('Paste some text or choose a file.');
-    const data = await upload(file.files[0] || new File([text.value], 'Pasted context.md', {
-      type: 'text/plain'
-    }));
-    reviewImport(await api('context-preview', {
-      name: data.name,
-      content: data.data,
-      kind: mode.value
-    }));
+    const source = file.files[0] || new File([text.value], 'Pasted context.md', {type: 'text/plain'});
+    async function review(selected, kind) {
+      const data = await upload(selected);
+      reviewImport(await api('context-preview', {name: data.name, content: data.data, kind}));
+    }
+    if (source.size <= 4 * 1024 * 1024 && mode.value !== 'chat') return review(source, mode.value);
+    if (/\.zip$/i.test(source.name)) {
+      if (source.size > 4 * 1024 * 1024) throw Error('Unzip this export and choose its conversations JSON file.');
+      return review(source, mode.value);
+    }
+    if (mode.value !== 'chat' && (mode.value !== 'auto' || !/\.json$/i.test(source.name))) {
+      return review(source, mode.value);
+    }
+    if (source.size > 64 * 1024 * 1024) throw Error('Choose a conversations JSON file up to 64 MB, or paste one conversation.');
+    let data;
+    try { data = JSON.parse(await source.text()); }
+    catch { throw Error('Choose a complete ChatGPT or Claude conversation JSON file.'); }
+    const conversations = (Array.isArray(data) ? data : Array.isArray(data?.conversations) ? data.conversations : [data])
+      .filter(c => c && (c.mapping || Array.isArray(c.chat_messages)));
+    if (!conversations.length) throw Error('No ChatGPT or Claude conversations found in this file.');
+    async function reviewConversation(c) {
+      const conversation = new File([JSON.stringify(c)], 'conversation.json', {type: 'application/json'});
+      if (conversation.size > 4 * 1024 * 1024) throw Error('This conversation exceeds 4 MB. Paste the individual excerpts you want to keep.');
+      return review(conversation, 'chat');
+    }
+    if (conversations.length === 1) return reviewConversation(conversations[0]);
+    const chooser = modal('Choose a conversation');
+    const chosen = field(chooser, 'Conversation', select(conversations.map((c, i) =>
+      [String(i), String(c.title || c.name || 'Conversation ' + (i + 1)).slice(0, 160)])));
+    formAction(chooser, 'Review messages', () => reviewConversation(conversations[Number(chosen.value)]));
   });
   const transfer = details(host, 'Bring context from another agent');
   note(transfer,

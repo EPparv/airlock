@@ -169,3 +169,37 @@ def screened_view(engine, fields, rows, truncated):
         return aliases(value)[:400]
     return dict(fields=[finish(f) for f in visible_fields], rows=[[finish(v) for v in row] for row in filtered],
                 limited_to_100_rows=truncated)
+
+
+def write_payload(values):
+    keys = {'url', 'credential', 'method', 'body'}
+    if not isinstance(values, dict) or set(values) != keys or values['method'] not in ('POST', 'PUT', 'PATCH'):
+        raise Denied('Choose an API write method and a fixed destination.')
+    api_settings(values['url'], values['credential'], '')
+    body = values['body']
+    def unique(pairs):
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise ValueError()
+        return result
+    def invalid(_):
+        raise ValueError()
+    try:
+        if not isinstance(body, str) or len(body.encode('utf-8')) > 32768:
+            raise ValueError()
+        value = json.loads(body, object_pairs_hook=unique, parse_constant=invalid, parse_float=str)
+        if not isinstance(value, dict):
+            raise ValueError()
+    except (ValueError, RecursionError):
+        raise Denied('Enter one JSON object up to 32 KB with unique field names.') from None
+    return {k: values[k] for k in keys}
+
+
+def submit_api(payload):
+    """Send the reviewed bytes once. A receipt includes only the status of submission."""
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
+    if payload['credential']:
+        headers['Authorization'] = 'Bearer ' + payload['credential']
+    req = Request(payload['url'], headers=headers, method=payload['method'], data=payload['body'].encode('utf-8'))
+    with build_opener(ProxyHandler({}), _NoRedirect()).open(req, timeout=8) as reply:
+        return 200 <= reply.status < 300

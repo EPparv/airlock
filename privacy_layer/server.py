@@ -118,6 +118,8 @@ def mcp_app(gateway, port=8792):
         """Read an assigned snapshot's approved fields; direct identifiers are filtered locally."""
         return run('read_private_fields', {'reference':reference})
 
+    from .agent_handoffs import register_tools
+    register_tools(mcp, run)
     app=mcp.streamable_http_app()
     return AuthBoundary(app,gateway),mcp
 
@@ -141,8 +143,13 @@ class AuthBoundary:
 
 
 def owner_app(gateway, owner_token, port=8791):
+    from .prompt_gateway import PromptGateway
+    prompts = PromptGateway(gateway, port)
     from .founder_demo import FounderDemo
     from .near_setup import NearSetup
+    from .agent_handoffs import Handoffs
+    from .remote_clients import RemoteClients
+    remote = RemoteClients(gateway)
     near_setup = NearSetup()
     founder_demo = FounderDemo(gateway, provider=near_setup)
     from .agent_memory import AgentMemory, PrivateTasks
@@ -173,9 +180,15 @@ def owner_app(gateway, owner_token, port=8791):
             body=json.loads(raw or '{}'); action=req.path_params['action']
             if not isinstance(body,dict):raise Denied('Invalid request.')
             hub=ContextHub(gateway.store,getattr(gateway.sources,'context_home',None),gateway.clock)
-            if action.startswith('workspace-'):
+            if action.startswith('prompt-'):
+                result = prompts.owner(action, body)
+            elif action.startswith('workspace-'):
                 from .workspace import Workspace
                 result = await asyncio.to_thread(Workspace(gateway).owner, action, body)
+            elif action.startswith('remote-'):
+                result = await asyncio.to_thread(remote.owner, action, body)
+            elif action.startswith('handoff-'):
+                result = await asyncio.to_thread(Handoffs(gateway).owner, action, body)
             elif action.startswith('near-setup-'):
                 expected = {'near-setup-status':set(), 'near-setup-key':{'api_key'}, 'near-setup-clear':set(),
                             'near-setup-discover':set(), 'near-setup-approve':{'review_id','approved'},
@@ -322,6 +335,10 @@ def owner_app(gateway, owner_token, port=8791):
                 if not isinstance(body,dict) or set(body)-{'token'}:raise Denied('Invalid connection request.')
                 result=await asyncio.to_thread(restore_dot,gateway,**body)
             elif action=='gmail-connect': result=await asyncio.to_thread(gateway.sources.connect_gmail)
+            elif action=='gmail-configure':
+                if set(body) != {'client','approved'} or body['approved'] is not True:
+                    raise Denied('Confirm the Google Desktop app configuration.')
+                result = gateway.sources.configure_gmail(body['client'])
             elif action=='gmail-state': result=gateway.sources.gmail_state()
             elif action=='prepared-review':
                 with gateway.store.transaction() as data:result=data.get('prepared_test_review',{'error':'No prepared test yet.'})
@@ -339,7 +356,9 @@ def owner_app(gateway, owner_token, port=8791):
             return JSONResponse(result,headers={'Cache-Control':'no-store'})
         except Denied as e: return JSONResponse({'error':str(e)},status_code=400)
         except Exception: return JSONResponse({'error':'This source is unavailable. Check the local app’s Gmail connection or source selection; no agent access was granted.'},status_code=400)
-    return Starlette(routes=[Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+    app = Starlette(routes=[*prompts.routes(), Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+    app.state.prompt_gateway = prompts
+    return app
 
 
 def main():
@@ -367,6 +386,8 @@ def main():
         app,_=mcp_app(gateway,args.mcp_port)
         configs=[uvicorn.Config(owner,host='127.0.0.1',port=args.owner_port,log_level='error',access_log=False),uvicorn.Config(app,host='127.0.0.1',port=args.mcp_port,log_level='error',access_log=False)]
         await asyncio.gather(*(uvicorn.Server(c).serve() for c in configs))
+    from .remote_clients import set_active_gateway
+    set_active_gateway((lambda: controller.personal) if args.safe_start else (lambda: gateway))
     asyncio.run(serve())
 
 

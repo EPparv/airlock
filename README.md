@@ -4,13 +4,13 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-Version **0.9.0** opens in its own Mac window. The home screen has three controls.
+Version **0.10.0** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
-- **Connect agent** links Claude Desktop, Codex, Cursor or Claude Code. Other clients include manual MCP, IronClaw and Dot. Choose the records each agent may use as filtered excerpts or for private tasks, its device permissions, expiry and request limit. New connections start with zero selected records.
+- **Connect agent** sets up Muse Code, Claude Desktop, Codex, Cursor, Claude Code, Gemini CLI, VS Code with GitHub Copilot, and OpenClaw on your Mac. Cloud agents, manual MCP, IronClaw and Dot have separate setup flows. Choose the records each agent may use as filtered excerpts or for private tasks, its device permissions, expiry and request limit. New connections start with zero selected records.
 - **Context & memory** holds memories, reusable skills, imports, linked sources and agent proposals. Search, edit, pin, retire or restrict a record. Review imported records before saving. Skill packages and their generated files are under Skills.
-- **Privacy & connections** contains connected agents, the local redaction tester, app and data permissions, write approvals, disclosure receipts, private inference, diagnostics and app settings. Mail recipients, calendar details and attachments resolve locally. Agents can read selected fields from JSON APIs, JSON/CSV files and SQLite snapshots.
+- **Privacy & connections** contains connected agents, the local redaction tester, app and data permissions, write approvals, disclosure receipts, private inference, diagnostics and app settings. Mail recipients, calendar details and attachments resolve locally. You can give each agent selected fields from a live on-device SQLite database, CSV or JSON file, or a snapshot. Agents can request a write to one configured API endpoint or an append to a specific file. You approve the exact payload. The endpoint receives approved values and the agent receives a receipt.
 
 Only tools routed through Airlock use these policies. Free-text detection is best effort. Providers can retain the excerpts you release. Apple Mail needs a configured sending account, and Calendar needs a writable calendar. macOS may ask for Automation permission. If a write is unconfirmed, check the destination before retrying it.
 
@@ -21,7 +21,7 @@ Only tools routed through Airlock use these policies. Free-text detection is bes
 3. Choose **Connect agent**, pick your agent and set its access. Connect, restart the client and use the first request. A saved connection shows when an agent first requests context.
 4. Manage access under **Privacy & connections → Connected agents**. Use **App settings → Lock workspace** to close personal access. To explore with fictional data while locked, choose **Privacy checks**.
 
-Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
+Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. For Gmail on a fresh installation, add your Google Desktop OAuth client under Apps & data → Gmail search, then sign in. Gmail reads require consent from the account holder.
 
 
 The Mac app is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
@@ -33,6 +33,14 @@ Your existing AI generates answers with its own account. Optional private-task i
 The main setup shows common desktop AIs and the records to share together. Manual integrations, connection duration and request limits are under optional controls. Private, retired and stale records are excluded; changing a selected record requires a fresh review before connecting. Memory proposals remain opt-in and owner-reviewed.
 
 Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. A saved settings file is not proof that an AI connected: the UI waits for a real context request.
+
+## Connect cloud agents and hand work to another agent
+
+Under **Connect agent → Cloud agents**, choose a provider. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
+
+Under **Privacy & connections → Approvals & activity → Agent handoffs**, give one agent an assignment and choose who should receive the outcome. The worker claims the assignment and submits a report. You review and release the exact text for the second agent. Each agent uses its own permissions, and a separately approved memory proposal can outlive the handoff.
+
+Under **Privacy & connections → Data protection → Filter model requests**, create a client key for Ollama on this Mac or your OpenAI API account. Point a compatible client at the displayed base URL with model `airlock`. Airlock screens plain text before dispatch. It rejects unsupported traffic, including native tool calls and attachments. Each connection has its own key, call budget and lifetime. See [gateway behavior](docs/PRIVACY.md).
 
 ## Privacy by default
 
@@ -48,7 +56,7 @@ The updated transfer prompt captures a core profile, detailed projects, dated de
 
 Shared memory lets the owner pin core records, correct imported facts and retire outdated ones. New approved agent notes record source hashes and are withheld if their sources change. Connections show their last successful context request. To learn from ongoing work, enable memory proposals, review them, and include approved notes in the relevant agents' scopes.
 
-Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Retrieval remains local lexical ranking with aliases, not semantic embeddings. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
+Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Airlock combines lexical matches with local associations and, where available, Apple’s on-device English sentence embeddings. You can also import selected user messages from ChatGPT and Claude exports. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
 
 ## Developer walkthrough
 

@@ -10,9 +10,28 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 4. Open each exact response and the disclosure receipts. The restricted fictional value must never appear there. No cloud model is called by these checks.
 5. Quit and reopen Airlock. The checks and corrected fictional data must persist. Personal sources must remain closed. Reset clears only the test and invalidates its old connections.
 
+## Connect a local agent
+
+Open **Connect agent**, choose the client and select the records it may use. Leave the selection empty to start with no shared records. In **Client settings**, turn off **Save to the default profile on this Mac** if you want to copy the entry into a custom profile. The generated configuration references an expiring credential stored on your Mac.
+
+| Client | Default Mac profile | Check in the client |
+| --- | --- | --- |
+| Muse Code | `~/.config/muse/settings.json` | Restart Muse Code and run `/mcp`. |
+| Gemini CLI | `~/.gemini/settings.json` | Start a new session and run `/mcp list`. |
+| VS Code with GitHub Copilot | `~/.copilot/mcp-config.json` | Start a **local** Copilot session. Open **Chat: Open Customizations → MCP Servers**. |
+| OpenClaw | `~/.openclaw/openclaw.json` | In the gateway on the same Mac, run `openclaw mcp doctor airlock --probe`. |
+| Codex | `~/.codex/config.toml` | Run `codex mcp get airlock` to check the saved settings. |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | Restart Claude Desktop and check its local MCP servers. |
+| Claude Code | `~/.claude.json` | Restart Claude Code and run `/mcp`. |
+| Cursor | `~/.cursor/mcp.json` | Reopen Cursor and check its MCP settings. |
+
+For commented JSON, OpenClaw includes or a linked profile, use the client’s editor to merge the exported entry. Airlock offers that fallback automatically on the four new clients. Ask the agent to retrieve a selected record, then check **Privacy & connections → Connected agents** for the first context read. A listed server only confirms that its settings loaded.
+
+Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Connect agent → Cloud agents**.
+
 ## Optional real AI experience
 
-1. Under **Privacy checks → Test agent connection**, select Codex, Claude Desktop, Claude Code or Cursor. Explicitly allow the displayed fictional records and connect. This adds **airlock-test**, preserving an existing **airlock** entry.
+1. Under **Privacy checks → Test agent connection**, choose your installed local agent. Explicitly allow the displayed fictional records and connect. This adds **airlock-test**, preserving an existing **airlock** entry.
 2. Restart the AI and start a fresh chat. Enable only airlock-test for this check, then copy the provided prompt. The provider can receive the allowed fictional facts. Airlock does not control the AI's own memory or other tools.
 3. Check that the answer uses the current launch date and two concise bullets. Check its citations against the local receipt. A context-request timestamp confirms retrieval only, not answer quality.
 4. Use the fixed proposal prompt. The rehearsal note stays pending until approved in Airlock. Once approved, ask the AI to refresh and recall it.
@@ -27,7 +46,7 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 5. Choose **Privacy & connections → App settings → Lock workspace**. New personal calls must fail. Quit and reopen; personal access stays closed until explicitly reopened. Saved personal data and permissions are preserved.
 6. Revoke a personal connection and verify fresh requests fail even while the personal workspace is open.
 
-Gmail is optional and read-only. New Gmail sign-in is not configured in this public build. Local skills, private-task inference, NEAR and remote IronClaw/tunnel setup have separate permissions and requirements. The isolated test does not enable them. It does not install Ollama, download model weights, create paid accounts, perform provider deletion or create a remote tunnel.
+Gmail is optional and read-only. To sign in to Gmail on a fresh Mac, add your Google Desktop OAuth app in Privacy & connections → Apps & data → Gmail search. Local skills, private-task inference, NEAR and remote IronClaw/tunnel setup have separate permissions and requirements. The isolated test does not enable them. It does not install Ollama, download model weights, create paid accounts, perform provider deletion or create a remote tunnel.
 
 ## Build and validation boundaries
 

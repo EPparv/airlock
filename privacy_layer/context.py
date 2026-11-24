@@ -57,8 +57,87 @@ def identity(row):
     return row['kind'] + ':' + normalized(re.sub(r'^\s*[-*•]\s+', '', row['text']))
 
 
+def exported_chat(data, name):
+    """Read visible user text only. Titles, files, tool output and assistant turns stay out."""
+    conversations = data.get('conversations', [data]) if isinstance(data, dict) else data
+    if not isinstance(conversations, list):
+        return None
+    recognized = isinstance(data, dict) and 'conversations' in data
+    items = []
+    oversized = 0
+
+    def add_message(provider, parts):
+        nonlocal oversized
+        text = '\n'.join(part for part in parts if isinstance(part, str) and part.strip()).strip()
+        if len(text) > 12000:
+            oversized += 1
+        elif text:
+            items.append({'kind': 'memories', 'text': text, 'core': False, 'device_only': False,
+                          'source': PurePosixPath(name).name[:120], 'chat_source': provider})
+            if len(items) > MAX_ITEMS:
+                raise Denied('This export has over 2,000 user messages. Choose a single conversation.')
+
+    for chat in conversations:
+        if not isinstance(chat, dict):
+            continue
+        if 'mapping' in chat:
+            recognized = True
+            nodes = chat['mapping']
+            if not isinstance(nodes, dict) or not nodes:
+                continue
+            current = chat.get('current_node')
+            if current is None:
+                parents = {node['parent'] for node in nodes.values()
+                           if isinstance(node, dict) and isinstance(node.get('parent'), str)}
+                leaves = nodes.keys() - parents
+                if len(leaves) != 1:
+                    raise Denied('This ChatGPT export has branches without an active conversation path.')
+                current = next(iter(leaves))
+            path, seen = [], set()
+            while current is not None:
+                if not isinstance(current, str) or current in seen or not isinstance(nodes.get(current), dict):
+                    raise Denied('This ChatGPT conversation path is incomplete or invalid.')
+                seen.add(current)
+                node = nodes[current]
+                message = node.get('message')
+                if isinstance(message, dict):
+                    path.append(message)
+                current = node.get('parent')
+            for message in reversed(path):
+                author = message.get('author')
+                content = message.get('content')
+                metadata = message.get('metadata') or {}
+                if not isinstance(author, dict) or author.get('role') != 'user' or message.get('recipient', 'all') != 'all':
+                    continue
+                if not isinstance(metadata, dict) or metadata.get('is_visually_hidden_from_conversation'):
+                    continue
+                if isinstance(content, dict) and content.get('content_type') in ('text', 'multimodal_text') and isinstance(content.get('parts'), list):
+                    add_message('ChatGPT', content['parts'])
+        elif 'chat_messages' in chat:
+            recognized = True
+            if not isinstance(chat['chat_messages'], list):
+                continue
+            for message in chat['chat_messages']:
+                if not isinstance(message, dict) or message.get('sender') != 'human':
+                    continue
+                blocks = message.get('content')
+                if isinstance(blocks, list) and blocks:
+                    add_message('Claude', [b.get('text') for b in blocks
+                                           if isinstance(b, dict) and b.get('type') == 'text'])
+                else:
+                    add_message('Claude', [message.get('text')])
+    if not recognized:
+        return None
+    if not items:
+        raise Denied('No eligible user messages found. Use a conversation with visible user text under 12,000 characters per message.')
+    scope = 'Choose the messages you want to keep. These are past user statements or questions. Replies, attachments and tool results are excluded.'
+    if oversized:
+        scope += f' Skipped {oversized} messages over 12,000 characters.'
+    return finish(items, scope)
+
+
 def parse_context(name, raw, kind='auto'):
-    if kind not in ('auto','memories','skills'):raise Denied('Choose automatic detection, memories or skills.')
+    if kind not in ('auto','memories','skills','chat'):raise Denied('Choose automatic detection, memories, skills or chat export.')
     if not isinstance(raw,bytes) or not raw or len(raw)>MAX_BYTES:raise Denied('Choose a text export up to 4 MB.')
     suffix=PurePosixPath(name).suffix.lower()
     if suffix in ('.zip','.skill'):
@@ -67,9 +146,12 @@ def parse_context(name, raw, kind='auto'):
                 entries=z.infolist()
                 if len(entries)>3000:raise Denied('This archive has too many files. Use a memory or skills export.')
                 allowed={'memories.json','memory.json','memories.md','memory.md','memory.txt','memories.txt','skills.json','skill.md','claude.md','agents.md','custom_instructions.json','custom_instructions.md','custom_instructions.txt','context.json','context.md'}
-                selected=[f for f in entries if not f.is_dir() and PurePosixPath(f.filename).name.lower() in allowed]
-                if not selected:raise Denied('No memory or skill files found. For a chat-history archive, use Copy transfer prompt instead.')
-                if sum(f.file_size for f in selected)>MAX_BYTES or len(selected)>300:raise Denied('The archive expands beyond the 4 MB / 300-file limit.')
+                conversations=re.compile(r'^conversations(?:[-_]\d+)?\.json$', re.I)
+                selected=[f for f in entries if not f.is_dir() and
+                          ((kind in ('auto','chat') and conversations.fullmatch(PurePosixPath(f.filename).name)) or
+                           (kind!='chat' and PurePosixPath(f.filename).name.lower() in allowed))]
+                if not selected:raise Denied('No supported context files found. Choose a ChatGPT or Claude conversations JSON file, a memory file or a skill file.')
+                if sum(f.file_size for f in selected)>MAX_BYTES or len(selected)>300:raise Denied('This archive expands beyond 4 MB or 300 files. Unzip it and choose a conversations JSON file or a smaller context file.')
                 items=[];scopes=[]
                 for f in selected:
                     if f.flag_bits&1:raise Denied('Unlock the archive before importing it.')
@@ -108,14 +190,19 @@ def parse_context(name, raw, kind='auto'):
         try:
             data=json.loads(text)
         except (ValueError,TypeError):raise Denied('The JSON reply is incomplete. Paste the complete reply, or ask for Markdown.') from None
-        if isinstance(data,dict) and any(k in data for k in ('mapping','conversations','chat_messages')) or isinstance(data,list) and any(isinstance(x,dict) and any(k in x for k in ('mapping','chat_messages')) for x in data):
-            raise Denied('This is chat history, not saved context. Copy the transfer prompt to extract memories and reusable skills first.')
+        chat=exported_chat(data,name)
+        if chat is not None:
+            if kind not in ('auto','chat'):
+                raise Denied('Choose Chat export to review individual messages from this conversation.')
+            return chat
+        if kind=='chat':raise Denied('Choose a ChatGPT or Claude conversation export in JSON or ZIP format.')
         if isinstance(data,dict) and any(k in data for k in ('memories','skills','custom_instructions','user_instructions','preferences','profile')):
             for key,target in [('memories','memories'),('profile','memories'),('skills','skills'),('custom_instructions','skills'),('user_instructions','skills'),('preferences','skills')]:
                 if key in data:add(data[key],target if kind=='auto' else kind)
             scope=data.get('scope','') if isinstance(data.get('scope',''),str) else ''
         else:add(data,'memories' if kind=='auto' else kind)
     else:
+        if kind=='chat':raise Denied('Choose a ChatGPT or Claude conversation export in JSON or ZIP format.')
         explicit=kind!='auto'
         target=kind if explicit else 'skills' if PurePosixPath(name).name.lower() in ('skill.md','claude.md','agents.md','custom_instructions.md','custom_instructions.txt') else 'memories'
         # A native skill file is one complete instruction document, including its
@@ -250,7 +337,7 @@ class ContextHub:
                     if not row.get('device_only') or signature in private:skipped+=1;continue
                     row={**row,'privacy_override':True,'core':False};privacy_updated+=1
                 if row.get('device_only'):private.add(signature)
-                known.add(signature);added.append({**row,'source_id':'import:'+secrets.token_hex(16),'origin':'Imported context'})
+                known.add(signature);added.append({**row,'source_id':'import:'+secrets.token_hex(16),'origin':row['chat_source']+' conversation' if row.get('chat_source') else 'Imported context'})
             if sum(bool(core_overrides.get(ref,r.get('core',False))) for ref,r in originals.items())+sum(bool(r.get('core')) for r in added)>6:
                 raise Denied('Keep up to six core profile records. Unpin existing entries in Shared memory or remove extra [CORE] markers, then import again.')
             if core_updated:
