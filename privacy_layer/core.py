@@ -218,6 +218,8 @@ class Gateway:
     def call(self, token, tool, args):
         if not isinstance(args, dict): raise Denied('Invalid tool arguments.')
         schemas = {'privacy_status':set(), 'get_private_context':{'query'}, 'search_gmail':{'query'}, 'read_gmail':{'reference'},'stage_context_import':{'transfer_code','memories','skills','scope'},'context_status':set(),'list_local_skills':{'query'},'read_local_skill':{'skill_id','resource','offset'},'run_local_skill':{'skill_id','script','topic','gmail_query'},'prepare_private_brief':{'topic','gmail_query','max_messages'},'update_shared_context':{'operation','kind','text','reference','expected_revision'},'request_private_task':{'instruction','records','route'},'get_private_task_result':{'task_id'}}
+        from .workspace import TOOLS as device_tools, Workspace
+        schemas.update(device_tools)
         if tool not in schemas or set(args) != schemas[tool]: raise Denied('Unsupported tool or arguments.')
         query = args.get('query', '')
         if not isinstance(query, str) or len(query)>QUERY_LIMIT:
@@ -235,6 +237,8 @@ class Gateway:
                           'mode':'automatic' if automatic else 'reviewed',
                           'scope':('Automatic local selection across the full memory/skill library and live read-only Gmail search. Only filtered excerpts leave the Mac. Device-only records, detected secrets and identifiers are withheld. Filtering is not guaranteed anonymization. No sending or arbitrary file access.' if automatic else 'Only owner-reviewed memory, skill and email excerpts. No sending, raw files, credentials or unrestricted inbox.'),
                           'scope_selection':snapshot.get('scope'), 'expires':snapshot['expires'],'capabilities':snapshot.get('capabilities',{}),'local_actions':'Owner-enabled Python skill packages run offline with selected inputs. Generated outputs are owner-only; shared note updates are versioned and unverified.'}
+            elif tool in device_tools:
+                result = Workspace(self).call(snapshot, tool, args)
             elif snapshot.get('scope') is not None:
                 from .agent_memory import AgentMemory, PrivateTasks
                 memory = AgentMemory(self)
@@ -311,7 +315,7 @@ class Gateway:
             if tool == 'privacy_status' and snapshot.get('scope') is not None:
                 from .agent_memory import AgentMemory
                 result['scope_selection'] = AgentMemory(self).public_scope(snapshot)
-                result['scope'] = 'Owner-selected local memories and skills. Excerpt disclosure and private computation are separate permissions. Proposals need owner review; computation and result release need separate approval. No Gmail or arbitrary actions.'
+                result['scope'] = 'Owner-selected local memories and skills. Excerpt disclosure and private computation are separate permissions. Proposals need owner review; computation and result release need separate approval. Private device actions require a separately assigned handle and local approval for writes.'
             if snapshot.get('mode')=='automatic' and tool in ('run_local_skill','prepare_private_brief'):
                 # A long-running local action must not return evidence filtered
                 # before the owner added a private phrase during execution.
@@ -344,7 +348,7 @@ class Gateway:
                 if tool=='get_private_context':
                     current['last_context_read']=self.clock()
                     current['last_context_fingerprint']=result.get('context_fingerprint')
-                if snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context'):
+                if tool in device_tools or (snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context')):
                     receipts=data.setdefault('disclosures',[])
                     receipts.append({'at':self.clock(),'agent':current['id'],'tool':tool,'items':copy.deepcopy(result.get('items',[])),'coverage':result.get('coverage',''),'response':copy.deepcopy(result)})
                     data['disclosures']=receipts[-50:]

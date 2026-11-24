@@ -73,8 +73,8 @@ def check(app, cached_runtime=None):
             assert not (base/'app/.private/connections.enc').exists()
             assert not (base/'app/.private/key.lock').exists()
             assert canary.read_bytes()==b'EXISTING_PERSONAL_VAULT_CANARY'
-            origin=launch['url'].split('/?')[0]
-            for path in ('/','/safe-test.js','/safe-test.css'):
+            parsed=urlsplit(launch['url']);origin=f'{parsed.scheme}://{parsed.netloc}'
+            for path in ('/','/safe-test.js','/safe-test.css','/workspace','/workspace.js','/workspace.css'):
                 with opener.open(origin+path) as r:assert r.status==200
             for step in ('recall','privacy','correction','propose','approve','persistence','revoke'):
                 assert api('test-check',{'step':step})['passed'],step

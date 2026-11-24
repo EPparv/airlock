@@ -19,6 +19,24 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  const target=await send('Target.createTarget',{url:'about:blank'});session=(await send('Target.attachToTarget',{targetId:target.targetId,flatten:true})).sessionId;
  await send('Runtime.enable',{},session);await send('Page.enable',{},session);
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
+ await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace#fictional-browser-owner`},session);
+ await until("document.querySelector('.card h2') && document.body.innerText.includes('Investor follow-up')");
+ const byText=(selector,label)=>evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(x=>x.textContent.trim()===${JSON.stringify(label)}).click()`);
+ if(process.argv[4]){fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png'},session);fs.writeFileSync(path.join(process.argv[4],'workspace-desktop.png'),Buffer.from(shot.data,'base64'));}
+ await byText('summary','Returned to Claude Desktop');
+ assert.equal(await evaluate("document.querySelector('details[open] pre').innerText.includes('mara@example.com')"),false);
+ await byText('button','Approve example');await until("document.querySelector('.badge.done')?.textContent==='Simulated'");
+ await byText('button','Read fields');await until("document.querySelector('dialog[open] pre')?.innerText.includes('Pilot')");
+ assert.equal(await evaluate("document.querySelector('dialog pre').innerText.includes('client@example.com')"),false);
+ await click('close');
+ for(const tab of ['agents','library','activity','actions']){
+  await evaluate(`document.querySelector('[data-tab="${tab}"]').click()`);
+  assert.equal(await evaluate("document.querySelector('[aria-current=page]').dataset.tab"),tab);
+ }
+ await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
+ assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
+ if(process.argv[4]){const shot=await send('Page.captureScreenshot',{format:'png'},session);fs.writeFileSync(path.join(process.argv[4],'workspace-mobile.png'),Buffer.from(shot.data,'base64'));}
+ await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/#fictional-browser-owner`},session);
  await until("document.querySelector('#checks .step') && document.querySelectorAll('#checks .step').length===7");
  assert.equal(await evaluate('location.hash'),'');assert.equal(await evaluate("document.querySelectorAll('.record').length"),3);

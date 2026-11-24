@@ -32,7 +32,7 @@ async def check_session(s):
     await s.initialize()
     tools=(await s.list_tools()).tools
     names={t.name for t in tools}
-    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result'}
+    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result','list_private_actions','request_private_action','private_action_status','read_private_fields','prepare_private_followup'}
     for tool in tools:
         if tool.name in ('get_private_context','search_gmail'):
             assert tool.inputSchema['properties']['query']['maxLength']==2000
@@ -170,7 +170,7 @@ def test_native_client_export_over_real_stdio(bundle,serving,tmp_path,monkeypatc
         async with stdio_client(StdioServerParameters(**config)) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                tools=await session.list_tools();assert len(tools.tools)==13
+                tools=await session.list_tools();assert len(tools.tools)==18
                 context=await session.call_tool('get_private_context',{'query':'interview'})
                 assert not context.isError
                 assert 'Hyderabad' in context.content[0].text

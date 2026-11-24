@@ -4,15 +4,24 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-This is **0.7.0**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+Version **0.8.0** adds a local action workspace for connected agents. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+
+## The workspace
+
+- **Actions** queues a message with an optional attachment, a calendar event, or access to specific data fields. Agents receive a reference scoped to their connection. Mail recipients, event details and attachments stay in the local action. Review the exact write before Airlock sends it to Apple Mail or Calendar.
+- **Agents** connects Claude Desktop, Claude Code, Codex or Cursor. Each agent starts with empty record access. You can enable follow-ups to the selected Mail sender or the attendees of the most recent Calendar meeting. Airlock resolves the recipient on your Mac. Restart the client after connecting.
+- **Library** stores shared memories and skills in the encrypted personal vault. Approve proposed updates here. Device-only records remain private.
+- **Activity** shows the actual response returned to each agent. Field views support a fixed JSON GET API, JSON/CSV files and SQLite snapshots. Select the permitted fields. Airlock filters values and gives each connection its own identity tokens. Free-text detection is best effort. A cloud AI sees the filtered context you choose to share and can retain it. Only tools routed through Airlock use these policies.
+
+Apple Mail needs a configured sending account. Calendar events require a writable calendar. macOS may ask for Automation permission on first use. An unconfirmed submission stays available for inspection and requires checking the destination app. The initial fictional example uses neither app.
 
 ## Open and run on Mac
 
 1. Download and unzip **Airlock_Mac_Latest.zip**. Move **Airlock.app** to Applications and open it.
 2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
-3. Run the seven checks in the **fictional test workspace**. Your existing personal library, Gmail and source files stay closed.
+3. Approve the fictional Mail example, inspect its receipt, and try reading the selected pipeline fields. Open **Privacy checks** for the seven guided checks. Your existing personal library, Gmail and source files stay closed.
 4. Optionally add the separate **airlock-test** connection to Codex, Claude or Cursor. Restart that AI and use the prompts shown. Only allowed fictional records are available through this connection; the AI's other tools and memories are outside Airlock's control.
-5. When ready, explicitly open the personal workspace. Add context, click **Connect my AI**, and select the exact records in the same screen. Nothing is preselected. Connect, restart your AI and paste the first question. Airlock distinguishes saved settings from a real context request. Connections created without a selection still have no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
+5. When ready, explicitly open the personal workspace. Open **Library** to add memories or skills. In **Agents**, choose **Connect agent** and select its exact records and device permissions. Nothing is preselected. Connect, restart your AI and paste the first question. Airlock distinguishes saved settings from a real context request. Connections created without a selection still have no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
 
 Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
 
