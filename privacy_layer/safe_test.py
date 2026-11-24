@@ -15,7 +15,7 @@ from .core import Gateway, EncryptedStore, Denied, digest, normalized
 from .context import ContextHub
 from .agent_memory import AgentMemory
 from .device_apps import ExampleApps, NativeApps
-from .workspace import Workspace, TOOLS as DEVICE_TOOLS
+from .workspace import Workspace, TOOLS as DEVICE_TOOLS, WORKSPACE_ASSETS
 
 REHEARSAL = 'Cypress product rehearsal is November 18.'
 PRIVATE = 'FICTIONAL-ORCHID-7429'
@@ -282,7 +282,7 @@ class SafeTest:
 
     def app(self, owner_token, port):
         async def asset(req):
-            name = {'/workspace':'workspace.html','/workspace.css':'workspace.css','/workspace.js':'workspace.js','/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
+            name = {'/workspace':'workspace.html',**WORKSPACE_ASSETS,'/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
             if not name:return Response(status_code=404)
             return FileResponse(self.root/'ui'/name,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
                 'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
@@ -326,7 +326,7 @@ class SafeTest:
             except (Denied,ValueError,TypeError) as e:return JSONResponse({'error':str(e)},status_code=400)
             except Exception:return JSONResponse({'error':'The test could not finish. Review the workspace status, or reopen Airlock to close personal access.'},status_code=400)
 
-        test_app=Starlette(routes=[Route('/workspace',asset),Route('/workspace.css',asset),Route('/workspace.js',asset),Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+        test_app=Starlette(routes=[Route('/workspace',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
         near_app = None
         async def dispatch(scope, receive, send):
             nonlocal near_app
@@ -347,7 +347,7 @@ class SafeTest:
                 return await near_app(scope,receive,send)
             personal_app, token = self.personal_app, self.personal_token
             personal_auth = token and secrets.compare_digest(headers.get(b'authorization',b''),('Bearer '+token).encode())
-            personal_asset = path not in ('/','/workspace','/workspace.css','/workspace.js','/safe-test.js','/safe-test.css','/icon.svg') and not path.startswith('/api/')
+            personal_asset = path not in ('/','/workspace',*WORKSPACE_ASSETS,'/safe-test.js','/safe-test.css','/icon.svg') and not path.startswith('/api/')
             if personal_app and (personal_auth or personal_asset):
                 if path=='/personal':scope={**scope,'path':'/','raw_path':b'/'}
                 return await personal_app(scope,receive,send)

@@ -28,23 +28,36 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await send('Runtime.enable',{},session);await send('Page.enable',{},session);
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace#fictional-browser-owner`},session);
- await until("document.querySelector('.card h2') && document.body.innerText.includes('Investor follow-up')");
- const byText=(selector,label)=>evaluate(`[...document.querySelectorAll(${JSON.stringify(selector)})].find(x=>x.textContent.trim()===${JSON.stringify(label)}).click()`);
- if(process.argv[4]){fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png'},session);fs.writeFileSync(path.join(process.argv[4],'workspace-desktop.png'),Buffer.from(shot.data,'base64'));}
- await byText('summary','Returned to Claude Desktop');
- assert.equal(await evaluate("document.querySelector('details[open] pre').innerText.includes('mara@example.com')"),false);
- await byText('button','Approve example');await until("document.querySelector('.badge.done')?.textContent==='Simulated'");
- await byText('button','Read fields');await until("document.querySelector('dialog[open] pre')?.innerText.includes('Pilot')");
- assert.equal(await evaluate("document.querySelector('dialog pre').innerText.includes('client@example.com')"),false);
- await click('close');
- for(const tab of ['agents','library','activity','actions']){
-  await evaluate(`document.querySelector('[data-tab="${tab}"]').click()`);
-  assert.equal(await evaluate("document.querySelector('[aria-current=page]').dataset.tab"),tab);
+ const controls=['Connect agent','Context & memory','Privacy & connections'];
+ const labels=()=>evaluate("Array.from(document.querySelectorAll('#app.home nav button'),b=>b.textContent)");
+ const byText=async(selector,label)=>{
+  const expr='Array.from(document.querySelectorAll('+JSON.stringify(selector)+')).find(b=>b.getClientRects().length && b.textContent.trim()==='+JSON.stringify(label)+')';
+  await until('!!('+expr+')');return evaluate('('+expr+').click()');
+ };
+ const btn=label=>byText('#app button',label), sheet=label=>byText('dialog[open] button',label);
+ const contains=text=>until('document.getElementById("app")?.innerText.includes('+JSON.stringify(text)+')');
+ const titled=title=>until('document.querySelector("#app h1")?.textContent==='+JSON.stringify(title));
+ async function screenshot(name){if(!process.argv[4])return;fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],name),Buffer.from(shot.data,'base64'));}
+ async function type(label,value,area='dialog[open]'){
+  const expr='Array.from(document.querySelectorAll('+JSON.stringify(area+' label')+')).find(x=>x.firstChild.textContent==='+JSON.stringify(label)+')?.querySelector("input,textarea,select")';
+  await until('!!('+expr+')');await evaluate('(()=>{const e='+expr+';e.value='+JSON.stringify(value)+';e.dispatchEvent(new Event("input",{bubbles:true}));e.dispatchEvent(new Event("change",{bubbles:true}));})()');
  }
+ async function home(){for(let i=0;i<8;i++){if(await evaluate("document.querySelectorAll('#app.home nav button').length===3"))return;await until("!!document.querySelector('.back')");await evaluate("document.querySelector('.back').click()");}throw Error('Home unavailable');}
+ await until("document.querySelectorAll('nav button').length===3");assert.deepEqual(await labels(),controls);
+ assert.ok(!(await evaluate("document.body.innerText.includes('Investor follow-up')")));await screenshot('workspace-desktop.png');
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
- assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);
- if(process.argv[4]){const shot=await send('Page.captureScreenshot',{format:'png'},session);fs.writeFileSync(path.join(process.argv[4],'workspace-mobile.png'),Buffer.from(shot.data,'base64'));}
+ assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);await screenshot('workspace-mobile.png');
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
+ await btn('Connect agent');await btn('Codex');await until("document.querySelector('dialog[open] h2')?.textContent==='Unlock your workspace'");
+ assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);await click('close');await home();
+ await btn('Context & memory');await contains('Proposed changes');await screenshot('workspace-context.png');await home();
+ await btn('Privacy & connections');await contains('App settings');await screenshot('workspace-privacy.png');
+ await btn('Privacy checks');await btn('Example actions');await contains('Investor follow-up');
+ await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Investor follow-up')).click()");
+ await sheet('Approve example');await contains('Simulated');
+ await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Pipeline stage')).click()");
+ await sheet('Read filtered fields');await until("document.querySelector('dialog[open] pre')?.innerText.includes('Pilot')");
+ assert.ok(!(await evaluate("document.querySelector('dialog pre').innerText.includes('client@example.com')")));await click('close');
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/#fictional-browser-owner`},session);
  await until("document.querySelector('#checks .step') && document.querySelectorAll('#checks .step').length===7");
  assert.equal(await evaluate('location.hash'),'');assert.equal(await evaluate("document.querySelectorAll('.record').length"),3);
@@ -111,20 +124,42 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await click('closePersonal');await until("document.getElementById('isolation').textContent.includes('Personal sources are closed')");
  await click('reset');await until("document.getElementById('progress').textContent==='0 of 7 checks passed'");
  await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace`},session);
- await until("document.querySelector('.card h2') && document.getElementById('switch').textContent==='Open my workspace'");
- await click('switch');await byText('#dialog button','Open my workspace');
- await until("location.pathname==='/workspace/personal' && document.getElementById('mode').textContent==='Personal workspace'");
- const tabClick=(tab)=>evaluate(`document.querySelector('[data-tab="${tab}"]').click()`);
- await tabClick('library');await click('primary');
- await evaluate("document.querySelector('#dialog textarea').value='Follow up about the fictional pilot.'");
- await byText('#dialog button','Save record');await until("!document.getElementById('dialog').open && document.getElementById('content').textContent.includes('Follow up about the fictional pilot.')");
- await tabClick('agents');await click('primary');await until("document.querySelector('#dialog fieldset input')");
- await evaluate("document.querySelector('#dialog select').value='cursor';[...document.querySelectorAll('#dialog label')].find(l=>l.textContent.includes('Follow up about the fictional pilot.')).querySelector('input').click()");
- await byText('#dialog button','Connect agent');await until("!document.getElementById('dialog').open && document.getElementById('content').textContent.includes('Cursor')");
- await tabClick('actions');await click('primary');
- await evaluate("for(const [name,value] of [['Label visible to the agent','Private check'],['Recipients','fictional@example.org'],['Subject','Local review'],['Message','Test body']]){[...document.querySelectorAll('#dialog label')].find(l=>l.firstChild.textContent===name).querySelector('input,textarea').value=value;}[...document.querySelectorAll('#dialog label')].find(l=>l.textContent==='Cursor').querySelector('input').click()");
- await byText('#dialog button','Save action');await until("!document.getElementById('dialog').open && document.getElementById('content').textContent.includes('Private check')");
- await click('switch');await byText('#dialog button','Close workspace');await until("location.pathname==='/workspace' && document.getElementById('mode').textContent==='Example workspace'");
+ await until("document.querySelectorAll('#app.home nav button').length===3");
+ await btn('Context & memory');await btn('Memories');await sheet('Unlock workspace');
+ await until("location.pathname==='/workspace/personal' && document.querySelector('h1')?.textContent==='Memories'");
+ await btn('Add memory');await type('Memory','Follow up about the fictional pilot.');await sheet('Save');await contains('Follow up about the fictional pilot.');
+ await btn('Follow up about the fictional pilot.');await btn('Edit');await type('Memory','Follow up about the revised fictional pilot.');await sheet('Save changes');await contains('Follow up about the revised fictional pilot.');
+ await btn('Pin to core profile');await contains('Unpin from core profile');await btn('Retire from recall');await contains('Restore to recall');await btn('Restore to recall');await contains('Retire from recall');
+ await home();await btn('Connect agent');await btn('Cursor');await titled('Cursor');
+ await byText('summary','Shared records · 0 selected');await type('Follow up about the revised fictional pilot.','excerpt','#app');
+ assert.ok(!(await evaluate("document.querySelector('#app').innerText.includes('FICTIONAL_PRIVATE_PERSONAL')")));
+ await btn('Connect Cursor');await until("document.querySelector('dialog[open] h2')?.textContent==='Connection configured'");
+ await sheet('Check connection');await until("document.querySelector('dialog').innerText.includes('Waiting for the agent')");await sheet('Close');
+ assert.ok(fs.existsSync(path.join(tmp,'profile/.cursor/mcp.json')));
+ const savedCursor=await evaluate("api('workspace-state').then(s=>s.agents.find(g=>g.name==='cursor'&&g.status==='configured'))");assert.equal(savedCursor.scope.records.length,1);assert.equal(savedCursor.scope.disclose_records.length,1);
+ await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Sensitive Pilot Code','#app');await btn('Save phrases');await until("document.getElementById('notice').textContent==='Private phrases saved.'");
+ await byText('summary','Test redaction');await type('Sample','Write to test@example.org about Sensitive Pilot Code.','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.length>0");
+ const redacted=await evaluate("document.querySelector('#app pre').textContent");assert.ok(!redacted.includes('test@example.org')&&!redacted.includes('Sensitive Pilot Code'));
+ await type('Input','json','#app');await type('Sample',JSON.stringify({email:'test@example.org',stage:'Pilot',password:'ExampleOnly'}),'#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.includes('Pilot')");
+ const screened=JSON.parse(await evaluate("document.querySelector('#app pre').textContent"));assert.equal(screened.stage,'Pilot');assert.ok(screened.email.startsWith('[email-'));assert.equal(screened.password,'[withheld]');
+ await home();await btn('Privacy & connections');await btn('Apps & data');await btn('Apple Mail');await btn('New email');
+ for(const [k,v] of [['Label visible to the agent','Local action'],['Recipients','fictional@example.org'],['Subject','Local review'],['Message','Test only']])await type(k,v);
+ await evaluate("Array.from(document.querySelectorAll('dialog label')).find(l=>l.textContent==='Cursor').querySelector('input').click()");await sheet('Save action');await contains('Local action');
+ await home();await btn('Privacy & connections');await btn('App settings');await btn('Lock workspace');await sheet('Lock workspace');
+ await until("location.pathname==='/workspace' && document.querySelectorAll('nav button').length===3");assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
+ if(process.argv[4]){
+   const file=path.resolve(process.argv[4],'Airlock-Preview.html');assert.ok(fs.existsSync(file));
+   await send('Page.navigate',{url:require('node:url').pathToFileURL(file).href},session);
+   await until("document.querySelector('.preview-note') && document.querySelectorAll('nav button').length===3");assert.deepEqual(await labels(),controls);
+   await btn('Context & memory');await btn('Import context');await type('Paste context','Remember the demo date.','#app');await btn('Review import');await sheet('Add selected records');await sheet('View memories');await contains('Remember the demo date.');
+   await home();await btn('Connect agent');await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
+   await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Preview code','#app');await btn('Save phrases');await byText('summary','Test redaction');await type('Sample','Preview code at sample@example.org','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.includes('[withheld]')");assert.ok(!(await evaluate("document.querySelector('#app pre').textContent.includes('sample@example.org')")));
+   await home();await btn('Privacy & connections');await btn('Approvals & activity');await btn('Device actions');await contains('Investor follow-up');
+   await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Investor follow-up')).click()");await sheet('Approve example');await contains('Simulated');
+   await home();await btn('Privacy & connections');await btn('App settings');await btn('Reset preview');await sheet('Reset preview');await titled('Airlock');
+   assert.equal(await evaluate("api('workspace-state').then(s=>s.records.some(r=>r.text==='Remember the demo date.'))"),false);
+   assert.ok(!(await evaluate("performance.getEntriesByType('resource').some(r=>/^https?:/.test(r.name))")));
+ }
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({passed:true,guided_checks:7,desktop:1280,mobile:390,consent:true,separate_config:true,personal_open_close:true,context_selection:true,old_install_migrated:true,no_false_connection_success:true,reset:true,browser_errors:errors}));
 })().catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>{if(chrome)chrome.kill();if(service)service.kill();for(const p of pending.values())clearTimeout(p.timer);});

@@ -4,24 +4,22 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-Version **0.8.0** adds a local action workspace for connected agents. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+Version **0.9.0** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
-- **Actions** queues a message with an optional attachment, a calendar event, or access to specific data fields. Agents receive a reference scoped to their connection. Mail recipients, event details and attachments stay in the local action. Review the exact write before Airlock sends it to Apple Mail or Calendar.
-- **Agents** connects Claude Desktop, Claude Code, Codex or Cursor. Each agent starts with empty record access. You can enable follow-ups to the selected Mail sender or the attendees of the most recent Calendar meeting. Airlock resolves the recipient on your Mac. Restart the client after connecting.
-- **Library** stores shared memories and skills in the encrypted personal vault. Approve proposed updates here. Device-only records remain private.
-- **Activity** shows the actual response returned to each agent. Field views support a fixed JSON GET API, JSON/CSV files and SQLite snapshots. Select the permitted fields. Airlock filters values and gives each connection its own identity tokens. Free-text detection is best effort. A cloud AI sees the filtered context you choose to share and can retain it. Only tools routed through Airlock use these policies.
+- **Connect agent** links Claude Desktop, Codex, Cursor or Claude Code. Other clients include manual MCP, IronClaw and Dot. Choose the records each agent may use as filtered excerpts or for private tasks, its device permissions, expiry and request limit. New connections start with zero selected records.
+- **Context & memory** holds memories, reusable skills, imports, linked sources and agent proposals. Search, edit, pin, retire or restrict a record. Review imported records before saving. Skill packages and their generated files are under Skills.
+- **Privacy & connections** contains connected agents, the local redaction tester, app and data permissions, write approvals, disclosure receipts, private inference, diagnostics and app settings. Mail recipients, calendar details and attachments resolve locally. Agents can read selected fields from JSON APIs, JSON/CSV files and SQLite snapshots.
 
-Apple Mail needs a configured sending account. Calendar events require a writable calendar. macOS may ask for Automation permission on first use. An unconfirmed submission stays available for inspection and requires checking the destination app. The initial fictional example uses neither app.
+Only tools routed through Airlock use these policies. Free-text detection is best effort. Providers can retain the excerpts you release. Apple Mail needs a configured sending account, and Calendar needs a writable calendar. macOS may ask for Automation permission. If a write is unconfirmed, check the destination before retrying it.
 
 ## Open and run on Mac
 
-1. Download and unzip **Airlock_Mac_Latest.zip**. Move **Airlock.app** to Applications and open it.
-2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
-3. Approve the fictional Mail example, inspect its receipt, and try reading the selected pipeline fields. Open **Privacy checks** for the seven guided checks. Your existing personal library, Gmail and source files stay closed.
-4. Optionally add the separate **airlock-test** connection to Codex, Claude or Cursor. Restart that AI and use the prompts shown. Only allowed fictional records are available through this connection; the AI's other tools and memories are outside Airlock's control.
-5. When ready, explicitly open the personal workspace. Open **Library** to add memories or skills. In **Agents**, choose **Connect agent** and select its exact records and device permissions. Nothing is preselected. Connect, restart your AI and paste the first question. Airlock distinguishes saved settings from a real context request. Connections created without a selection still have no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
+1. Unzip the Mac download, move **Airlock.app** to Applications and open it. First setup downloads the pinned runtime. Subsequent launches use the installation on your Mac.
+2. Choose **Context & memory → Memories → Unlock workspace → Add memory**, or import existing context. Personal access opens only after you choose to unlock it.
+3. Choose **Connect agent**, pick your agent and set its access. Connect, restart the client and use the first request. A saved connection shows when an agent first requests context.
+4. Manage access under **Privacy & connections → Connected agents**. Use **App settings → Lock workspace** to close personal access. To explore with fictional data while locked, choose **Privacy checks**.
 
 Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
 
@@ -72,13 +70,13 @@ Expected: tests pass; the site check reports a valid archive and checksum. Provi
 
 ## Use NEAR from the app
 
-On the first screen, choose **Open NEAR private AI**, then **Set up NEAR private AI**. This workspace uses fictional data and does not open personal sources.
+Choose **Privacy & connections → Privacy checks → Private inference walkthrough → Walkthrough NEAR settings**. This workspace uses fictional data and does not open personal sources.
 
 1. Get a key from [NEAR AI Cloud](https://cloud.near.ai) or [NEAR Builders hackathon credits](https://nearbuilders.org/dashboard). Paste it into Airlock's local masked field. Keys remain in process memory only and are cleared on restart.
-2. Click **Install NEAR verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
-3. Click **Verify deployment without sending a prompt**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
-4. Click **Approve and run this test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
-5. Open **Private AI walkthrough**, choose **NEAR**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
+2. Click **Install verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
+3. Click **Verify deployment**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
+4. Click **Test inference**, review the displayed prompt and choose **Run test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
+5. Open **Inference walkthrough**, choose **NEAR confidential inference**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
 
 The setup route is local and owner-authenticated. It has no Incognito or unverified fallback. The cloud API key is never stored beside the fictional vault key. Live operation still needs the user's key, available credits, supported verification hardware evidence, reviewed deployment configurations and network access. See [the NEAR demo and submission guide](docs/NEAR_LIVE.md).
 

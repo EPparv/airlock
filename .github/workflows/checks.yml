@@ -24,7 +24,7 @@ jobs:
         run: python -m pip install -r requirements-near.txt
       - name: Check updated browser scripts
         run: |
-          node --check ui/workspace.js
+          for script in ui/workspace*.js scripts/workspace_preview_adapter.js; do node --check "$script"; done
           node --check privacy_layer/device_apps.js
           node --check ui/safe-test.js
           node --check ui/ui.js
@@ -73,8 +73,10 @@ jobs:
         run: osacompile -l JavaScript -o "$RUNNER_TEMP/airlock-device.scpt" privacy_layer/device_apps.js
       - name: Build universal Mac app from this revision
         run: python macos/package.py artifacts/Airlock_Mac_Latest.zip --app-destination artifacts/Airlock.app
-      - name: Fresh install, isolation, scoped access and revocation
-        run: python scripts/smoke_mac.py artifacts/Airlock.app
+      - name: Fresh install, native window, isolation, scoped access and revocation
+        run: |
+          xcrun clang -fobjc-arc -framework Cocoa -framework WebKit scripts/smoke_workspace_window.m -o "$RUNNER_TEMP/workspace-window-check"
+          python scripts/smoke_mac.py artifacts/Airlock.app --window-probe "$RUNNER_TEMP/workspace-window-check"
       - name: Require action sandbox checks
         if: steps.sandbox.outcome != 'success'
         run: exit 1

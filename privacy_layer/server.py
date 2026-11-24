@@ -147,14 +147,17 @@ def owner_app(gateway, owner_token, port=8791):
     founder_demo = FounderDemo(gateway, provider=near_setup)
     from .agent_memory import AgentMemory, PrivateTasks
     memory, private_tasks = AgentMemory(gateway), PrivateTasks(gateway, near=near_setup)
+    from .workspace import WORKSPACE_ASSETS
     async def asset(req):
         filename={'/':'index.html','/near-demo':'index.html','/ui.js':'ui.js','/context.js':'context.js','/workbench.js':'workbench.js','/onboarding.js':'onboarding.js','/ui.css':'ui.css','/icon.svg':'icon.svg'}.get(req.url.path)
         if req.url.path in ('/near.js','/near.css','/near-setup.js'): filename = req.url.path[1:]
         if req.url.path == '/near-setup': filename = 'near-setup.html'
         if req.url.path in ('/memory','/memory.js','/memory.css'):
             filename = 'memory.html' if req.url.path == '/memory' else req.url.path[1:]
-        if req.url.path in ('/workspace','/workspace/personal','/workspace.js','/workspace.css'):
-            filename = 'workspace.html' if req.url.path.startswith('/workspace/') or req.url.path == '/workspace' else req.url.path[1:]
+        if req.url.path in ('/workspace','/workspace/personal'):
+            filename = 'workspace.html'
+        if req.url.path in WORKSPACE_ASSETS:
+            filename = WORKSPACE_ASSETS[req.url.path]
         if not filename: return Response(status_code=404)
         return FileResponse(ROOT/'ui'/filename,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
     async def api(req):
@@ -336,7 +339,7 @@ def owner_app(gateway, owner_token, port=8791):
             return JSONResponse(result,headers={'Cache-Control':'no-store'})
         except Denied as e: return JSONResponse({'error':str(e)},status_code=400)
         except Exception: return JSONResponse({'error':'This source is unavailable. Check the local app’s Gmail connection or source selection; no agent access was granted.'},status_code=400)
-    return Starlette(routes=[Route('/workspace',asset),Route('/workspace/personal',asset),Route('/workspace.css',asset),Route('/workspace.js',asset),Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+    return Starlette(routes=[Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
 
 
 def main():

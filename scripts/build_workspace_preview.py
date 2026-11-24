@@ -1,67 +1,60 @@
-"""Make a standalone walkthrough using only the isolated fictional workspace."""
+"""Package the same workspace UI with a network-disabled, disposable example transport."""
 import argparse
+import asyncio
 import json
 from pathlib import Path
+import re
 import tempfile
 
+from privacy_layer.founder_demo import FounderDemo
 from privacy_layer.safe_test import SafeTest
+from privacy_layer.skills import SkillPackages
 from privacy_layer.workspace import Workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def sample_data(directory):
+    safe = SafeTest(ROOT, directory/'test', profile_home=directory/'fictional')
+    work = Workspace(safe.g)
+    work.seed()
+    initial = work.state()
+    view = next(row for row in initial['actions'] if row['kind'] == 'data')
+    fields = work.try_example(view['id'], view['audience'][0], 'read_private_fields')
+    fixture = safe.status()
+    checks = {step:safe.check(step) for step in ('recall','privacy','correction','propose','approve','persistence','revoke')}
+    demo = FounderDemo(safe.g)
+    demo.reset()
+    demo.grant()
+    review = demo.review(['meeting-notes'], 'rehearsal')
+    result = asyncio.run(demo.send(review['approval_id'], True, review['sha256']))
+    return dict(initial=initial, fields=fields, fixture=fixture, checks=checks,
+                walk=dict(records=demo.state()['records'],payload=review['payload'],result=result),
+                builtin=SkillPackages(safe.g).builtin_preview())
+
+
 def build(target):
-    with tempfile.TemporaryDirectory() as directory:
-        safe = SafeTest(ROOT,Path(directory)/'test',profile_home=Path(directory)/'fictional')
-        workspace = Workspace(safe.g)
-        workspace.seed()
-        initial = workspace.state()
-        email = next(a for a in initial['actions'] if a['kind']=='email')
-        view = next(a for a in initial['actions'] if a['kind']=='data')
-        data = workspace.try_example(view['id'],view['audience'][0],'read_private_fields')
-        states = {}
-        # Generate each outcome with the exact same gateway and identifiers.
-        original = safe.g.store.path.read_bytes()
-        for accept in (False,True):
-            safe.g.store.path.write_bytes(original)
-            status = workspace.decide(email['id'],email['fingerprint'],accept)['status']
-            states[status] = {g:workspace.try_example(email['id'],g,'private_action_status') for g in email['audience']}
-        sample = json.dumps(dict(initial=initial,states=states,fields=data),separators=(',',':')).replace('<','\\u003c')
-    html = (ROOT/'ui/workspace.html').read_text()
-    css = (ROOT/'ui/workspace.css').read_text()
-    js = (ROOT/'ui/workspace.js').read_text()
-    # This transport accepts only the example interactions. No credentials or network are available.
-    adapter = """
-const sample = JSON.parse(document.getElementById('example-data').textContent);
-let current = structuredClone(sample.initial);
-window.airlockExample = (operation, params) => {
-  if (operation === 'workspace-state') return structuredClone(current);
-  if (operation === 'test-reset') { current = structuredClone(sample.initial); return {}; }
-  const row = current.actions.find(a => a.id === params.identifier);
-  if (!row) throw new Error('This example action is unavailable.');
-  if (operation === 'workspace-decide' && row.state === 'pending' && params.fingerprint === row.fingerprint) {
-    row.state = params.approve ? 'sent' : 'declined';
-    return {status: row.state};
-  }
-  if (operation === 'workspace-try' && row.audience.includes(params.agent)) {
-    const result = row.kind === 'data' ? sample.fields : sample.states[row.state]?.[params.agent];
-    if (!result) throw new Error('This example has no receipt yet.');
-    current.receipts.unshift({at:Date.now()/1000,agent:params.agent,tool:params.tool,response:structuredClone(result)});
-    return structuredClone(result);
-  }
-  throw new Error('This action is available in the Mac app.');
-};
-"""
-    policy = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src data:; base-uri 'none'; form-action 'none'\">"
+    with tempfile.TemporaryDirectory() as folder:
+        sample = json.dumps(sample_data(Path(folder)), separators=(',',':')).replace('<','\\u003c')
+    ui = ROOT/'ui'
+    html = (ui/'workspace.html').read_text()
+    sources = re.findall(r'<script defer src="/([\w.-]+)"></script>',html)
+    if not sources or sources[0]!='workspace.js':
+        raise ValueError('Workspace entry point missing.')
+    policy = """<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src data:; base-uri 'none'; form-action 'none'">"""
     html = html.replace('<link rel="icon" href="/icon.svg">',policy)
-    html = html.replace('<link rel="stylesheet" href="/workspace.css"><script defer src="/workspace.js"></script>', '<style>'+css+'</style>')
-    html = html.replace('</body>', '<script type="application/json" id="example-data">'+sample+'</script><script>'+adapter+'</script><script>'+js+'</script></body>')
-    target = Path(target)
+    html = html.replace('<link rel="stylesheet" href="/workspace.css">','<style>'+(ui/'workspace.css').read_text()+'</style>')
+    html = re.sub(r'<script defer src="/[\w.-]+"></script>\n?', '', html)
+    scripts = [(ROOT/'scripts/workspace_preview_adapter.js').read_text()] + [(ui/name).read_text() for name in sources]
+    if any('</script' in script.lower() for script in scripts):
+        raise ValueError('Unsafe inline script terminator.')
+    html = html.replace('</body>', '<script type="application/json" id="example-data">'+sample+'</script>\n' +
+                        '\n'.join('<script>'+script+'</script>' for script in scripts)+'\n</body>')
     target.parent.mkdir(parents=True,exist_ok=True)
     target.write_text(html)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser=argparse.ArgumentParser()
     parser.add_argument('target',type=Path)
     build(parser.parse_args().target)

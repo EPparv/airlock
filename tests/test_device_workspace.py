@@ -269,3 +269,34 @@ def test_live_loopback_projection_changes_and_rejects_redirects(setup):
         server.shutdown()
         server.server_close()
         worker.join()
+
+
+def test_owner_redaction_preview_filters_without_persisting_input(setup):
+    g,w,first,second,_ = setup
+    value=json.dumps(dict(email='fictional@example.org',stage='Pilot',password='fictional-password'))
+    def result(agent):
+        return w.owner('workspace-screen',dict(kind='json',text=value,identifier=agent))['result']
+    a,b=result(first['id']),result(second['id'])
+    assert a['stage']=='Pilot' and a['password']=='[withheld]' and a['email'].startswith('[email-')
+    assert a['email']!=b['email'] and result(first['id'])==a
+    with g.store.transaction() as vault:
+        assert 'fictional@example.org' not in str(vault) and 'fictional-password' not in str(vault)
+    g.revoke(first['id'])
+    with pytest.raises(Denied):
+        result(first['id'])
+
+
+def test_explicit_private_task_only_keeps_ordinary_records_out_of_excerpts(setup):
+    from privacy_layer.clients import connection_context
+    g,w,first,_,_=setup
+    records=[r for r in connection_context(g)['records'] if not r['sensitive']]
+    chosen={r['ref']:r['text_hash'] for r in records}
+    assert len(records)>=1
+    args=dict(agent='codex',identifier=first['id'],selection=chosen,proposals=False,mail=False,calendar=False,compute=True)
+    w.configure(**args,excerpt_selection=[])
+    scope=AgentMemory(g).grant(first['id'])['scope']
+    assert not scope['disclose'] and scope['compute'] and scope['records']==list(chosen)
+    w.configure(**args,excerpt_selection=[records[0]['ref']])
+    assert AgentMemory(g).grant(first['id'])['scope']['disclose_records']==[records[0]['ref']]
+    with pytest.raises(Denied):
+        w.configure(**args,excerpt_selection=['unselected'])

@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import tempfile
 import time
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request,build_opener,ProxyHandler
 
 
-def check(app, cached_runtime=None):
+def check(app, cached_runtime=None, window_probe=None):
     with tempfile.TemporaryDirectory(prefix='airlock-install-check-') as temp:
         base=Path(temp)/'data';home=Path(temp)/'profile';base.mkdir();home.mkdir()
         canary=home/'.private-ai/vault.enc';canary.parent.mkdir();canary.write_bytes(b'EXISTING_PERSONAL_VAULT_CANARY')
@@ -69,6 +70,15 @@ def check(app, cached_runtime=None):
         try:
             launch=start()
             assert launch['mode']=='safe-test'
+            if window_probe:
+                # Run the native UI probe against this archive's resources, executable layout and live service.
+                contents=Path(temp)/'window/Airlock.app/Contents'
+                (contents/'MacOS').mkdir(parents=True)
+                shutil.copy2(resources.parent/'Info.plist',contents/'Info.plist')
+                (contents/'Resources').symlink_to(resources,target_is_directory=True)
+                binary=contents/'MacOS/Airlock'
+                shutil.copy2(window_probe,binary)
+                subprocess.run([str(binary),'--data-dir',str(base),'--profile-home',str(home),'--no-update-check'],env=env,check=True,timeout=110)
             state=api('test-state');assert state['isolated'] and not state['personal_open']
             assert not (base/'app/.private/connections.enc').exists()
             assert not (base/'app/.private/key.lock').exists()
@@ -123,7 +133,7 @@ def check(app, cached_runtime=None):
             assert 'November 20' in str(call(entry,'get_private_context',{'query':'Cypress launch'}))
             api('revoke',{'id':entry['id']},personal=True)
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'finder_ui_tested':False}))
+            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'native_window':bool(window_probe),'finder_ui_tested':False}))
         finally:
             if not launch:
                 path=base/'app/.private/launch.json'
@@ -135,4 +145,4 @@ def check(app, cached_runtime=None):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('app',type=Path);p.add_argument('--cached-runtime',type=Path);a=p.parse_args();check(a.app,a.cached_runtime)
+    p=argparse.ArgumentParser();p.add_argument('app',type=Path);p.add_argument('--cached-runtime',type=Path);p.add_argument('--window-probe',type=Path);a=p.parse_args();check(a.app,a.cached_runtime,a.window_probe)

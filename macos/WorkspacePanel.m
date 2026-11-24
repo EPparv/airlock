@@ -1,0 +1,110 @@
+#import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
+
+// The owner interface is a single, ephemeral web view on the running service's port.
+@interface AirlockPanel : NSObject <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply>
+@property(nonatomic,strong) WKWebView *view;
+@property(nonatomic,weak) NSWindow *window;
+@property(nonatomic,strong) NSURL *entry;
+@property(nonatomic,copy) void (^checkUpdates)(void);
+@property(nonatomic,copy) void (^setAutomatic)(BOOL);
+- (instancetype)initWithWindow:(NSWindow *)window entry:(NSURL *)entry;
+- (void)detach;
+@end
+
+@implementation AirlockPanel
+- (instancetype)initWithWindow:(NSWindow *)window entry:(NSURL *)entry {
+    if (!(self=[super init])) return nil;
+    self.window=window;
+    self.entry=entry;
+    WKWebViewConfiguration *config=[WKWebViewConfiguration new];
+    config.websiteDataStore=WKWebsiteDataStore.nonPersistentDataStore;
+    [config.userContentController addScriptMessageHandlerWithReply:self contentWorld:WKContentWorld.pageWorld name:@"airlockSettings"];
+    self.view=[[WKWebView alloc] initWithFrame:window.contentView.bounds configuration:config];
+    self.view.autoresizingMask=NSViewWidthSizable|NSViewHeightSizable;
+    self.view.navigationDelegate=self;
+    self.view.UIDelegate=self;
+    [self.view loadRequest:[NSURLRequest requestWithURL:entry]];
+    return self;
+}
+- (void)detach {
+    [self.view.configuration.userContentController removeScriptMessageHandlerForName:@"airlockSettings" contentWorld:WKContentWorld.pageWorld];
+    self.view.navigationDelegate=nil;
+    self.view.UIDelegate=nil;
+    [self.view stopLoading];
+    [self.view removeFromSuperview];
+}
+- (BOOL)isWorkspace:(NSURL *)url {
+    return [url.scheme isEqualToString:@"http"] && [url.host isEqualToString:@"127.0.0.1"] &&
+        !url.user && !url.password && [url.port isEqual:self.entry.port] &&
+        ([url.path isEqualToString:@"/workspace"] || [url.path isEqualToString:@"/workspace/personal"]);
+}
+- (BOOL)trusted:(WKFrameInfo *)frame {
+    WKSecurityOrigin *origin=frame.securityOrigin;
+    return frame.isMainFrame && [origin.protocol isEqualToString:@"http"] &&
+        [origin.host isEqualToString:@"127.0.0.1"] && origin.port==self.entry.port.integerValue &&
+        [self isWorkspace:frame.request.URL] && [self isWorkspace:self.view.URL];
+}
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)action decisionHandler:(void (^)(WKNavigationActionPolicy))decide {
+    NSURL *url=action.request.URL;
+    if (action.targetFrame.isMainFrame && [self isWorkspace:url]) {
+        decide(WKNavigationActionPolicyAllow);
+        return;
+    }
+    if (action.navigationType==WKNavigationTypeLinkActivated && [self trusted:action.sourceFrame] &&
+        [url.scheme isEqualToString:@"https"] && [url.host isEqualToString:@"accounts.google.com"] &&
+        !url.user && !url.password && !url.port && !url.fragment) {
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+    decide(WKNavigationActionPolicyCancel);
+}
+- (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
+    [webView loadRequest:[NSURLRequest requestWithURL:self.entry]];
+}
+- (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)params initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))complete {
+    if (![self trusted:frame]) { complete(nil); return; }
+    NSOpenPanel *panel=[NSOpenPanel openPanel];
+    panel.canChooseDirectories=NO;
+    panel.canChooseFiles=YES;
+    panel.allowsMultipleSelection=params.allowsMultipleSelection;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        complete(response==NSModalResponseOK ? panel.URLs : nil);
+    }];
+}
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id, NSString *))reply {
+    if (![self trusted:message.frameInfo] || ![message.body isKindOfClass:NSDictionary.class]) {
+        reply(nil,@"This action is available in the local workspace.");
+        return;
+    }
+    NSDictionary *value=message.body;
+    NSString *action=value[@"action"];
+    if ([action isEqual:@"status"]) {
+        reply(@{@"automatic":@([NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"])},nil);
+    } else if ([action isEqual:@"automatic"] && [value[@"enabled"] isKindOfClass:NSNumber.class] && self.setAutomatic) {
+        self.setAutomatic([value[@"enabled"] boolValue]);
+        reply(@YES,nil);
+    } else if ([action isEqual:@"check"] && self.checkUpdates) {
+        reply(@YES,nil);
+        dispatch_async(dispatch_get_main_queue(),self.checkUpdates);
+    } else if ([action isEqual:@"save-file"]) {
+        NSString *name=value[@"name"], *content=value[@"content"];
+        if (![name isKindOfClass:NSString.class] || !name.length || name.length>255 ||
+            ![name.lastPathComponent isEqual:name] || [name hasPrefix:@"."] || [name containsString:@":"] ||
+            ![content isKindOfClass:NSString.class] || content.length>12*1024*1024) {
+            reply(nil,@"Choose a valid output file."); return;
+        }
+        NSData *bytes=[[NSData alloc] initWithBase64EncodedString:content options:0];
+        if (!bytes) { reply(nil,@"The output could not be read."); return; }
+        NSSavePanel *panel=[NSSavePanel savePanel];
+        panel.nameFieldStringValue=name;
+        [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+            if (response!=NSModalResponseOK) { reply(@NO,nil); return; }
+            NSError *error=nil;
+            BOOL ok=[bytes writeToURL:panel.URL options:NSDataWritingAtomic error:&error];
+            reply(ok ? @YES : nil,ok ? nil : @"The file could not be saved.");
+        }];
+    } else {
+        reply(nil,@"Unknown setting.");
+    }
+}
+@end

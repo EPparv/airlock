@@ -10,12 +10,14 @@ import re
 import secrets
 
 from .agent_memory import AgentMemory
-from .clients import RELATIVE_CONFIGS, connect, connection_context, selected_scope
+from .clients import CLIENTS, RELATIVE_CONFIGS, connect, connection_context, selected_scope
 from .context import ContextHub
 from .core import Denied, digest, EMAIL
 from .data_view import api_settings, fetch_api, field_names, inspect_file, project, screened_view, select_fields
 from .device_apps import ExampleApps
 from .privacy_engine import PrivacyEngine
+
+WORKSPACE_ASSETS = { '/'+name: name for name in ('workspace.css','workspace.js','workspace-agents.js','workspace-context.js','workspace-privacy.js','workspace-actions.js') }
 
 TOOLS = {'list_private_actions': set(), 'request_private_action': {'reference'},
          'private_action_status': {'reference'}, 'read_private_fields': {'reference'},
@@ -190,19 +192,28 @@ class Workspace:
         with self.g.store.transaction() as d:
             return self.visible(d['device_actions'][key],grant)
 
-    def configure(self, agent, identifier, selection, proposals, mail, calendar):
-        if self.example or agent not in RELATIVE_CONFIGS or type(mail) is not bool or type(calendar) is not bool or not isinstance(identifier,str):
+    def configure(self, agent, identifier, selection, proposals, mail, calendar, lifetime=86400, max_calls=100, excerpts=True, compute=None, excerpt_selection=None):
+        if self.example or agent not in CLIENTS or type(excerpts) is not bool or (compute is not None and type(compute) is not bool) or type(mail) is not bool or type(calendar) is not bool or not isinstance(identifier,str):
             raise Denied('Choose a supported agent and its permissions.')
         scope = selected_scope(self.g, selection, proposals)
+        if excerpt_selection is not None:
+            if (not isinstance(excerpt_selection, list) or any(not isinstance(ref, str) or ref not in scope['disclose_records'] for ref in excerpt_selection)):
+                raise Denied('Choose shareable records for excerpt access.')
+            scope['disclose_records'] = sorted(set(excerpt_selection))
+            scope['disclose'] = bool(scope['disclose_records'])
+        if not excerpts:
+            scope.update(disclose=False, disclose_records=[])
+        if compute is not None:
+            scope['compute'] = bool(selection) and compute
         scope['device_permissions'] = {'mail':mail, 'calendar':calendar}
         result = {'message':'Access saved.'}
         if identifier:
             existing = AgentMemory(self.g).grant(identifier)
-            if existing.get('agent') != agent or existing.get('scope') is None:
+            if existing.get('agent') != agent:
                 raise Denied('Choose an active scoped connection.')
             AgentMemory(self.g).configure(identifier, **scope)
         else:
-            result = connect(self.g, agent=agent, approved=True, install=True, scope=scope, home=getattr(self.g.sources,'context_home',None))
+            result = connect(self.g, agent=agent, approved=True, install=agent in RELATIVE_CONFIGS, lifetime=lifetime, max_calls=max_calls, scope=scope, home=getattr(self.g.sources,'context_home',None))
         return result
 
     def call(self, grant, tool, args):
@@ -303,7 +314,7 @@ class Workspace:
             grants = [g for g in grants if g['agent'] != 'test']
         memory_state = memory.state()
         return {'example':self.example, 'actions':actions[::-1], 'receipts':receipts[::-1],
-                'agents':[{'id':g['id'],'name':g['agent'],'scope':g['scope'], 'remaining':g['remaining'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
+                'agents':[{'id':g['id'],'name':g['agent'],'scope':g['scope'], 'remaining':g['remaining'], 'expires':g['expires'], 'last_read':g['last_context_read'], 'mode':g['mode'], 'capabilities':g['capabilities'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
                            'status':'revoked' if g['revoked'] else 'expired' if g['expires']<=self.g.clock() or not g['remaining'] else 'used' if g['last_context_read'] else 'configured'}
                           for g in grants],
                 'records':memory_state['records'], 'proposals':[p for p in memory_state['proposals'] if p['status']=='pending']}
@@ -341,7 +352,40 @@ class Workspace:
         args = {} if tool == 'list_private_actions' else {'reference':self.alias(identifier, agent)}
         return self.g.call(grant['token'], tool, args)
 
+    def screen_example(self, kind, text, identifier):
+        """Preview with the real filter and a temporary alias dictionary. Persist no test input."""
+        import json
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+        if kind not in ('json','text') or not isinstance(identifier,str):
+            raise Denied('Choose text or a JSON object.')
+        text = short(text, 12000, 'a sample up to 12,000 characters')
+        connection = identifier or 'temporary-settings-preview'
+        with self.g.store.transaction() as vault:
+            if identifier and not self.active(vault, identifier):
+                raise Denied('Select an active scoped connection.')
+            aliases = copy.deepcopy(vault.get('privacy_aliases',{}).get(connection,{}))
+        data = {'privacy_aliases':{connection:aliases}}
+        @contextmanager
+        def transaction():
+            yield data
+        transient = SimpleNamespace(key=self.g.store.key,transaction=transaction)
+        engine = PrivacyEngine(SimpleNamespace(store=transient,sources=self.g.sources),{'id':connection})
+        if kind == 'text':
+            return {'result':engine.filter(text) or '[withheld]'}
+        try:
+            value = json.loads(text)
+        except (ValueError,RecursionError):
+            raise Denied('Enter one JSON object.') from None
+        if not isinstance(value,dict):
+            raise Denied('Enter one JSON object.')
+        fields = select_fields(field_names([value]),list(value))
+        result = screened_view(engine,fields,project([value],fields),False)
+        return {'result':dict(zip(result['fields'],result['rows'][0]))}
+
     def owner(self, action, body):
+        if action == 'workspace-screen' and set(body) == {'kind','text','identifier'}:
+            return self.screen_example(**body)
         if action == 'workspace-state' and not body:
             return self.state()
         if action == 'workspace-connect':
