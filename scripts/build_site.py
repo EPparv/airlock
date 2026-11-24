@@ -33,7 +33,7 @@ def sources():
             raise ValueError(f'Unsafe or missing release input: {p.relative_to(ROOT)}')
         yield p
 
-def build(mac_archive=None):
+def build(mac_archive=None, mac_report=None):
     selected = list(sources())
     fingerprint = hashlib.sha256()
     for p in selected:
@@ -48,7 +48,20 @@ def build(mac_archive=None):
     if out.exists():
         shutil.rmtree(out)
     out.mkdir()
-    for p in (ROOT / 'web').iterdir():
+    web = ROOT / 'web'
+    phone = web / 'iphone'
+    phone_files = {'index.html', 'style.css', 'vault.js', 'app.js'}
+    if phone.is_symlink() or not phone.is_dir() or {p.name for p in phone.iterdir()} != phone_files:
+        raise ValueError('Unexpected iPhone web assets')
+    (out / 'iphone').mkdir()
+    for name in sorted(phone_files):
+        p = phone / name
+        if not p.is_file() or p.is_symlink():
+            raise ValueError('Invalid iPhone web asset')
+        shutil.copy2(p, out / 'iphone' / name)
+    for p in web.iterdir():
+        if p == phone:
+            continue
         if not p.is_file() or p.is_symlink():
             raise ValueError('Web assets must be regular files')
         shutil.copy2(p, out / p.name)
@@ -74,18 +87,23 @@ def build(mac_archive=None):
                 raise ValueError('Mac and source versions must match')
         shutil.copy2(mac_archive,out/MAC_ARCHIVE)
         mac_hash=hashlib.sha256((out/MAC_ARCHIVE).read_bytes()).hexdigest()
-        metadata.update(kind='mac-app-and-source',mac=dict(archive=MAC_ARCHIVE,sha256=mac_hash,notarized=False,runtime='installed-automatically-on-first-open'))
+        from macos.distribution import signing_status
+        notarized = signing_status(json.loads(Path(mac_report).read_text()),mac_hash,release) if mac_report else False
+        metadata.update(kind='mac-app-and-source',mac=dict(archive=MAC_ARCHIVE,sha256=mac_hash,notarized=notarized,runtime='installed-automatically-on-first-open'))
         (out/'release.json').write_text(json.dumps(metadata,indent=2)+'\n')
         with (out/'SHA256SUMS').open('a') as sums:sums.write(f'{mac_hash}  {MAC_ARCHIVE}\n')
         update=dict(schema=1,version=VERSION,build=BUILD,commit=commit,archive=MAC_ARCHIVE,
                     sha256=mac_hash,size=(out/MAC_ARCHIVE).stat().st_size,minimum_macos='12.0.0',
                     notes=(ROOT/'docs/RELEASE_NOTES.md').read_text().strip())
         (out/'updates.json').write_text(json.dumps(update,indent=2)+'\n')
+    signing_note = ('Apple has notarized this Developer ID-signed Mac download.' if metadata.get('mac',{}).get('notarized')
+                    else 'This test download has an ad-hoc signature. If macOS blocks it, open System Settings → Privacy &amp; Security → Open Anyway after checking that you trust the download.'
+                    if mac_archive else 'Check the release details on the download page for the signing status of the Mac build.')
     page = out / 'index.html'
-    page.write_text(page.read_text().replace('{{VERSION}}', html.escape(VERSION))
+    page.write_text(page.read_text().replace('{{MAC_SIGNING}}',signing_note).replace('{{VERSION}}', html.escape(VERSION))
                     .replace('{{REVISION}}', html.escape((commit[:8] if commit else source_hash[:8]) + (' (local)' if dirty else '')))
                     .replace('{{MAC_DOWNLOAD}}',MAC_ARCHIVE if mac_archive else 'https://epparv.github.io/airlock/'+MAC_ARCHIVE))
     print(json.dumps(metadata))
 
 if __name__ == '__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('--mac-archive',type=Path);args=parser.parse_args();build(args.mac_archive)
+    parser=argparse.ArgumentParser();parser.add_argument('--mac-archive',type=Path);parser.add_argument('--mac-report',type=Path);args=parser.parse_args();build(args.mac_archive,args.mac_report)

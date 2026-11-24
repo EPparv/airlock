@@ -321,9 +321,13 @@ class SafeTest:
                 elif action=='open-personal':result=self.open_personal(body['approved'],port)
                 else:
                     with self.lock:
-                        if self.personal_app is not None:
-                            self.personal_app.state.prompt_gateway.close()
+                        closing = self.personal_app
+                        if self.personal is not None and hasattr(self.personal.sources, 'cancel_gmail_sign_in'):
+                            self.personal.sources.cancel_gmail_sign_in()
                         self.personal=self.personal_app=self.personal_token=None
+                        if closing is not None:
+                            closing.state.prompt_gateway.close()
+                            closing.state.remote_clients.close()
                     result={'closed':True}
                 return JSONResponse(result,headers={'Cache-Control':'no-store'})
             except (Denied,ValueError,TypeError) as e:return JSONResponse({'error':str(e)},status_code=400)

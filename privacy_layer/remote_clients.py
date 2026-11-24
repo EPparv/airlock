@@ -2,11 +2,8 @@
 import asyncio
 import json
 import re
-import shlex
 import socket
-import sys
 import threading
-from pathlib import Path
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -16,8 +13,8 @@ from starlette.responses import JSONResponse, Response
 from .agent_memory import AgentMemory
 from .core import Denied
 from .setup import private_write
+from .quick_tunnel import QuickTunnel, verify_route
 
-ROOT = Path(__file__).resolve().parents[1]
 VENDORS = {'muse': 'Meta Muse', 'manus': 'Manus', 'chatgpt': 'ChatGPT', 'ironclaw': 'IronClaw', 'custom': 'Custom remote MCP'}
 MCP_VENDORS = {'manus', 'ironclaw', 'custom'}
 DEFAULT_PORT = 8794
@@ -124,7 +121,7 @@ class CloudGateway:
 
     def dispatch(self, token, tool, args, vendor):
         gateway = self.authorize(token, vendor)
-        result = gateway.call(token, tool, args)
+        result = gateway.call(token, tool, args, connection_route='https-bridge')
         if self.active() is not gateway:
             raise Denied('The workspace was locked.')
         with gateway.store.transaction() as state:
@@ -162,6 +159,9 @@ class BridgeApp:
 
     async def response(self, req):
         path = req.url.path
+        if path == '/phone' or path.startswith('/phone/'):
+            from .phone_companion import phone_response
+            return await phone_response(self.gateway.active, req)
         if path not in ('/openapi.json', '/mcp') and path not in {'/v1/' + tool for tool in REST_TOOLS}:
             return Response(status_code=404)
         if req.headers.get('origin') is not None or req.scope.get('query_string'):
@@ -250,12 +250,19 @@ _listener = LoopbackListener()
 
 
 class RemoteClients:
-    def __init__(self, gateway, listener=None):
+    def __init__(self, gateway, listener=None, *, tunnel_factory=QuickTunnel, verify=verify_route):
+        self.lock = threading.RLock()
+        self.tunnel_factory, self.verify = tunnel_factory, verify
+        self.tunnel = None
+        self.closed = False
         self.g = gateway
         self.listener = listener or _listener
         with self.g.store.transaction() as data:
             config = data.get('remote_bridge', {})
-        if config.get('enabled'):
+        if config.get('mode') == 'temporary':
+            # A previous process may have stopped without receiving a close event.
+            self.clear_temporary()
+        elif config.get('enabled'):
             try:
                 self.listener.ensure(config['port'])
             except Denied:
@@ -270,11 +277,88 @@ class RemoteClients:
                        'active': not g['revoked'] and g['expires'] > self.g.clock() and g['remaining'] > 0}
                       for g in data['grants'].values() if g.get('cloud_client') in VENDORS]
         port = config.get('port', DEFAULT_PORT)
-        return {'enabled': config.get('enabled', False), 'origin': config.get('origin', ''), 'port': port,
+        return {'mode':config.get('mode', 'manual'), 'verified':bool(config.get('verified')), 'starting':bool(self.tunnel and not config.get('verified')),
+                'enabled': config.get('enabled', False), 'origin': config.get('origin', ''), 'port': port,
                 'upstream': f'http://127.0.0.1:{port}', 'connections': grants,
                 'listening': bool(self.listener.thread and self.listener.thread.is_alive() and self.listener.port == port)}
 
+    def clear_temporary(self):
+        with self.g.store.transaction() as data:
+            config = data.get('remote_bridge', {})
+            if config.get('mode') != 'temporary':
+                return
+            for grant in data['grants'].values():
+                if grant.get('cloud_origin') == config.get('origin') and grant.get('cloud_client') and not grant['revoked']:
+                    grant['revoked'] = True
+                    self.g.audit(data, grant, 'connection', 'revoked')
+            data['remote_bridge'] = {'enabled':False, 'origin':'', 'port':config['port']}
+
+    def stop_temporary(self, tunnel=None):
+        with self.lock:
+            if self.tunnel is None or (tunnel is not None and self.tunnel is not tunnel):
+                return
+            current, self.tunnel = self.tunnel, None
+            self.clear_temporary()
+            current.stop()
+            self.listener.stop()
+
+    def close(self):
+        with self.lock:
+            self.closed = True
+            self.stop_temporary()
+
+    def start_temporary(self, approved):
+        if approved is not True:
+            raise Denied('Approve the temporary HTTPS link before connecting.')
+        with self.lock:
+            if self.closed:
+                raise Denied('Unlock Airlock before starting a link.')
+            state = self.state()
+            if self.tunnel and state['verified']:
+                return state
+            if self.tunnel:
+                raise Denied('The temporary link is starting.')
+            with self.g.store.transaction() as data:
+                live_https = any(g.get('cloud_origin') and not g['revoked'] and g['expires'] > self.g.clock()
+                                 and g['remaining'] > 0 for g in data['grants'].values())
+            if state['enabled'] or live_https:
+                raise Denied('Pause the current bridge and revoke its active HTTPS grants before changing the link.')
+            self.listener.ensure(state['port'])
+            tunnel = self.tunnel = self.tunnel_factory(self.g.store.path.parent / 'cloudflare-helper')
+        try:
+            origin = tunnel.start(state['port'], self.stop_temporary)
+            with self.lock:
+                if self.closed or self.tunnel is not tunnel or tunnel.cancel.is_set():
+                    raise Denied('The link was stopped.')
+                with self.g.store.transaction() as data:
+                    data['remote_bridge'] = {'origin':origin, 'enabled':True, 'port':state['port'],
+                                             'mode':'temporary', 'verified':False}
+            self.verify(origin, tunnel.cancel)
+            with self.lock:
+                if self.closed or self.tunnel is not tunnel or tunnel.cancel.is_set():
+                    raise Denied('The link was stopped.')
+                with self.g.store.transaction() as data:
+                    data['remote_bridge']['verified'] = True
+                return self.state()
+        except Denied:
+            self.stop_temporary(tunnel)
+            raise
+        except Exception:
+            self.stop_temporary(tunnel)
+            raise Denied('Airlock could not prepare the Cloudflare helper. Check your network and try again.') from None
+
     def configure(self, origin, port, enabled):
+        with self.lock:
+            if self.closed:
+                raise Denied('Unlock the workspace before configuring a bridge.')
+            if self.tunnel:
+                if enabled is False:
+                    self.stop_temporary()
+                    return self.state()
+                raise Denied('Stop the temporary link before switching domains.')
+            return self._configure(origin, port, enabled)
+
+    def _configure(self, origin, port, enabled):
         if type(enabled) is not bool or type(port) is not int or not 1024 <= port <= 65535:
             raise Denied('Choose an unprivileged bridge port from 1024 to 65535.')
         if enabled:
@@ -292,10 +376,16 @@ class RemoteClients:
         return self.state()
 
     def create(self, vendor, lifetime, max_calls):
+        with self.lock:
+            if self.closed:
+                raise Denied('Unlock the workspace before creating a connection.')
+            return self._create(vendor, lifetime, max_calls)
+
+    def _create(self, vendor, lifetime, max_calls):
         if vendor not in VENDORS:
             raise Denied('Choose a supported cloud client.')
         state = self.state()
-        if vendor != 'chatgpt' and not (state['enabled'] and state['listening']):
+        if vendor != 'chatgpt' and not (state['enabled'] and state['listening'] and (state['mode'] != 'temporary' or state['verified'])):
             raise Denied('Set up the HTTPS bridge first.')
         result = self.g.create(agent='mcp', purpose='Private connection for ' + VENDORS[vendor],
                                views=[], mode='automatic', approved=True, lifetime=lifetime, max_calls=max_calls)
@@ -312,9 +402,8 @@ class RemoteClients:
                 folder = self.g.store.path.parent
                 credential = folder / 'clients' / f'chatgpt-{identifier}.token'
                 private_write(credential, result['token'])
-                command = [sys.executable, str(ROOT / 'privacy_layer' / 'remote_tunnel.py'),
-                           '--token-file', str(credential), '--session-file', str(folder / 'launch.json')]
-                return {'id': identifier, 'command': shlex.join(command)}
+                from .remote_tunnel import launch_command
+                return {'id': identifier, 'command': launch_command(credential, folder / 'launch.json')}
             url = state['origin'] + ('/openapi.json' if vendor == 'muse' else '/mcp')
             setup = {'id': identifier, 'credential': result['token'], 'url': url}
             if vendor == 'ironclaw':
@@ -326,10 +415,15 @@ class RemoteClients:
             raise
 
     def owner(self, action, body):
-        schema = {'remote-state': (), 'remote-configure': ('origin', 'port', 'enabled'),
+        schema = {'remote-state': (), 'remote-quick-start': ('approved',), 'remote-quick-stop': (), 'remote-configure': ('origin', 'port', 'enabled'),
                   'remote-create': ('vendor', 'lifetime', 'max_calls')}
         if action not in schema or not isinstance(body, dict) or set(body) != set(schema[action]):
             raise Denied('Invalid cloud connection request.')
         if action == 'remote-state':
+            return self.state()
+        if action == 'remote-quick-start':
+            return self.start_temporary(body['approved'])
+        if action == 'remote-quick-stop':
+            self.stop_temporary()
             return self.state()
         return (self.configure if action == 'remote-configure' else self.create)(**body)

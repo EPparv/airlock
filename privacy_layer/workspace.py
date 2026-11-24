@@ -19,7 +19,7 @@ from .device_apps import ExampleApps
 from .privacy_engine import PrivacyEngine
 
 WORKSPACE_ASSETS = { '/'+name: name for name in ('workspace.css','workspace.js','workspace-agents.js','workspace-context.js','workspace-privacy.js','workspace-actions.js',
-                                                 'workspace-handoffs.js','workspace-remote.js','workspace-prompt.js') }
+                                                 'workspace-handoffs.js','workspace-remote.js','workspace-prompt.js','workspace-phone.js','workspace-provider-checks.js') }
 
 TOOLS = {'list_private_actions': set(), 'request_private_action': {'reference'},
          'private_action_status': {'reference'}, 'read_private_fields': {'reference'},

@@ -74,6 +74,7 @@ addPage('gmail', 'Gmail search', 'apps', async host => {
     ['Status', g.sign_in.replaceAll('_', ' ')]
   ]));
   if (g.error) note(host, g.error);
+  if (g.identity_source === 'publisher' && !g.account) note(host, 'Sign in with Google to allow read-only Gmail access.');
   if (!g.configured || g.can_replace) {
     if (!g.configured) note(host, 'Use your own Google Cloud Desktop app to connect Gmail. Enable the Gmail API in that project. If the app is in testing, add your Google account as a test user.');
     host.append(button(g.configured ? 'Replace Google Desktop app' : 'Add Google Desktop app', () => {
@@ -105,11 +106,15 @@ addPage('gmail', 'Gmail search', 'apps', async host => {
     if (u.protocol !== 'https:' || u.hostname !== 'accounts.google.com') throw Error(
       'Google returned an unexpected sign-in address.');
     const f = modal('Sign in to Gmail');
+    note(f, 'Return here after approving access. If Google says the app is in testing, the project owner must add your account as a test user.');
     const a = el('a', 'Continue to Google');
     a.href = u.href;
     a.rel = 'noreferrer noopener';
     a.target = '_blank';
     f.append(a, button('Check connection', async () => {
+      const progress = await api('gmail-state');
+      if (progress.sign_in === 'error') throw Error(progress.error || 'Google sign-in did not finish. Reconnect Gmail.');
+      if (progress.sign_in === 'waiting') throw Error('Finish the Google sign-in in your browser, then check again.');
       const result = await api('gmail-check');
       close();
       await refresh();
@@ -455,7 +460,7 @@ addPage('settings', 'App settings', 'privacy', async host => {
   const native = window.webkit?.messageHandlers?.airlockSettings;
   const isOpen = preview ? false : testToken() ? (await testAPI('test-state')).personal_open : personal;
   host.append(facts([
-    ['Version', '0.10.0'],
+    ['Version', '0.11.0'],
     ['Workspace', preview ? 'Preview' : isOpen ? 'Unlocked' : 'Locked']
   ]));
   if (isOpen && testToken()) host.append(button('Lock workspace', lockWorkspace));

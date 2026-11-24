@@ -60,3 +60,15 @@ def test_owner_configures_desktop_identity_locally_then_signs_in_separately(tmp_
     assert not adapter.gmail_state()['can_replace']
     with pytest.raises(Denied):
         adapter.configure_gmail(identity)
+
+
+def test_previous_account_health_cannot_complete_a_new_sign_in():
+    from types import SimpleNamespace
+    adapter, _ = source()
+    adapter.google('/profile')
+    adapter.oauth = SimpleNamespace(status='waiting', error='')
+    assert adapter.gmail_state()['sign_in'] == 'waiting'
+    adapter.oauth.status = 'error'
+    adapter.oauth.error = 'Consent cancelled'
+    assert adapter.gmail_state()['error'] == 'Consent cancelled'
+    assert adapter.gmail_state()['sign_in'] == 'error'

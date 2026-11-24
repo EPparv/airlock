@@ -185,6 +185,9 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await sheet('Revoke');await contains('No model connections');
  await visit(['Privacy & connections','Approvals & activity','Agent handoffs'],'Agent handoffs');
  await visit(['Connect agent','Cloud agents'],'Cloud agents');
+ await btn('ChatGPT');await btn('Create connection');await sheet('Test this connection');await contains('Dedicated credential available');
+ await btn('Start test');await contains('Waiting for a status call');await byText('summary','Connection help');await contains('HTTP 429');
+ await btn('End test');await contains('Idle');
  await visit(['Privacy & connections','Approvals & activity','Private task approvals'],'No private tasks');
  await visit(['Privacy & connections','Approvals & activity','Disclosure receipts'],'Refresh');
  await visit(['Privacy & connections','Approvals & activity','Access log'],'Refresh');

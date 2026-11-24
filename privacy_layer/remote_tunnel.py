@@ -10,6 +10,11 @@ import subprocess
 import sys
 
 
+def launch_command(token_file, session_file):
+    return shlex.join([sys.executable, str(Path(__file__).resolve()), '--token-file', str(token_file),
+                       '--session-file', str(session_file)])
+
+
 def run(token_file, session_file, tunnel_id, runtime_key, binary):
     if not re.fullmatch(r'tunnel_[A-Za-z0-9]{4,128}', tunnel_id):
         raise ValueError('Enter a valid OpenAI tunnel ID.')

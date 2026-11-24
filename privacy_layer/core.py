@@ -215,7 +215,7 @@ class Gateway:
                      'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
 
-    def call(self, token, tool, args):
+    def call(self, token, tool, args, *, connection_route='local'):
         if not isinstance(args, dict): raise Denied('Invalid tool arguments.')
         schemas = {'privacy_status':set(), 'get_private_context':{'query'}, 'search_gmail':{'query'}, 'read_gmail':{'reference'},'stage_context_import':{'transfer_code','memories','skills','scope'},'context_status':set(),'list_local_skills':{'query'},'read_local_skill':{'skill_id','resource','offset'},'run_local_skill':{'skill_id','script','topic','gmail_query'},'prepare_private_brief':{'topic','gmail_query','max_messages'},'update_shared_context':{'operation','kind','text','reference','expected_revision'},'request_private_task':{'instruction','records','route'},'get_private_task_result':{'task_id'}}
         from .workspace import TOOLS as device_tools, Workspace
@@ -230,8 +230,14 @@ class Gateway:
             g = self._grant(data, token)
             if g['remaining'] <= 0: raise Denied('This connection reached its request limit. Ask the owner to renew it.')
             g['remaining'] -= 1
-            snapshot = copy.deepcopy(g)
             self.audit(data, g, tool, 'started')
+            if tool == 'privacy_status' and g.get('provider_check'):
+                from .provider_checks import status_reply
+                reply = status_reply(g, self.clock(), connection_route)
+                if reply is not None:
+                    self.audit(data, g, tool, 'released')
+                    return reply
+            snapshot = copy.deepcopy(g)
         try:
             if tool == 'privacy_status':
                 automatic=snapshot.get('mode')=='automatic'

@@ -20,24 +20,55 @@ addPage('remote-clients', 'Cloud agents', 'connect', async host => {
         'Expires ' + when(grant.expires), () => go('agent', {id: grant.id, agent: 'mcp'}));
     }
   }
+  if (state.connections.length) choose(host, 'Test a connection', 'provider-checks');
   const area = section(host, 'HTTPS bridge');
   item(area, state.origin || 'Set up bridge', state.enabled && state.listening ? 'Listening on this Mac' :
     'Off', () => go('remote-bridge'));
 });
 
+function startTemporaryLink(after) {
+  const f = modal('Start temporary link');
+  note(f, 'Airlock downloads a verified Cloudflare helper on first use. Cloudflare forwards traffic to this Mac and can see the credentials and data sent through the link.');
+  note(f, 'The link expires when you stop it, lock Airlock, or quit. Keep your Mac awake while testing.');
+  const action = formAction(f, 'Start link', async () => {
+    action.textContent = 'Opening link…';
+    try {
+      await api('remote-quick-start', {approved: true});
+      close();
+      await after();
+    } finally {
+      action.textContent = 'Start link';
+    }
+  });
+}
+
 addPage('remote-bridge', 'HTTPS bridge', 'remote-clients', async host => {
   if (preview) return nativeOnly('HTTPS bridge');
   const state = await api('remote-state');
-  note(host, 'Point a reverse proxy on this Mac at the local address below. Use a dedicated HTTPS domain your cloud agent can reach.');
-  host.append(facts([['Forward to', state.upstream]]));
+  if (state.mode === 'temporary' && state.enabled) {
+    host.append(facts([['Temporary link', state.origin], ['Status', state.verified ? 'Verified over HTTPS' : 'Connecting']]));
+    note(host, 'Stopping this link ends the connections created for it.');
+    host.append(button('Stop temporary link', () => confirmAction('Stop temporary link?',
+      'Agents using this link will need a new connection.', 'Stop link', async () => {
+        await api('remote-quick-stop'); await refresh();
+      }, true)));
+    return;
+  }
+  if (!state.enabled) {
+    note(host, 'Create a temporary Cloudflare link to test from another device or a cloud agent.');
+    host.append(button('Start temporary link', () => startTemporaryLink(refresh), 'primary'));
+  }
+  const manual = state.enabled ? host : details(host, 'Use my own domain');
+  note(manual, 'Forward your HTTPS domain to the agent bridge on this Mac.');
+  manual.append(facts([['Forward to', state.upstream]]));
   const form = el('div', null, 'form');
-  host.append(form);
+  manual.append(form);
   const origin = field(form, 'Your HTTPS origin', input('url', state.origin));
   origin.placeholder = 'https://airlock.yourdomain.com';
   const port = field(form, 'Local bridge port', input('number', String(state.port)));
   port.min = '1024';
   port.max = '65535';
-  note(form, 'The proxy can see released results and the agent credential. Forward only to the bridge port. Keep the owner window and local MCP port private.');
+  note(form, 'The proxy can see released results and credentials. Forward only the bridge port.');
   formAction(form, 'Save and enable', async () => {
     await api('remote-configure', {origin: origin.value.trim(), port: Number(port.value), enabled: true});
     await go('remote-clients');
@@ -56,7 +87,8 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
   const state = await api('remote-state');
   if (opt.vendor !== 'chatgpt' && !(state.enabled && state.listening)) {
     note(host, name + ' needs an HTTPS bridge to reach your Mac.');
-    host.append(button('Set up bridge', () => go('remote-bridge'), 'primary'));
+    if (!state.enabled) host.append(button('Start temporary link', () => startTemporaryLink(refresh), 'primary'));
+    host.append(button('Bridge settings', () => go('remote-bridge')));
     return;
   }
   const form = el('div', null, 'form');
@@ -96,6 +128,7 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       f.append(button('Copy token', () => copyText(result.credential)));
       note(f, 'Ask the agent to call privacy_status. A successful response confirms it can reach your Mac.');
     }
+    f.append(button('Test this connection', () => go('provider-check', {id: result.id})));
     formAction(f, 'Choose permissions', () => go('agent', {agent: 'mcp', id: result.id}));
   });
 });

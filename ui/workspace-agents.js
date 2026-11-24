@@ -9,6 +9,7 @@ addPage('connect', 'Connect agent', 'home', host => {
     agent: id
   }));
   row(list, 'Cloud agents', () => go('remote-clients'));
+  row(list, 'Pair iPhone', () => go('pair-iphone'));
   const more = details(host, 'Other clients');
   for (const id of [...otherLocalAgents, 'mcp', 'ironclaw', 'dot']) row(more, names[id], () => id === 'ironclaw' && !preview ?
     go('remote-create', {vendor: id}) : go('agent', {agent: id}));

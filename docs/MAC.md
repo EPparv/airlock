@@ -1,6 +1,6 @@
 # Mac app: first-use acceptance
 
-Download the current app at https://epparv.github.io/airlock/. No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. This app is ad-hoc signed, not Apple-notarized.
+Download the current app at https://epparv.github.io/airlock/. No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. The download page reports notarization for the current release. Pull-request test builds use an ad-hoc signature.
 
 ## Start with fictional data
 
@@ -46,7 +46,7 @@ Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Con
 5. Choose **Privacy & connections → App settings → Lock workspace**. New personal calls must fail. Quit and reopen; personal access stays closed until explicitly reopened. Saved personal data and permissions are preserved.
 6. Revoke a personal connection and verify fresh requests fail even while the personal workspace is open.
 
-Gmail is optional and read-only. To sign in to Gmail on a fresh Mac, add your Google Desktop OAuth app in Privacy & connections → Apps & data → Gmail search. Local skills, private-task inference, NEAR and remote IronClaw/tunnel setup have separate permissions and requirements. The isolated test does not enable them. It does not install Ollama, download model weights, create paid accounts, perform provider deletion or create a remote tunnel.
+Gmail is optional and read-only. Open Privacy & connections → Apps & data → Gmail search. Use **Connect Gmail** if this build includes the publisher’s Desktop app, or **Add Google Desktop app** to use your own. See [Google setup and release verification](GOOGLE_SIGN_IN.md). Local skills, private-task inference, NEAR and remote IronClaw/tunnel setup have separate permissions and requirements. The isolated test does not enable them. It does not install Ollama, download model weights, create paid accounts, perform provider deletion or create a remote tunnel.
 
 ## Build and validation boundaries
 

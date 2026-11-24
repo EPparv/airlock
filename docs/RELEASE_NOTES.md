@@ -1,3 +1,11 @@
+# Airlock 0.11.0
+
+**Test on iPhone.** The Safari workspace stores its own encrypted vault on the phone. Create two local test agents, grant each different records, inspect filtered results and revoke access. To use actual records from your Mac, choose **Connect agent → Pair iPhone** in the Mac app. Select the records, create a one-time link and scan its QR code. Safari can request an assigned action. You still approve the write on your Mac.
+
+**Connect a cloud agent.** The HTTPS bridge can start a temporary Cloudflare link after you approve. Airlock checks reachability before offering it for setup. Keep the Mac awake for the test. The link provider handles TLS and can see the credential and released data. Under **Cloud agents → Test a connection**, confirm a short code returned by the agent to verify that the intended app reached this grant.
+
+**Publisher setup.** Trusted Mac builds can bundle an approved Google Desktop OAuth identity. Developer ID signing, notarization and stapling use publisher-supplied Apple credentials. The test build works with a user-owned Google app and uses ad-hoc signing.
+
 # Airlock 0.10.0
 
 The Mac workspace adds local setup for Muse Code, Gemini CLI, VS Code with Copilot and OpenClaw. Cloud clients have a separate setup under Connect agent. The owner can assign one agent a task, review its report and release the result to a second connection.

@@ -126,6 +126,8 @@ class OAuthSession:
                     return
                 owner.consumed = True
                 try:
+                    if params.get("error") == ["access_denied"]:
+                        raise ConnectorError("Google did not grant access. If the app is in testing, its project owner must add your Google account as a test user.")
                     if "error" in params or len(params.get("code", [])) != 1:
                         raise ConnectorError("Google sign-in was cancelled or did not return an authorization code.")
                     raw = transport.request(TOKEN, form=True, data={

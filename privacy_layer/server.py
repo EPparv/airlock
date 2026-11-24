@@ -150,6 +150,8 @@ def owner_app(gateway, owner_token, port=8791):
     from .agent_handoffs import Handoffs
     from .remote_clients import RemoteClients
     remote = RemoteClients(gateway)
+    from .phone_companion import PhoneCompanion
+    phone = PhoneCompanion(gateway)
     near_setup = NearSetup()
     founder_demo = FounderDemo(gateway, provider=near_setup)
     from .agent_memory import AgentMemory, PrivateTasks
@@ -166,7 +168,7 @@ def owner_app(gateway, owner_token, port=8791):
         if req.url.path in WORKSPACE_ASSETS:
             filename = WORKSPACE_ASSETS[req.url.path]
         if not filename: return Response(status_code=404)
-        return FileResponse(ROOT/'ui'/filename,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
+        return FileResponse(ROOT/'ui'/filename,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
     async def api(req):
         if req.headers.get('Host') not in (f'127.0.0.1:{port}',f'localhost:{port}') or req.headers.get('Origin') not in (None,f'http://127.0.0.1:{port}',f'http://localhost:{port}'):
             return Response(status_code=403)
@@ -185,8 +187,13 @@ def owner_app(gateway, owner_token, port=8791):
             elif action.startswith('workspace-'):
                 from .workspace import Workspace
                 result = await asyncio.to_thread(Workspace(gateway).owner, action, body)
+            elif action.startswith('provider-check-'):
+                from .provider_checks import ProviderChecks
+                result = await asyncio.to_thread(ProviderChecks(gateway, remote).owner, action, body)
             elif action.startswith('remote-'):
                 result = await asyncio.to_thread(remote.owner, action, body)
+            elif action.startswith('phone-'):
+                result = await asyncio.to_thread(phone.owner, action, body)
             elif action.startswith('handoff-'):
                 result = await asyncio.to_thread(Handoffs(gateway).owner, action, body)
             elif action.startswith('near-setup-'):
@@ -357,6 +364,7 @@ def owner_app(gateway, owner_token, port=8791):
         except Denied as e: return JSONResponse({'error':str(e)},status_code=400)
         except Exception: return JSONResponse({'error':'This source is unavailable. Check the local app’s Gmail connection or source selection; no agent access was granted.'},status_code=400)
     app = Starlette(routes=[*prompts.routes(), Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/near-demo',asset),Route('/memory',asset),Route('/memory.js',asset),Route('/memory.css',asset),Route('/near-setup',asset),Route('/near-setup.js',asset),Route('/near.js',asset),Route('/near.css',asset),Route('/ui.js',asset),Route('/context.js',asset),Route('/workbench.js',asset),Route('/onboarding.js',asset),Route('/ui.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+    app.state.remote_clients = remote
     app.state.prompt_gateway = prompts
     return app
 
@@ -388,7 +396,13 @@ def main():
         await asyncio.gather(*(uvicorn.Server(c).serve() for c in configs))
     from .remote_clients import set_active_gateway
     set_active_gateway((lambda: controller.personal) if args.safe_start else (lambda: gateway))
-    asyncio.run(serve())
+    try:
+        asyncio.run(serve())
+    finally:
+        personal_app = controller.personal_app if args.safe_start else owner
+        if personal_app is not None:
+            personal_app.state.prompt_gateway.close()
+            personal_app.state.remote_clients.close()
 
 
 if __name__=='__main__':main()

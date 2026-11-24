@@ -91,7 +91,7 @@ class LocalSources:
         if legacy.get('client_id'):return legacy
         config,error=bundled_client()
         if error:raise DeviceAccessError('This download has an invalid Google setup. Download the app again.')
-        return config or {}
+        return {**config, 'identity_source': 'publisher'} if config else {}
 
     def configure_gmail(self, client):
         from .core import Denied
@@ -124,13 +124,18 @@ class LocalSources:
         if not self.connection_store:raise ValueError('Encrypted connection storage unavailable.')
         config=self.google_config()
         if not config.get('client_id') or not config.get('client_secret'):raise ValueError('Choose your Google Desktop app JSON in Gmail search first.')
+        identity_source = config.get('identity_source', 'existing')
         config={k:config[k] for k in ('client_id','client_secret')}
         if self.oauth:self.oauth.cancel()
         def finish(tokens):
             # Verify the Google identity; never infer the account from the old connection.
+            allowed = {SCOPES['mail_read'], EMAIL_SCOPE, 'openid', 'email'}
+            if set(tokens['scopes']) - allowed:
+                raise ConnectorError('Google returned permissions outside read-only Gmail. Review this app’s access in your Google account and reconnect.')
             info=self.transport.request(USERINFO,token=tokens['access_token'])
-            if not info.get('verified_email') or not info.get('email'):raise ValueError('Google account could not be verified.')
-            value={k:config[k] for k in ('client_id','client_secret')}
+            if info.get('verified_email') is not True or not isinstance(info.get('email'), str) or not info['email']:
+                raise ConnectorError('Google could not verify the account email. Reconnect using a verified Google account.')
+            value={**config, 'identity_source': identity_source}
             value.update(tokens=tokens,features=['mail_read'],email=info['email'],revision=time.time())
             with self.lock:
                 if self.oauth is not session or session.cancelled.is_set() or time.monotonic() >= session.expires:
@@ -141,15 +146,25 @@ class LocalSources:
         self.oauth.start()
         return {'url':self.oauth.url}
 
+    def cancel_gmail_sign_in(self):
+        with self.lock:
+            if self.oauth:
+                self.oauth.cancel()
+
     def gmail_state(self):
         config=self.google_config()
         health=self.gmail_health
         signature=(config.get('revision'),config.get('tokens',{}).get('refresh_token'))
         recent=health and health['signature']==signature and time.time()-health['at']<600
-        status=('connected' if health['ok'] else 'unavailable') if recent else self.oauth.status if self.oauth else 'not_checked'
-        return {'configured':bool(config.get('client_id')), 'can_replace':bool(self._can_replace_google_app(config)), 'account':config.get('email',''),
-                'sign_in':status,
-                'error':'The latest Gmail check failed. Try checking the connection again.' if recent and not health['ok'] else self.oauth.error if self.oauth else ''}
+        status = self.oauth.status if self.oauth else 'not_checked'
+        error = self.oauth.error if self.oauth else ''
+        if recent and status not in ('waiting', 'error'):
+            status = 'connected' if health['ok'] else 'unavailable'
+            if not health['ok']:
+                error = 'The latest Gmail check failed. Try checking the connection again.'
+        return {'configured':bool(config.get('client_id')), 'identity_source':config.get('identity_source', 'existing' if config.get('client_id') else ''),
+                'can_replace':bool(self._can_replace_google_app(config)), 'account':config.get('email',''),
+                'sign_in':status, 'error':error}
 
     def snapshot(self):
         if self.path is None:return {'memories':[],'skills':[],'settings':{},'workspace':{}}

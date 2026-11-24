@@ -14,7 +14,13 @@ Muse Code is a separate local CLI. Select **Muse Code** in the main agent list f
 
 ## HTTPS bridge for Muse, Manus, IronClaw and remote MCP clients
 
-1. Choose **HTTPS bridge**. Enter the HTTPS origin of a domain you control. The default upstream is `http://127.0.0.1:8794`. Save and enable it.
+For a device test, choose **Start temporary link**. Airlock downloads the pinned Cloudflare helper on first use, verifies the package checksum, and forwards only the agent bridge. It opens the public URL and checks that this workspace answers before showing the link as ready. The service requires neither your own domain nor a Cloudflare account. Cloudflare sees credentials and data that pass through the link. Your Mac must stay awake and online.
+
+Locking the workspace, quitting Airlock, stopping the link, or the tunnel process exiting ends the link and its grants. A new link requires a fresh pairing. Cloudflare limits temporary links to 200 in-flight requests and does not support server-sent events. Airlock MCP uses JSON responses. Clients requiring an SSE transport need a named tunnel. [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) · [cloudflared 2026.11.2 release](https://github.com/cloudflare/cloudflared/releases/tag/2026.11.2).
+
+For a persistent domain:
+
+1. Choose **HTTPS bridge → Use my own domain**. Enter the HTTPS origin of a domain you control. The default upstream is `http://127.0.0.1:8794`. Save and enable it.
 2. Configure an existing reverse proxy or HTTPS tunnel **on this Mac** to forward that dedicated hostname to the displayed upstream. The hostname must be reachable by the agent and have a certificate its service trusts. Airlock opens its agent bridge on loopback. DNS, certificates, account access and proxy operation are under your control.
 3. Choose the cloud agent and create a connection. Copy the separately displayed credential to the provider's secure store. Muse receives a schema URL ending in `/openapi.json`. MCP clients receive a server URL ending in `/mcp`. The bearer token is shown once.
 4. Ask the agent to call `privacy_status`. A **Last tool call** timestamp appears under Cloud agents when Airlock has served a tool request on that credential. Tool discovery alone does not produce a timestamp. If you have not shared any records, the status call still works.
@@ -39,6 +45,10 @@ Muse can call REST tools from `/openapi.json`, including scoped memory reads and
 4. Privately install the plugin and request `privacy_status`. Check **Last tool call** in Airlock. Stop the process with Ctrl-C. Revoke the grant in Airlock to end access.
 
 ChatGPT access depends on workspace plugin permissions and tunnel association. OpenAI requires the appropriate Tunnels Read and Use permissions to run or select a tunnel. Creating or editing one also requires Manage. A custom HTTPS adapter for ChatGPT OAuth is outside this version. Airlock does not store the runtime key. The official tunnel client receives it in the environment while running.
+
+## Check your signed-in agent
+
+Open **Connect agent → Cloud agents → Test a connection**. Start a test for the exact connection, ask the agent for its status code, then match the reply in Airlock. Each test status response contains only the code. For ChatGPT, connection help displays the tunnel setup command again when the local credential exists. [Connection tests and error recovery](CONNECTION_TESTS.md)
 
 ## Provider review and verification
 

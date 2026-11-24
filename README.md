@@ -4,7 +4,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-Version **0.10.0** opens in its own Mac window. The home screen has three controls.
+Version **0.11.0** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
@@ -14,6 +14,10 @@ Version **0.10.0** opens in its own Mac window. The home screen has three contro
 
 Only tools routed through Airlock use these policies. Free-text detection is best effort. Providers can retain the excerpts you release. Apple Mail needs a configured sending account, and Calendar needs a writable calendar. macOS may ask for Automation permission. If a write is unconfirmed, check the destination before retrying it.
 
+## Test on iPhone
+
+Open the iPhone workspace in Safari to create a passphrase and test two local agents. Its vault belongs to that Safari origin and device. Clearing website data removes the vault. To reach the Mac vault from your phone, open **Connect agent → Pair iPhone** on the Mac, enable the HTTPS bridge, select records, and scan the one-time code. You can request an assigned action from your phone and approve it on your Mac.
+
 ## Open and run on Mac
 
 1. Unzip the Mac download, move **Airlock.app** to Applications and open it. First setup downloads the pinned runtime. Subsequent launches use the installation on your Mac.
@@ -21,10 +25,10 @@ Only tools routed through Airlock use these policies. Free-text detection is bes
 3. Choose **Connect agent**, pick your agent and set its access. Connect, restart the client and use the first request. A saved connection shows when an agent first requests context.
 4. Manage access under **Privacy & connections → Connected agents**. Use **App settings → Lock workspace** to close personal access. To explore with fictional data while locked, choose **Privacy checks**.
 
-Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. For Gmail on a fresh installation, add your Google Desktop OAuth client under Apps & data → Gmail search, then sign in. Gmail reads require consent from the account holder.
+Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. For Gmail on a fresh installation, open Apps & data → Gmail search. Choose Connect Gmail if this download includes the publisher’s Google Desktop app, or add your own OAuth client. Gmail reads require consent from the account holder. [Gmail setup](docs/GOOGLE_SIGN_IN.md)
 
 
-The Mac app is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
+The download page shows the signing status for its exact Mac archive. Pull-request testing builds are ad-hoc signed. If macOS blocks one, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the build. Public releases can use [Developer ID signing and Apple notarization](docs/MAC_SIGNING.md). From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
 
 Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
 

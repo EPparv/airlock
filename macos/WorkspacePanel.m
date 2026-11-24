@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <CoreImage/CoreImage.h>
 
 // The owner interface is a single, ephemeral web view on the running service's port.
 @interface AirlockPanel : NSObject <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply>
@@ -86,6 +87,24 @@
     } else if ([action isEqual:@"check"] && self.checkUpdates) {
         reply(@YES,nil);
         dispatch_async(dispatch_get_main_queue(),self.checkUpdates);
+    } else if ([action isEqual:@"phone-qr"]) {
+        NSString *url=value[@"url"];
+        if (![self.view.URL.path isEqual:@"/workspace/personal"] || ![url isKindOfClass:NSString.class] || url.length>512) {
+            reply(nil,@"Open the personal workspace to pair."); return;
+        }
+        NSURLComponents *parts=[NSURLComponents componentsWithString:url];
+        if (![parts.scheme isEqual:@"https"] || !parts.host.length || ![parts.path isEqual:@"/phone"] ||
+            parts.user || parts.password || parts.query || ![parts.fragment hasPrefix:@"pair="] || parts.fragment.length!=48) {
+            reply(nil,@"Create a new pairing link."); return;
+        }
+        CIFilter *filter=[CIFilter filterWithName:@"CIQRCodeGenerator"];
+        [filter setValue:[url dataUsingEncoding:NSUTF8StringEncoding] forKey:@"inputMessage"];
+        [filter setValue:@"M" forKey:@"inputCorrectionLevel"];
+        CIImage *qr=filter.outputImage;
+        if (!qr) { reply(nil,@"Copy the one-time link to Safari."); return; }
+        NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithCIImage:qr];
+        NSData *png=[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        reply([png base64EncodedStringWithOptions:0], png ? nil : @"Copy the one-time link to Safari.");
     } else if ([action isEqual:@"save-file"]) {
         NSString *name=value[@"name"], *content=value[@"content"];
         if (![name isKindOfClass:NSString.class] || !name.length || name.length>255 ||
