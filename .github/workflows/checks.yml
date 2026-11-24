@@ -38,7 +38,16 @@ jobs:
           PYTHONPATH: .
         run: python -m pytest -q tests
       - name: Guided test screen in a real browser
-        run: node tests/safe_ui.cjs "$(command -v python)" "$(command -v google-chrome)"
+        run: node tests/safe_ui.cjs "$(command -v python)" "$(command -v google-chrome)" artifacts/browser
+      - name: Build standalone fictional preview
+        run: PYTHONPATH=. python scripts/build_workspace_preview.py artifacts/browser/Airlock-Preview.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace-preview
+          path: |
+            artifacts/browser/Airlock-Preview.html
+            artifacts/browser/workspace-*.png
+          retention-days: 14
   mac:
     strategy:
       fail-fast: false
@@ -69,9 +78,9 @@ jobs:
         if: steps.sandbox.outcome != 'success'
         run: exit 1
       - uses: actions/upload-artifact@v4
-        if: matrix.runner == 'macos-15'
+        if: matrix.runner == 'macos-15' || github.event_name == 'pull_request'
         with:
-          name: airlock-mac
+          name: ${{ matrix.runner == 'macos-15' && 'airlock-mac' || 'airlock-mac-intel-runner' }}
           path: artifacts/Airlock_Mac_Latest.zip
           retention-days: 14
   site:

@@ -80,7 +80,7 @@ function activity(host){if(!state.receipts.length){host.append(empty('No respons
 function render(){if(!state)return;$('title').textContent=titles[tab];$('subtitle').textContent=subtitles[tab];$('mode').textContent=state.example?'Example workspace':'Personal workspace';
  const sw=$('switch');sw.hidden=preview||!state.example&&!sessionStorage.getItem('airlock-test-owner');sw.textContent=state.example?'Open my workspace':'Close workspace';sw.onclick=state.example?openPersonal:closePersonal;
  $('advanced').hidden=preview;
- $('advanced').textContent=state.example?'Privacy checks ↗':'Advanced settings ↗';$('advanced').href=state.example?'/':'/personal';
+ $('advanced').textContent=state.example?'Privacy checks ↗':'Advanced settings ↗';$('advanced').href=preview||state.example||!sessionStorage.getItem('airlock-test-owner')?'/':'/personal';
  for(const n of document.querySelectorAll('[data-tab]')){n.classList.toggle('active',n.dataset.tab===tab);n.setAttribute('aria-current',n.dataset.tab===tab?'page':'false');}
  const pc=state.actions.filter(a=>a.state==='pending').length;$('pending-count').textContent=pc;$('pending-count').hidden=!pc;
  const primary=$('primary');primary.hidden=true;

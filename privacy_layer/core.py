@@ -344,11 +344,13 @@ class Gateway:
             with self.store.transaction() as data:
                 current = self._grant(data, token)
                 if any(current.get(k)!=snapshot.get(k) for k in ('views','mode','policy','policy_revision','capabilities','scope')): raise Denied('Sharing rules changed. Retry after owner review.')
+                if tool in device_tools and current.get('device_actions_revision',0) != snapshot.get('device_actions_revision',0):
+                    raise Denied('The assigned actions changed. Retry after owner review.')
                 self.audit(data,current,tool,'released',[i['ref'] for i in result.get('items',[])])
                 if tool=='get_private_context':
                     current['last_context_read']=self.clock()
                     current['last_context_fingerprint']=result.get('context_fingerprint')
-                if tool in device_tools or (snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context')):
+                if snapshot.get('scope') is not None or tool in device_tools or (snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context')):
                     receipts=data.setdefault('disclosures',[])
                     receipts.append({'at':self.clock(),'agent':current['id'],'tool':tool,'items':copy.deepcopy(result.get('items',[])),'coverage':result.get('coverage',''),'response':copy.deepcopy(result)})
                     data['disclosures']=receipts[-50:]

@@ -194,6 +194,7 @@ class Workspace:
         if self.example or agent not in RELATIVE_CONFIGS or type(mail) is not bool or type(calendar) is not bool or not isinstance(identifier,str):
             raise Denied('Choose a supported agent and its permissions.')
         scope = selected_scope(self.g, selection, proposals)
+        scope['device_permissions'] = {'mail':mail, 'calendar':calendar}
         result = {'message':'Access saved.'}
         if identifier:
             existing = AgentMemory(self.g).grant(identifier)
@@ -202,14 +203,6 @@ class Workspace:
             AgentMemory(self.g).configure(identifier, **scope)
         else:
             result = connect(self.g, agent=agent, approved=True, install=True, scope=scope, home=getattr(self.g.sources,'context_home',None))
-            identifier = result['id']
-        with self.g.store.transaction() as d:
-            if not self.active(d,identifier):
-                raise Denied('Connection is no longer active.')
-            g=d['grants'][identifier]
-            g['device_permissions']={'mail':mail,'calendar':calendar}
-            g['policy_revision']=g.get('policy_revision',0)+1
-            self.g.audit(d,g,'device_permissions','updated')
         return result
 
     def call(self, grant, tool, args):
@@ -292,7 +285,7 @@ class Workspace:
             for grant in item['audience']:
                 g = d['grants'].get(grant)
                 if g:
-                    g['policy_revision'] = g.get('policy_revision', 0) + 1
+                    g['device_actions_revision'] = g.get('device_actions_revision', 0) + 1
         return {'removed':True}
 
     def state(self):

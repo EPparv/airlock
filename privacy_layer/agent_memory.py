@@ -115,7 +115,7 @@ class AgentMemory:
             for g in d['grants'].values():g['policy_revision']=g.get('policy_revision',0)+1
         return {'saved':True,'message':'Correction saved. Agents must refresh context; already shared copies cannot be recalled.'}
 
-    def configure(self, identifier, records, disclose=False, compute=False, proposals=False, disclose_records=None):
+    def configure(self, identifier, records, disclose=False, compute=False, proposals=False, disclose_records=None, device_permissions=None):
         if not isinstance(records, list) or len(records) > 100 or any(not isinstance(r, str) for r in records):
             raise Denied('Select up to 100 memory or skill records.')
         if any(type(v) is not bool for v in (disclose, compute, proposals)):
@@ -125,6 +125,9 @@ class AgentMemory:
             raise Denied('A selected record or its source must stay local.')
         if disclose_records is not None and (not isinstance(disclose_records,list) or any(not isinstance(r,str) or r not in records for r in disclose_records)):
             raise Denied('Excerpt access must be a subset of selected records.')
+        if device_permissions is not None and (not isinstance(device_permissions, dict) or set(device_permissions) != {'mail','calendar'}
+                or any(type(value) is not bool for value in device_permissions.values())):
+            raise Denied('Choose the device permissions.')
         scope = {'records': sorted(set(records)), 'disclose': disclose, 'compute': compute}
         if disclose_records is not None: scope['disclose_records'] = sorted(set(disclose_records))
         with self.g.store.transaction() as d:
@@ -132,6 +135,8 @@ class AgentMemory:
             if not g or g['revoked'] or g['expires'] <= self.g.clock():
                 raise Denied('Choose an active connection.')
             g['scope'] = scope
+            if device_permissions is not None:
+                g['device_permissions'] = dict(device_permissions)
             g['capabilities'] = {'context_updates': proposals, 'skill_execution': False}
             g['policy_revision'] = g.get('policy_revision', 0) + 1
             self.g.audit(d, g, 'scope', 'updated')

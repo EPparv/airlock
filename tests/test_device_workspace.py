@@ -231,3 +231,41 @@ def test_example_owner_routes_are_isolated(tmp_path):
     response=post('workspace-try',dict(identifier=email['id'],agent=email['applicant'],tool='private_action_status')).json()
     assert response['simulated'] and 'mara@example.com' not in str(response)
     assert safe.personal is None
+
+
+def test_live_loopback_projection_changes_and_rejects_redirects(setup):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    g,w,agent,_,_=setup
+    hits=[]
+    class Endpoint(BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append((self.path,self.headers.get('Authorization')))
+            if self.path=='/redirect':
+                self.send_response(302)
+                self.send_header('Location','/different')
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header('Content-Type','application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'list':[{'stage':len(hits),'secret':'Hidden terms'}]}).encode())
+        def log_message(self,*args): pass
+    try:
+        server=ThreadingHTTPServer(('127.0.0.1',0),Endpoint)
+    except PermissionError:
+        pytest.skip('Local HTTP sockets are disabled in this test environment')
+    worker=Thread(target=server.serve_forever,daemon=True)
+    worker.start()
+    try:
+        origin='http://127.0.0.1:'+str(server.server_port)
+        w.create('api','Customer stage',[agent['id']],dict(url=origin+'/records',credential='fictional-token',array_key='list',fields=['stage']))
+        ref=w.state()['actions'][0]['handles'][agent['id']]
+        out=call(g,agent,'read_private_fields',reference=ref)
+        assert out['rows']==[['2']] and 'Hidden terms' not in json.dumps(out)
+        with pytest.raises(Denied): fetch_api(api_settings(origin+'/redirect','fictional-token','list'))
+        assert hits==[('/records','Bearer fictional-token')]*2+[('/redirect','Bearer fictional-token')]
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join()
