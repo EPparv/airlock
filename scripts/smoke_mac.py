@@ -1,7 +1,7 @@
 """Fresh packaged installation and real MCP with disposable fictional data only.
 
-Calls the native window's bootstrap. Does not test Finder, Gatekeeper or a real
-AI conversation. No separately installed Python or Ollama is on PATH.
+The native window check launches the archived executable with a disposable profile.
+No separately installed Python or Ollama is on PATH.
 """
 import argparse
 import base64
@@ -27,6 +27,7 @@ def check(app, cached_runtime=None, window_probe=None):
         resources=Path(app).resolve()/'Contents/Resources'
         env={k:v for k,v in os.environ.items() if not k.startswith(('PYTHON','OLLAMA','NEAR_'))}
         env.update(PATH='/usr/bin:/bin:/usr/sbin:/sbin',PRIVATE_AI_PROFILE_HOME=str(home),PYTHONDONTWRITEBYTECODE='1')
+        native_process=None
         launch=None;personal_owner=None;personal_initialized=False
         opener=build_opener(ProxyHandler({}))
         def start():
@@ -35,6 +36,27 @@ def check(app, cached_runtime=None, window_probe=None):
                 log=base/'app/.private/service.log'
                 raise RuntimeError('Bootstrap failed: '+result.stderr[-2500:]+(log.read_text()[-2500:] if log.exists() else ''))
             return json.loads((base/'app/.private/launch.json').read_text())
+        def start_native():
+            nonlocal native_process
+            binary=resources.parent/'MacOS/Airlock'
+            native_process=subprocess.Popen([str(binary),'--data-dir',str(base),'--profile-home',str(home),'--no-update-check'],
+                                            env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+            session=base/'app/.private/launch.json'
+            deadline=time.monotonic()+600
+            while time.monotonic()<deadline:
+                if native_process.poll() is not None:
+                    raise RuntimeError('The archived Airlock executable exited before opening its workspace.')
+                if session.is_file():
+                    try:
+                        record=json.loads(session.read_text())
+                        url=urlsplit(record['url'])
+                        with opener.open(f'{url.scheme}://{url.netloc}/workspace',timeout=2) as response:
+                            if response.status==200:
+                                return record
+                    except (OSError,ValueError,KeyError):
+                        pass
+                time.sleep(.25)
+            raise RuntimeError('The archived Airlock executable did not finish first setup.')
         def api(action,data=None,personal=False):
             token=personal_owner if personal else launch['owner_token']
             u=urlsplit(launch['url']);origin=f'{u.scheme}://{u.netloc}'
@@ -68,7 +90,7 @@ def check(app, cached_runtime=None, window_probe=None):
                     time.sleep(.1)
                 raise RuntimeError('Disposable test server did not stop')
         try:
-            launch=start()
+            launch=start_native() if window_probe else start()
             assert launch['mode']=='safe-test'
             if window_probe:
                 # Run the native UI probe against this archive's resources, executable layout and live service.
@@ -133,8 +155,14 @@ def check(app, cached_runtime=None, window_probe=None):
             assert 'November 20' in str(call(entry,'get_private_context',{'query':'Cypress launch'}))
             api('revoke',{'id':entry['id']},personal=True)
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'native_window':bool(window_probe),'finder_ui_tested':False}))
+            print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'archived_executable':bool(window_probe),'native_window':bool(window_probe),'finder_ui_tested':False}))
         finally:
+            if native_process and native_process.poll() is None:
+                native_process.terminate()
+                try:native_process.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    native_process.kill()
+                    native_process.wait()
             if not launch:
                 path=base/'app/.private/launch.json'
                 if path.exists():launch=json.loads(path.read_text())
