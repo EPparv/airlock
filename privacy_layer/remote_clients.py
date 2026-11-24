@@ -1,5 +1,7 @@
 """Private cloud-agent connections. Management stays on the owner listener."""
 import asyncio
+import hmac
+import secrets
 import json
 import re
 import socket
@@ -13,7 +15,7 @@ from starlette.responses import JSONResponse, Response
 from .agent_memory import AgentMemory
 from .core import Denied
 from .setup import private_write
-from .quick_tunnel import QuickTunnel, probe_schema, verify_route
+from .quick_tunnel import QuickTunnel, probe_link, verify_route
 
 VENDORS = {'muse': 'Meta Muse', 'manus': 'Manus', 'chatgpt': 'ChatGPT', 'ironclaw': 'IronClaw', 'custom': 'Custom remote MCP'}
 MCP_VENDORS = {'manus', 'ironclaw', 'custom'}
@@ -100,6 +102,48 @@ def openapi(origin):
             'security': [{'agent': []}]}
 
 
+class LinkCheck:
+    def __init__(self, clock):
+        self.clock = clock
+        self.identifier = secrets.token_hex(16)
+        self.path = '/link-check/' + self.identifier
+        self.code = f'{secrets.randbelow(100_000_000):08d}'
+        self.expires = int(clock()) + 600
+        self.attempts = 5
+        self.external_seen = False
+        self.timer = None
+
+    def public(self, origin):
+        return {'url': origin + self.path, 'expires': self.expires, 'attempts_left': self.attempts}
+
+    def output(self):
+        return '<output id="airlock-code">' + self.code + '</output>'
+
+    def response(self, req, origin, port):
+        if (req.url.path != self.path or self.clock() >= self.expires or self.attempts <= 0 or
+                req.scope.get('query_string') or req.headers.get('origin') not in (None,origin)):
+            return Response(status_code=404)
+        if req.method != 'GET':
+            return Response(status_code=405)
+        host = req.headers.get('host','')
+        loopback = host in (f'127.0.0.1:{port}',f'localhost:{port}')
+        if host != urlsplit(origin).netloc and not loopback:
+            return Response(status_code=403)
+        # The local readiness request intentionally gets no digits. Cloudflare adds
+        # CF-Ray on its edge. Possession of the code still requires local owner consent.
+        if not re.fullmatch(r'[a-fA-F0-9]{8,32}-[A-Za-z0-9]{2,10}', req.headers.get('cf-ray','')):
+            return Response(status_code=204, headers={'X-Airlock-Link':self.identifier}) if loopback else Response(status_code=403)
+        self.external_seen = True
+        body = ('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+                '<title>Airlock link check</title><style>body{font:18px/1.5 system-ui;margin:14vh auto;padding:0 24px;max-width:430px}'
+                'h1{font-size:30px}summary{cursor:pointer}output{display:block;margin-top:.7em;font:600 36px/1.2 ui-monospace,monospace;letter-spacing:.07em}</style>'
+                '<h1>Airlock link check</h1><p>Enter this code in Airlock on your Mac to verify the link. Keep this page open until Airlock confirms it.</p>'
+                '<details><summary>Show code</summary>' + self.output() + '</details></html>')
+        return Response(body, media_type='text/html', headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
+                        'X-Robots-Tag':'noindex, nofollow, noarchive','X-Content-Type-Options':'nosniff',
+                        'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"})
+
+
 class CloudGateway:
     def __init__(self, active):
         self.active = active
@@ -111,7 +155,7 @@ class CloudGateway:
         with gateway.store.transaction() as state:
             grant = gateway._grant(state, token)
             config = state.get('remote_bridge', {})
-            if (not config.get('enabled') or grant.get('cloud_origin') != config.get('origin') or
+            if (not config.get('enabled') or (config.get('mode') == 'temporary' and not config.get('verified')) or grant.get('cloud_origin') != config.get('origin') or
                     grant.get('cloud_client') not in (MCP_VENDORS if transport == 'mcp' else {'muse'}) or grant.get('scope') is None or grant['remaining'] <= 0):
                 raise Denied('Access is closed.')
         return gateway
@@ -159,6 +203,15 @@ class BridgeApp:
 
     async def response(self, req):
         path = req.url.path
+        gateway = self.gateway.active()
+        if gateway is not None:
+            with gateway.store.transaction() as data:
+                mode = data.get('remote_bridge', {})
+            if mode.get('mode') == 'temporary' and not mode.get('verified'):
+                check = getattr(gateway, '_temporary_link_check', None)
+                if mode.get('enabled') and check is not None:
+                    return check.response(req, mode['origin'], self.port)
+                return Response(status_code=404)
         if path == '/phone' or path.startswith('/phone/'):
             from .phone_companion import phone_response
             return await phone_response(self.gateway.active, req)
@@ -217,8 +270,8 @@ class LoopbackListener:
         self.lock = threading.Lock()
         self.server = self.thread = self.port = None
 
-    def verify_local(self, origin, cancel):
-        reason = probe_schema(f'http://127.0.0.1:{self.port}', origin, cancel, seconds=4)
+    def verify_local(self, origin, cancel, check):
+        reason = probe_link(f'http://127.0.0.1:{self.port}', check, cancel, local=True, seconds=4)
         if reason:
             raise Denied('The local agent bridge failed its discovery check (' + reason + '). Reopen Airlock.')
 
@@ -259,6 +312,8 @@ class RemoteClients:
         self.lock = threading.RLock()
         self.tunnel_factory, self.verify = tunnel_factory, verify
         self.tunnel = None
+        self.check = None
+        self.check_busy = False
         self.closed = False
         self.g = gateway
         self.listener = listener or _listener
@@ -274,6 +329,9 @@ class RemoteClients:
                 pass  # The owner can resolve a port conflict in the bridge settings.
 
     def state(self):
+        with self.lock:
+            if self.check is not None and self.check.clock() >= self.check.expires:
+                self.stop_temporary()
         with self.g.store.transaction() as data:
             config = data.get('remote_bridge', {})
             calls = {event['agent']: event['at'] for event in data['audit'] if event['status'] == 'released'}
@@ -282,7 +340,9 @@ class RemoteClients:
                        'active': not g['revoked'] and g['expires'] > self.g.clock() and g['remaining'] > 0}
                       for g in data['grants'].values() if g.get('cloud_client') in VENDORS]
         port = config.get('port', DEFAULT_PORT)
-        return {'mode':config.get('mode', 'manual'), 'verified':bool(config.get('verified')), 'starting':bool(self.tunnel and not config.get('verified')),
+        check = getattr(self.g, '_temporary_link_check', None)
+        verification = check.public(config['origin']) if check and config.get('enabled') and config.get('mode') == 'temporary' and not config.get('verified') else None
+        return {'verification':verification, 'mode':config.get('mode', 'manual'), 'verified':bool(config.get('verified')), 'starting':bool(self.tunnel and not config.get('verified')),
                 'enabled': config.get('enabled', False), 'origin': config.get('origin', ''), 'port': port,
                 'upstream': f'http://127.0.0.1:{port}', 'connections': grants,
                 'listening': bool(self.listener.thread and self.listener.thread.is_alive() and self.listener.port == port)}
@@ -303,6 +363,7 @@ class RemoteClients:
             if self.tunnel is None or (tunnel is not None and self.tunnel is not tunnel):
                 return
             current, self.tunnel = self.tunnel, None
+            self.clear_check()
             self.clear_temporary()
             current.stop()
             self.listener.stop()
@@ -312,14 +373,88 @@ class RemoteClients:
             self.closed = True
             self.stop_temporary()
 
-    def start_temporary(self, approved):
+    def clear_check(self):
+        check, self.check = self.check, None
+        if check is None:
+            return
+        if check.timer:
+            check.timer.cancel()
+        if getattr(self.g, '_temporary_link_check', None) is check:
+            self.g._temporary_link_check = None
+        self.check_busy = False
+
+    def expire_check(self, check, tunnel):
+        with self.lock:
+            if self.check is check:
+                self.stop_temporary(tunnel)
+
+    def active_check(self):
+        check = self.check
+        if not self.tunnel or self.tunnel.cancel.is_set() or self.closed or check is None or check.clock() >= check.expires:
+            if check is not None:
+                self.stop_temporary()
+            raise Denied('The verification expired. Start a new link.')
+        return check
+
+    def enable_verified(self):
+        with self.g.store.transaction() as data:
+            data['remote_bridge']['verified'] = True
+        self.clear_check()
+        return self.state()
+
+    def confirm_temporary(self, code):
+        with self.lock:
+            check = self.active_check()
+            if not isinstance(code, str) or not re.fullmatch(r'[0-9]{8}', code):
+                raise Denied('Enter the eight digits shown on the other device.')
+            if not check.external_seen or not hmac.compare_digest(code, check.code):
+                check.attempts -= 1
+                if check.attempts <= 0:
+                    self.stop_temporary()
+                    raise Denied('Too many incorrect codes. Start a new link.')
+                raise Denied('Code did not match. Check the link on your other device.')
+            return self.enable_verified()
+
+    def retry_temporary(self):
+        with self.lock:
+            if self.tunnel and not self.tunnel.cancel.is_set() and self.state()['verified']:
+                return self.state()
+            check = self.active_check()
+            tunnel = self.tunnel
+            if self.check_busy:
+                raise Denied('Airlock is checking the link.')
+            self.check_busy = True
+            origin = self.state()['origin']
+        try:
+            passed = self.verify(origin, tunnel.cancel, check)
+            with self.lock:
+                if self.check is not check:
+                    state = self.state()
+                    if self.tunnel is tunnel and state['verified']:
+                        return state
+                    raise Denied('Link verification stopped.')
+                self.active_check()
+                return self.enable_verified() if passed else self.state()
+        except Exception:
+            with self.lock:
+                if self.check is check:
+                    self.stop_temporary(tunnel)
+            raise
+        finally:
+            with self.lock:
+                if self.check is check:
+                    self.check_busy = False
+
+    def start_temporary(self, approved, verification_method='auto'):
+        if verification_method not in ('auto', 'device'):
+            raise Denied('Choose a supported verification method.')
         if approved is not True:
             raise Denied('Approve the temporary HTTPS link before connecting.')
         with self.lock:
             if self.closed:
                 raise Denied('Unlock Airlock before starting a link.')
             state = self.state()
-            if self.tunnel and state['verified']:
+            if self.tunnel and (state['verified'] or state['verification']):
                 return state
             if self.tunnel:
                 raise Denied('The temporary link is starting.')
@@ -335,17 +470,22 @@ class RemoteClients:
             with self.lock:
                 if self.closed or self.tunnel is not tunnel or tunnel.cancel.is_set():
                     raise Denied('The link was stopped.')
+                check = LinkCheck(self.g.clock)
+                self.check = self.g._temporary_link_check = check
                 with self.g.store.transaction() as data:
                     data['remote_bridge'] = {'origin':origin, 'enabled':True, 'port':state['port'],
                                              'mode':'temporary', 'verified':False}
-            self.listener.verify_local(origin, tunnel.cancel)
-            self.verify(origin, tunnel.cancel)
-            with self.lock:
-                if self.closed or self.tunnel is not tunnel or tunnel.cancel.is_set():
-                    raise Denied('The link was stopped.')
-                with self.g.store.transaction() as data:
-                    data['remote_bridge']['verified'] = True
+                check.timer = threading.Timer(600, self.expire_check, args=(check,tunnel))
+                check.timer.daemon = True
+                check.timer.start()
+            self.listener.verify_local(origin, tunnel.cancel, check)
+            if verification_method == 'device':
                 return self.state()
+            # Delay the first DNS lookup briefly while a new hostname propagates.
+            # Resolver negative caching can outlast a short automatic probe.
+            if self.verify is verify_route and tunnel.cancel.wait(3):
+                raise Denied('Link verification stopped.')
+            return self.retry_temporary()
         except Denied:
             self.stop_temporary(tunnel)
             raise
@@ -391,6 +531,8 @@ class RemoteClients:
         if vendor not in VENDORS:
             raise Denied('Choose a supported cloud client.')
         state = self.state()
+        if state['mode'] == 'temporary' and not state['verified']:
+            raise Denied('Verify the temporary link before creating a connection.')
         if vendor != 'chatgpt' and not (state['enabled'] and state['listening'] and (state['mode'] != 'temporary' or state['verified'])):
             raise Denied('Set up the HTTPS bridge first.')
         result = self.g.create(agent='mcp', purpose='Private connection for ' + VENDORS[vendor],
@@ -423,12 +565,19 @@ class RemoteClients:
     def owner(self, action, body):
         schema = {'remote-state': (), 'remote-quick-start': ('approved',), 'remote-quick-stop': (), 'remote-configure': ('origin', 'port', 'enabled'),
                   'remote-create': ('vendor', 'lifetime', 'max_calls')}
+        schema.update({'remote-quick-confirm':('code',), 'remote-quick-retry':()})
+        if action == 'remote-quick-start' and isinstance(body, dict) and 'verification_method' in body:
+            schema[action] = ('approved','verification_method')
         if action not in schema or not isinstance(body, dict) or set(body) != set(schema[action]):
             raise Denied('Invalid cloud connection request.')
         if action == 'remote-state':
             return self.state()
         if action == 'remote-quick-start':
-            return self.start_temporary(body['approved'])
+            return self.start_temporary(**body)
+        if action == 'remote-quick-confirm':
+            return self.confirm_temporary(body['code'])
+        if action == 'remote-quick-retry':
+            return self.retry_temporary()
         if action == 'remote-quick-stop':
             self.stop_temporary()
             return self.state()

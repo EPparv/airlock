@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import threading
@@ -9,7 +10,7 @@ from starlette.testclient import TestClient
 
 from privacy_layer import quick_tunnel
 from privacy_layer.core import Denied
-from privacy_layer.remote_clients import BridgeApp, RemoteClients
+from privacy_layer.remote_clients import BridgeApp, LinkCheck, RemoteClients
 from test_remote_clients import FakeListener
 
 ORIGIN = 'https://quiet-window-park.trycloudflare.com'
@@ -27,7 +28,7 @@ class Tunnel:
         self.cancel.set()
 
 
-def configured(gateway, verifier=lambda origin, cancel: None):
+def configured(gateway, verifier=lambda origin, cancel, check: True):
     return RemoteClients(gateway, FakeListener(), tunnel_factory=Tunnel, verify=verifier)
 
 
@@ -36,13 +37,16 @@ def test_only_owner_can_open_then_verified_url_is_bound_and_retired_on_lock(bund
     active = [g]
     server = BridgeApp(lambda: active[0], 8794)
     calls = []
-    def verify(origin, cancel):
+    def verify(origin, cancel, check):
         with TestClient(server, base_url=origin) as c:
-            assert c.get('/openapi.json').json()['servers'] == [{'url':origin}]
+            assert c.get('/openapi.json').status_code == 404
+            page = c.get(check.path, headers={'cf-ray':'deadbeef12345678-IAD'})
+            assert check.output() in page.text
             assert c.get('/api/workspace-state').status_code == 404
             with pytest.raises(Denied):
                 remote.create('muse', 60, 3)
         calls.append(origin)
+        return True
     remote = configured(g, verify)
     with pytest.raises(Denied):
         remote.owner('remote-quick-start', {'approved':False})
@@ -90,7 +94,7 @@ def test_crashes_and_failed_reachability_close_the_link(bundle):
 def test_close_during_open_does_not_restore_link(bundle):
     g = bundle[0]
     verifying, stopped = threading.Event(), threading.Event()
-    def verify(origin, cancel):
+    def verify(origin, cancel, check):
         verifying.set()
         assert cancel.wait(2)
     remote = configured(g, verify)
@@ -182,20 +186,20 @@ def test_registered_edge_and_public_discovery_through_real_loopback(bundle):
         def __init__(self):
             self.http = httpx.HTTPTransport()
         def handle_request(self, request):
-            assert str(request.url) == ORIGIN + '/openapi.json'
+            assert request.url.host == ORIGIN.split('://')[1] and re.fullmatch(r'/link-check/[a-f0-9]{32}', request.url.path)
             requests.append(request.url.path)
             # Simulate TLS termination. Forward the original public Host.
             url = request.url.copy_with(scheme='http', host='127.0.0.1', port=port)
-            return self.http.handle_request(httpx.Request('GET', url, headers=request.headers))
+            return self.http.handle_request(httpx.Request('GET', url, headers={**dict(request.headers),'cf-ray':'deadbeef12345678-IAD'}))
         def close(self):
             self.http.close()
     listener = LoopbackListener()
     remote = RemoteClients(g, listener, tunnel_factory=Tunnel,
-        verify=lambda host, event:quick_tunnel.verify_route(host, event, transport=Edge(), seconds=2))
+        verify=lambda host, event, check:quick_tunnel.verify_route(host, event, check, transport=Edge(), seconds=2))
     set_active_gateway(lambda:g)
     try:
         assert remote.start_temporary(True)['verified']
-        assert requests == ['/openapi.json']
+        assert len(requests) == 1 and requests[0].startswith('/link-check/')
     finally:
         remote.close()
         set_active_gateway(lambda:None)
@@ -206,6 +210,78 @@ def test_safe_quick_link_diagnostics(status, expected):
     import httpx
     edge = httpx.MockTransport(lambda _: httpx.Response(status, text='PRIVATE_ERROR_OUTPUT'))
     with pytest.raises(Denied, match=expected) as trouble:
-        quick_tunnel.verify_route(ORIGIN, threading.Event(), transport=edge, seconds=0)
+        quick_tunnel.verify_route(ORIGIN, threading.Event(), LinkCheck(lambda:0), transport=edge, seconds=0)
     assert ORIGIN not in str(trouble.value) and 'PRIVATE_ERROR_OUTPUT' not in str(trouble.value)
     assert quick_tunnel.helper_error('quick tunnel provisioning failed with status 429: private data',None) == 'Cloudflare link provisioning returned HTTP 429.'
+
+
+def test_dns_pending_exposes_one_page_and_unlocks_after_owner_redeems(bundle):
+    g = bundle[0]
+    remote = configured(g, lambda *args:False)  # Simulated failed Mac DNS lookup.
+    pending = remote.start_temporary(True)
+    item = pending['verification']
+    assert not pending['verified'] and set(item) == {'url','expires','attempts_left'}
+    path = item['url'].removeprefix(ORIGIN)
+    assert re.fullmatch(r'/link-check/[0-9a-f]{32}', path) and item['attempts_left'] == 5
+    check = remote.check
+    for vendor in ('chatgpt','muse','manus','custom'):
+        with pytest.raises(Denied):
+            remote.create(vendor,60,2)
+    with TestClient(BridgeApp(lambda:g,8794),base_url=ORIGIN) as c:
+        for endpoint in ['/phone','/openapi.json','/api/state','/mcp','/v1/privacy_status']:
+            assert c.get(endpoint).status_code == 404
+        assert c.get(path).status_code == 403
+        local = c.get(path, headers={'Host':'127.0.0.1:8794'})
+        assert local.status_code == 204 and check.code not in local.text
+        with pytest.raises(Denied):
+            remote.confirm_temporary(check.code)  # No arriving external request yet.
+        assert not remote.retry_temporary()['verified']
+        response = c.get(path,headers={'cf-ray':'aabbccddeeff0011-IAD'})
+        assert response.status_code == 200
+        assert 'no-store' in response.headers['cache-control'] and 'no-referrer' == response.headers['referrer-policy']
+        digits = re.search('<output id="airlock-code">([0-9]{8})</output>', response.text)[1]
+        assert digits not in json.dumps(remote.state())
+        assert remote.state()['verified'] is False
+        assert c.post(path, json={'code':digits}).status_code==405
+        assert remote.owner('remote-quick-confirm',{'code':digits})['verified']
+        assert remote.state()['verification'] is None
+        assert c.get(path,headers={'cf-ray':'aabbccddeeff0011-IAD'}).status_code == 404
+        assert c.get('/openapi.json').json()['servers'] == [{'url':ORIGIN}]
+        grant=remote.create('muse',60,2)
+        assert c.post('/v1/privacy_status',json={},headers={'Authorization':'Bearer '+grant['credential']}).status_code == 200
+    with pytest.raises(Denied):
+        remote.confirm_temporary(digits)
+    remote.close()
+
+
+def test_external_check_attempts_expiry_and_retry(bundle):
+    g, _, clock, *_ = bundle
+    result = [False]
+    def probe(*args):
+        return result[0]
+    remote = configured(g,probe)
+    first = remote.owner('remote-quick-start',{'approved':True,'verification_method':'device'})
+    assert first['verification'] and not first['verified']
+    session = remote.tunnel
+    wrong = '10000000' if remote.check.code != '10000000' else '10000001'
+    for _ in range(5):
+        with pytest.raises(Denied):
+            remote.confirm_temporary(wrong)
+    assert session.cancel.is_set() and not remote.state()['enabled']
+    other = remote.start_temporary(True, 'device')
+    assert other['verification']['url'] != first['verification']['url']
+    clock[0] = other['verification']['expires']
+    assert not remote.state()['enabled'] and remote.tunnel is None
+    remote.start_temporary(True, 'device')
+    result[0] = True
+    assert remote.owner('remote-quick-retry',{})['verified']
+    remote.close()
+
+
+def test_system_resolver_failure_leaves_device_option():
+    import httpx
+    def no_dns(request):
+        raise httpx.ConnectError('nodename nor servname provided',request=request)
+    pending = quick_tunnel.verify_route(ORIGIN, threading.Event(), LinkCheck(lambda:0),
+                                        transport=httpx.MockTransport(no_dns),seconds=0)
+    assert pending is False

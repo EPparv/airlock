@@ -1,3 +1,7 @@
+# Airlock 0.11.1
+
+A Mac can verify a temporary link itself or ask a second device to open a verification page. Enter the code displayed by the second device on the Mac. The pending link accepts only reachability verification. Pairing and agent access open after confirmation.
+
 # Airlock 0.11.0
 
 **Test on iPhone.** The Safari workspace stores its own encrypted vault on the phone. Create two local test agents, grant each different records, inspect filtered results and revoke access. To use actual records from your Mac, choose **Connect agent → Pair iPhone** in the Mac app. Select the records, create a one-time link and scan its QR code. Safari can request an assigned action. You still approve the write on your Mac.

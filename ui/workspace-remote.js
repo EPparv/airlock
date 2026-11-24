@@ -30,10 +30,11 @@ function startTemporaryLink(after) {
   const f = modal('Start temporary link');
   note(f, 'Airlock downloads a verified Cloudflare helper on first use. Cloudflare forwards traffic to this Mac and can see the credentials and data sent through the link.');
   note(f, 'The link expires when you stop it, lock Airlock, or quit. Keep your Mac awake while testing.');
+  const device = check(f, 'Verify from another device', false);
   const action = formAction(f, 'Start link', async () => {
     action.textContent = 'Opening link…';
     try {
-      await api('remote-quick-start', {approved: true});
+      await api('remote-quick-start', {approved: true, verification_method: device.checked ? 'device' : 'auto'});
       close();
       await after();
     } finally {
@@ -42,11 +43,42 @@ function startTemporaryLink(after) {
   });
 }
 
+function temporaryLinkVerification(host, state, after) {
+  const check = state.verification;
+  if (check && check.expires * 1000 > Date.now()) {
+    const form = el('div', null, 'form');
+    host.append(form);
+    note(form, 'Open this link on another device. If Wi-Fi cannot find it, try cellular. Enter the eight digits it shows.');
+    const url = field(form, 'Verification link', input('url', check.url));
+    url.readOnly = true;
+    form.append(button('Copy verification link', () => copyText(check.url)));
+    const code = field(form, 'Verification code', input());
+    code.inputMode = 'numeric';
+    code.autocomplete = 'one-time-code';
+    code.maxLength = 8;
+    formAction(form, 'Verify link', async () => {
+      if (!/^[0-9]{8}$/.test(code.value.trim())) throw Error('Enter all eight digits from the verification page.');
+      await api('remote-quick-confirm', {code: code.value.trim()});
+      code.value = '';
+      await after();
+    });
+  }
+  host.append(button('Retry on this Mac', async () => {
+    const updated = await api('remote-quick-retry');
+    await after();
+    if (!updated.verified) flash('This Mac still cannot resolve the link. Use the code from another device.');
+  }), button('Stop temporary link', async () => {await api('remote-quick-stop'); await after();}));
+}
+
 addPage('remote-bridge', 'HTTPS bridge', 'remote-clients', async host => {
   if (preview) return nativeOnly('HTTPS bridge');
   const state = await api('remote-state');
   if (state.mode === 'temporary' && state.enabled) {
     host.append(facts([['Temporary link', state.origin], ['Status', state.verified ? 'Verified over HTTPS' : 'Connecting']]));
+    if (!state.verified) {
+      temporaryLinkVerification(host, state, refresh);
+      return;
+    }
     note(host, 'Stopping this link ends the connections created for it.');
     host.append(button('Stop temporary link', () => confirmAction('Stop temporary link?',
       'Agents using this link will need a new connection.', 'Stop link', async () => {
@@ -85,6 +117,10 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
   if (!name) return go('remote-clients');
   bar.querySelector('h1').textContent = name;
   const state = await api('remote-state');
+  if (state.mode === 'temporary' && state.enabled && !state.verified) {
+    temporaryLinkVerification(host, state, refresh);
+    return;
+  }
   if (opt.vendor !== 'chatgpt' && !(state.enabled && state.listening)) {
     note(host, name + ' needs an HTTPS bridge to reach your Mac.');
     if (!state.enabled) host.append(button('Start temporary link', () => startTemporaryLink(refresh), 'primary'));

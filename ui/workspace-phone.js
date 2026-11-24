@@ -1,5 +1,16 @@
 'use strict';
 
+async function phoneQR(host, action, url, label) {
+  const native = window.webkit?.messageHandlers?.airlockSettings;
+  if (!native) return;
+  try {
+    const png = await native.postMessage({action, url});
+    const img = el('img'); img.alt = label; img.className = 'pair-code';
+    img.src = 'data:image/png;base64,' + png;
+    host.append(img);
+  } catch { note(host, 'Use the copy button below to open the link in Safari.'); }
+}
+
 addPage('pair-iphone', 'Pair iPhone', 'connect', async host => {
   if (preview) {
     note(host, 'Open Airlock on your Mac to pair an iPhone.');
@@ -10,6 +21,12 @@ addPage('pair-iphone', 'Pair iPhone', 'connect', async host => {
     note(host, 'Enable the HTTPS bridge so Safari on your iPhone can reach this Mac.');
     host.append(button('Start temporary link', () => startTemporaryLink(() => go('pair-iphone')), 'primary'),
       button('Use my HTTPS domain', () => go('remote-bridge')));
+  } else if (bridge.mode === 'temporary' && !bridge.verified) {
+    if (bridge.verification?.url) {
+      note(host, 'Scan the link with your iPhone. Enter the code it shows here on your Mac.');
+      await phoneQR(host, 'phone-proof-qr', bridge.verification.url, 'Scan to check this Mac’s temporary link.');
+    }
+    temporaryLinkVerification(host, bridge, refresh);
   } else {
     const form = el('div', null, 'form');host.append(form);
     note(form, 'Choose what this iPhone can read. A connection lasts one hour or 100 calls. Requested writes need approval on your Mac.');
@@ -23,14 +40,7 @@ addPage('pair-iphone', 'Pair iPhone', 'connect', async host => {
       const result = await api('phone-create',{selection, approved:true});
       const f = modal('Connect your iPhone');
       note(f, 'Scan with Camera or copy the link to Safari. Tap Connect to Mac within five minutes.');
-      const native = window.webkit?.messageHandlers?.airlockSettings;
-      if (native) {
-        try {
-          const png = await native.postMessage({action:'phone-qr',url:result.url});
-          const img = el('img'); img.alt = 'Scan this one-time iPhone pairing code'; img.className = 'pair-code';
-          img.src = 'data:image/png;base64,'+png; f.append(img);
-        } catch { note(f, 'Copy the one-time link below to pair.'); }
-      }
+      await phoneQR(f, 'phone-qr', result.url, 'Scan this one-time iPhone pairing code.');
       f.append(button('Copy one-time link', () => copyText(result.url)));
       formAction(f, 'Done', async () => { close(); await refresh(); });
     });

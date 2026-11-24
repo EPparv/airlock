@@ -22,7 +22,7 @@ class FakeListener:
     def is_alive(self):
         return True
 
-    def verify_local(self, origin, cancel):
+    def verify_local(self, origin, cancel, check):
         pass
 
     def stop(self):

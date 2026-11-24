@@ -104,8 +104,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -131,16 +129,6 @@ jobs:
         run: |
           xcrun clang -fobjc-arc -framework Cocoa -framework WebKit -framework CoreImage scripts/smoke_workspace_window.m -o "$RUNNER_TEMP/workspace-window-check"
           python scripts/smoke_mac.py artifacts/unpacked/Airlock/Airlock.app --window-probe "$RUNNER_TEMP/workspace-window-check"
-      - name: Check temporary public link when requested
-        if: matrix.runner == 'macos-26' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          AIRLOCK_TEST_REVISION: ${{ github.event.pull_request.head.sha }}
-          PYTHONPATH: .
-        timeout-minutes: 6
-        run: |
-          if git show -s --format=%s "$AIRLOCK_TEST_REVISION" | grep -Fq '[verify temporary link]'; then
-            python scripts/smoke_quick_link.py --temporary-public-test
-          fi
   iphone:
     name: Verify iPhone workspace in iOS Simulator
     runs-on: macos-15

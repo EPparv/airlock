@@ -4,7 +4,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-Version **0.11.0** opens in its own Mac window. The home screen has three controls.
+Version **0.11.1** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 

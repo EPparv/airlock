@@ -27,6 +27,10 @@ PAIR_TTL, SESSION_TTL, CALL_BUDGET = 300, 3600, 100
 _init_lock = threading.Lock()
 
 
+def bridge_ready(config):
+    return config.get('enabled') and (config.get('mode') != 'temporary' or config.get('verified') is True)
+
+
 def fingerprint(value):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]{43}', value):
         raise Denied('This connection has closed.')
@@ -85,8 +89,8 @@ class PhoneCompanion:
             with self.g.store.transaction() as d:
                 self._prune(d)
                 config = dict(d.get('remote_bridge', {}))
-                if not config.get('enabled'):
-                    raise Denied('Enable the HTTPS bridge first.')
+                if not bridge_ready(config):
+                    raise Denied('Verify or enable the HTTPS bridge before pairing.')
                 if len(self.sessions) >= 8:
                     raise Denied('Revoke an existing phone connection before pairing another.')
             grant = self.g.create(agent='mcp', purpose='iPhone companion', views=[], mode='automatic',
@@ -114,7 +118,7 @@ class PhoneCompanion:
             self._prune(d)
             entry = self.sessions.get(key)
             cfg = d.get('remote_bridge', {})
-            if not entry or entry['session'] == pair or not cfg.get('enabled') or cfg.get('origin') != origin:
+            if not entry or entry['session'] == pair or not bridge_ready(cfg) or cfg.get('origin') != origin:
                 raise Denied('This phone connection has closed.')
             g = self.g._grant(d, entry['token'])
             if g.get('cloud_origin') != origin or g.get('cloud_client') != 'iphone' or g.get('scope') is None:
@@ -158,7 +162,7 @@ async def phone_response(active, req):
     with gateway.store.transaction() as d:
         config = dict(d.get('remote_bridge', {}))
     origin = config.get('origin','')
-    if not config.get('enabled'):
+    if not bridge_ready(config):
         return Response(status_code=503, headers=HEADERS)
     if req.headers.get('host') != urlsplit(origin).netloc or req.headers.get('origin') not in (None,origin):
         return Response(status_code=403, headers=HEADERS)

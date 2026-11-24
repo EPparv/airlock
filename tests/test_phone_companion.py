@@ -161,3 +161,23 @@ def test_phone_access_is_tied_to_the_configured_tunnel_origin(phone):
         r=browser.post('/phone/context',json={'query':'Cypress'},headers={
             'Origin':origin,'Authorization':'Bearer '+session})
         assert r.status_code in (401,403) and 'Thursday' not in r.text
+
+
+def test_pending_temporary_link_never_creates_or_exposes_a_grant(phone):
+    g, _, _, owner, _, client = phone
+    with g.store.transaction() as state:
+        state['remote_bridge'].update(mode='temporary',verified=False)
+        original_ids = set(state['grants'])
+    with pytest.raises(Denied, match='Verify'):
+        create(phone)
+    assert client.get('/phone').status_code == 404
+    assert owner.owner('phone-state', {})['devices'] == []
+    with g.store.transaction() as state:
+        assert set(state['grants']) == original_ids
+        state['remote_bridge']['verified'] = True
+    _, _, session = pair(phone)
+    assert post(client,'status',{},session).status_code == 200
+    with g.store.transaction() as state:
+        state['remote_bridge']['verified'] = False
+    assert post(client,'context',{'query':'Cypress'},session).status_code == 404
+    assert owner.owner('phone-state', {})['devices'][0]['state']=='paired'

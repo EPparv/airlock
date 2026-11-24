@@ -1,0 +1,152 @@
+name: Verify temporary HTTPS on two devices
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: airlock-temporary-https-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  requested:
+    name: Check owner request
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.intent.outputs.enabled }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: intent
+        run: |
+          if git log -1 --format=%s | grep -Fq '[verify temporary link]'; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  host:
+    name: Disposable Mac tunnel
+    needs: requested
+    if: needs.requested.outputs.enabled == 'true'
+    runs-on: macos-15-intel
+    timeout-minutes: 32
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
+      - name: Wait until the independent device is ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route" \
+            --name "airlock-route-ready-$GITHUB_RUN_ATTEMPT" --peer "External HTTPS witness" --seconds 1100
+      - name: Start the empty, expiring agent bridge on the Mac
+        run: |
+          set -eu
+          route_dir="$RUNNER_TEMP/airlock-route"
+          umask 077
+          nohup python -u scripts/smoke_quick_link.py host "$route_dir" > "$route_dir/host.log" 2>&1 < /dev/null &
+          echo $! > "$route_dir/host.pid"
+          python scripts/smoke_quick_link.py wait-file "$route_dir" --name offer.json --seconds 210
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airlock-route-offer-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route/offer.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Wait for the independent HTTPS proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route" \
+            --name "airlock-route-proof-$GITHUB_RUN_ATTEMPT" --peer "External HTTPS witness" --seconds 390
+      - uses: actions/download-artifact@v4
+        with:
+          name: airlock-route-proof-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-proof
+      - name: Deliver the public challenge response to the Mac owner
+        run: mv "$RUNNER_TEMP/airlock-proof/proof.json" "$RUNNER_TEMP/airlock-route/proof.json"
+      - name: Wait for the external discovery check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route" \
+            --name "airlock-route-witness-$GITHUB_RUN_ATTEMPT" --peer "External HTTPS witness" --seconds 200
+      - uses: actions/download-artifact@v4
+        with:
+          name: airlock-route-witness-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-ack
+      - name: Verify the Mac finished its authenticated calls and shut down the link
+        run: |
+          mv "$RUNNER_TEMP/airlock-ack/witness.json" "$RUNNER_TEMP/airlock-route/witness.json"
+          python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route" --name done.json --seconds 35
+      - name: Stop a remaining fixture and print its credential-free result
+        if: always()
+        run: |
+          route_dir="$RUNNER_TEMP/airlock-route"
+          if test -f "$route_dir/host.pid"; then
+            touch "$route_dir/stop"
+            if ! test -f "$route_dir/done.json"; then
+              kill -TERM "$(cat "$route_dir/host.pid")" 2>/dev/null || true
+            fi
+            cat "$route_dir/host.log"
+          fi
+
+  witness:
+    name: External HTTPS witness
+    needs: requested
+    if: needs.requested.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 32
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Mark the independent runner ready
+        run: |
+          mkdir -p "$RUNNER_TEMP/airlock-route"
+          echo ready > "$RUNNER_TEMP/airlock-route/ready"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airlock-route-ready-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route/ready
+          retention-days: 1
+      - name: Wait for the Mac offer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route" \
+            --name "airlock-route-offer-$GITHUB_RUN_ATTEMPT" --peer "Disposable Mac tunnel" --seconds 1350
+      - uses: actions/download-artifact@v4
+        with:
+          name: airlock-route-offer-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route
+      - name: Read the disposable challenge over public HTTPS
+        run: python3 scripts/smoke_quick_link.py witness "$RUNNER_TEMP/airlock-route"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airlock-route-proof-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route/proof.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Check the publicly confirmed endpoint and authentication boundary
+        run: python3 scripts/smoke_quick_link.py discovery "$RUNNER_TEMP/airlock-route"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airlock-route-witness-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route/witness.json
+          retention-days: 1
+          if-no-files-found: error

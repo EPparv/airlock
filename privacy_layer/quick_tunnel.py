@@ -1,6 +1,5 @@
 """Temporary, owner-started Cloudflare transport for the agent-only listener."""
 import hashlib
-import json
 import os
 from pathlib import Path
 import platform
@@ -105,27 +104,27 @@ def launch_guard(binary, port, work):
                             start_new_session=True)
 
 
-def probe_schema(url, expected, cancelled, *, seconds, transport=None):
-    """Return a bounded, non-sensitive reason on failure. Only check discovery."""
+def probe_link(url, check, cancelled, *, local, seconds, transport=None):
+    """Request only the expiring handshake, using the operating system's resolver."""
     import httpx
     deadline = time.monotonic() + seconds
     reason = 'connection unavailable'
     with httpx.Client(trust_env=False, timeout=3, follow_redirects=False, transport=transport) as client:
         while not cancelled.is_set():
             try:
-                with client.stream('GET', url + '/openapi.json', headers={'Accept':'application/json'}) as response:
-                    if response.status_code == 200:
+                with client.stream('GET', url + check.path) as response:
+                    if local and response.status_code == 204 and response.headers.get('X-Airlock-Link') == check.identifier:
+                        return None
+                    if not local and response.status_code == 200:
                         body = bytearray()
-                        for chunk in response.iter_bytes(8192):
-                            if len(body) + len(chunk) > 131072:
+                        for chunk in response.iter_bytes(4096):
+                            if len(body) + len(chunk) > 16384:
                                 break
                             body.extend(chunk)
                         else:
-                            schema = json.loads(body)
-                            if (isinstance(schema, dict) and schema.get('servers') == [{'url':expected}]
-                                    and '/v1/privacy_status' in schema.get('paths', {})):
+                            if check.output().encode() in body:
                                 return None
-                        reason = 'unexpected discovery document'
+                        reason = 'unexpected verification page'
                     else:
                         reason = 'HTTP ' + str(response.status_code)
                         if response.headers.get('cf-mitigated') == 'challenge':
@@ -135,33 +134,31 @@ def probe_schema(url, expected, cancelled, *, seconds, transport=None):
             except httpx.TimeoutException:
                 reason = 'network timeout'
             except httpx.ConnectError as error:
-                # Classify DNS and TLS without exposing the hostname or exception.
                 cause = str(error).lower()
                 if 'certificate' in cause or 'ssl' in cause:
                     reason = 'TLS validation failed'
-                elif any(term in cause for term in ('nodename','name resolution','name or service','name not known')):
+                elif any(t in cause for t in ('nodename','name resolution','name or service','name not known','no address associated')):
                     reason = 'DNS unavailable'
                 else:
                     reason = 'connection unavailable'
             except httpx.HTTPError:
                 reason = 'HTTP transport failed'
-            except (ValueError, TypeError):
-                reason = 'unexpected discovery document'
             left = deadline - time.monotonic()
-            if left <= 0 or cancelled.wait(min(1.25, left)):
+            if left <= 0 or cancelled.wait(min(2.0, left)):
                 break
     return 'workspace closed' if cancelled.is_set() else reason
 
 
-def verify_route(origin, cancelled, *, transport=None, seconds=55):
-    """Require the public HTTPS URL to serve this bridge's exact discovery document."""
+def verify_route(origin, cancelled, check, *, transport=None, seconds=12):
     from .core import Denied
     if not QUICK_ORIGIN.fullmatch(origin):
         raise Denied('Cloudflare returned an invalid temporary hostname.')
-    reason = probe_schema(origin, origin, cancelled, seconds=seconds, transport=transport)
+    reason = probe_link(origin, check, cancelled, local=False, seconds=seconds, transport=transport)
+    if reason == 'DNS unavailable':
+        return False
     if reason:
-        raise Denied('Local discovery passed. Public Cloudflare discovery failed (' + reason + '). '
-                     'Try a different network or a named HTTPS bridge.')
+        raise Denied('Public Cloudflare verification failed (' + reason + '). Try another network or a named HTTPS bridge.')
+    return True
 
 
 def helper_error(line, current):

@@ -103,14 +103,20 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
     } else if ([action isEqual:@"check"] && self.checkUpdates) {
         reply(@YES,nil);
         dispatch_async(dispatch_get_main_queue(),self.checkUpdates);
-    } else if ([action isEqual:@"phone-qr"]) {
+    } else if ([action isEqual:@"phone-qr"] || [action isEqual:@"phone-proof-qr"]) {
         NSString *url=value[@"url"];
         if (![self.view.URL.path isEqual:@"/workspace/personal"] || ![url isKindOfClass:NSString.class] || url.length>512) {
             reply(nil,@"Open the personal workspace to pair."); return;
         }
         NSURLComponents *parts=[NSURLComponents componentsWithString:url];
-        if (![parts.scheme isEqual:@"https"] || !parts.host.length || ![parts.path isEqual:@"/phone"] ||
-            parts.user || parts.password || parts.query || ![parts.fragment hasPrefix:@"pair="] || parts.fragment.length!=48) {
+        BOOL verification=[action isEqual:@"phone-proof-qr"];
+        BOOL acceptedPath=verification
+            ? ([parts.host hasSuffix:@".trycloudflare.com"] && !parts.port && !parts.fragment && parts.path.length==44 &&
+               [parts.path rangeOfString:@"^/link-check/[0-9a-f]{32}$" options:NSRegularExpressionSearch].location!=NSNotFound)
+            : ([parts.path isEqual:@"/phone"] &&
+               [parts.fragment rangeOfString:@"^pair=[A-Za-z0-9_-]{43}$" options:NSRegularExpressionSearch].location!=NSNotFound &&
+               parts.fragment.length==48);
+        if (![parts.scheme isEqual:@"https"] || !parts.host.length || parts.user || parts.password || parts.query || !acceptedPath) {
             reply(nil,@"Create a new pairing link."); return;
         }
         NSData *png=AirlockPhonePairingPNG(url);
