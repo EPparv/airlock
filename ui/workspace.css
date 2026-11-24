@@ -795,7 +795,7 @@ dialog::backdrop {
   display: block;
   width: min(232px,100%);
   margin: 12px auto;
-  border: 24px solid #fff;
+  background: #fff;
   image-rendering: pixelated;
   box-sizing: border-box;
 }

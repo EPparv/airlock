@@ -76,7 +76,8 @@ def prepare_helper(cache, work, cancelled):
 
 def supervise(binary, port):
     """Stop the child on pipe EOF, including when the owning Airlock process dies."""
-    process = subprocess.Popen([str(binary), 'tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:0',
+    process = subprocess.Popen([str(binary), 'tunnel', '--no-autoupdate', '--protocol', 'http2',
+                                '--metrics', '127.0.0.1:0',
                                 '--url', f'http://127.0.0.1:{port}'],
                                stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     stop = threading.Event()
@@ -104,38 +105,82 @@ def launch_guard(binary, port, work):
                             start_new_session=True)
 
 
-def verify_route(origin, cancelled):
-    """Require the public HTTPS URL to return this bridge's scoped API schema."""
+def probe_schema(url, expected, cancelled, *, seconds, transport=None):
+    """Return a bounded, non-sensitive reason on failure. Only check discovery."""
     import httpx
+    deadline = time.monotonic() + seconds
+    reason = 'connection unavailable'
+    with httpx.Client(trust_env=False, timeout=3, follow_redirects=False, transport=transport) as client:
+        while not cancelled.is_set():
+            try:
+                with client.stream('GET', url + '/openapi.json', headers={'Accept':'application/json'}) as response:
+                    if response.status_code == 200:
+                        body = bytearray()
+                        for chunk in response.iter_bytes(8192):
+                            if len(body) + len(chunk) > 131072:
+                                break
+                            body.extend(chunk)
+                        else:
+                            schema = json.loads(body)
+                            if (isinstance(schema, dict) and schema.get('servers') == [{'url':expected}]
+                                    and '/v1/privacy_status' in schema.get('paths', {})):
+                                return None
+                        reason = 'unexpected discovery document'
+                    else:
+                        reason = 'HTTP ' + str(response.status_code)
+                        if response.headers.get('cf-mitigated') == 'challenge':
+                            return reason + ' browser challenge'
+                        if response.status_code == 429:
+                            return reason + ' rate limit'
+            except httpx.TimeoutException:
+                reason = 'network timeout'
+            except httpx.ConnectError as error:
+                # Classify DNS and TLS without exposing the hostname or exception.
+                cause = str(error).lower()
+                if 'certificate' in cause or 'ssl' in cause:
+                    reason = 'TLS validation failed'
+                elif any(term in cause for term in ('nodename','name resolution','name or service','name not known')):
+                    reason = 'DNS unavailable'
+                else:
+                    reason = 'connection unavailable'
+            except httpx.HTTPError:
+                reason = 'HTTP transport failed'
+            except (ValueError, TypeError):
+                reason = 'unexpected discovery document'
+            left = deadline - time.monotonic()
+            if left <= 0 or cancelled.wait(min(1.25, left)):
+                break
+    return 'workspace closed' if cancelled.is_set() else reason
+
+
+def verify_route(origin, cancelled, *, transport=None, seconds=55):
+    """Require the public HTTPS URL to serve this bridge's exact discovery document."""
     from .core import Denied
     if not QUICK_ORIGIN.fullmatch(origin):
-        raise Denied('The temporary link format was invalid.')
-    with httpx.Client(trust_env=False, timeout=3, follow_redirects=False) as client:
-        for _ in range(12):
-            if cancelled.is_set():
-                break
-            try:
-                with client.stream('GET', origin + '/openapi.json') as response:
-                    if response.status_code == 200:
-                        buf = bytearray()
-                        for chunk in response.iter_bytes(8192):
-                            if len(buf) + len(chunk) > 131072:
-                                break
-                            buf.extend(chunk)
-                        else:
-                            spec = json.loads(buf)
-                            if (isinstance(spec, dict) and spec.get('servers') == [{'url':origin}]
-                                and '/v1/privacy_status' in spec.get('paths', {})):
-                                return
-            except (httpx.HTTPError, ValueError, TypeError):
-                pass
-            if cancelled.wait(0.6):
-                break
-    raise Denied('Cloudflare could not reach this Airlock workspace. Check your internet connection and try again.')
+        raise Denied('Cloudflare returned an invalid temporary hostname.')
+    reason = probe_schema(origin, origin, cancelled, seconds=seconds, transport=transport)
+    if reason:
+        raise Denied('Local discovery passed. Public Cloudflare discovery failed (' + reason + '). '
+                     'Try a different network or a named HTTPS bridge.')
+
+
+def helper_error(line, current):
+    """Map known helper-side failures to safe messages. Do not retain log lines."""
+    lower = line.lower()
+    code = re.search(r'(?:provisioning failed with status|status code|statuscode)[:= ]+([1-5][0-9]{2})', lower)
+    if code:
+        return 'Cloudflare link provisioning returned HTTP ' + code[1] + '.'
+    if 'failed to request quick tunnel' in lower or 'failed to unmarshal quick tunnel' in lower:
+        return 'Cloudflare could not provision a temporary hostname.'
+    if 'not defined' in lower and 'flag' in lower:
+        return 'The installed helper rejected the tunnel settings.'
+    if 'dial' in lower or 'handshake' in lower or 'tunnel connection failure' in lower:
+        return 'Cloudflare edge connection failed. Allow outbound TCP port 7844 or use another network.'
+    return current
 
 
 class QuickTunnel:
-    def __init__(self, cache, *, prepare=prepare_helper, launch=launch_guard, timeout=25):
+    def __init__(self, cache, *, prepare=prepare_helper, launch=launch_guard, timeout=75):
         self.cache, self.prepare, self.launch, self.timeout = Path(cache), prepare, launch, timeout
         self.lock = threading.Lock()
         self.cancel = threading.Event()
@@ -147,18 +192,35 @@ class QuickTunnel:
         work = tempfile.TemporaryDirectory(prefix='session-', dir=self.cache)
         process = None
         try:
-            binary = self.prepare(self.cache, Path(work.name), self.cancel)
+            try:
+                binary = self.prepare(self.cache, Path(work.name), self.cancel)
+            except Denied:
+                raise
+            except Exception as error:
+                import httpx
+                if isinstance(error, httpx.HTTPStatusError):
+                    raise Denied(f'Cloudflare helper download returned HTTP {error.response.status_code}.') from None
+                if isinstance(error, httpx.HTTPError):
+                    raise Denied('The verified helper download could not reach GitHub over HTTPS.') from None
+                raise Denied('The verified helper could not be unpacked on this Mac. Check available disk space and reopen Airlock.') from None
             with self.lock:
                 if self.cancel.is_set():
                     raise Denied('Link setup stopped.')
                 process = self.process = self.launch(binary, port, Path(work.name))
             ready = queue.Queue(maxsize=1)
+            status = {'origin':None, 'connected':False, 'error':None}
             def monitor():
                 try:
-                    for line in process.stdout:
-                        m = BANNER.search(line[:4096].decode('utf8', errors='replace'))
-                        if m:
-                            try: ready.put_nowait(m[1])
+                    for log_entry in process.stdout:
+                        line = log_entry[:4096].decode('utf8', errors='replace')
+                        match = BANNER.search(line)
+                        if match:
+                            status['origin'] = match[1]
+                        if 'registered tunnel connection' in line.lower():
+                            status['connected'] = True
+                        status['error'] = helper_error(line, status['error'])
+                        if status['origin'] and status['connected']:
+                            try: ready.put_nowait(status['origin'])
                             except queue.Full: pass
                     process.wait()
                 finally:
@@ -173,7 +235,10 @@ class QuickTunnel:
             except queue.Empty:
                 origin = None
             if not origin or self.cancel.is_set():
-                raise Denied('Cloudflare could not open a temporary link. Check the network and try again.')
+                phase = ('Cloudflare assigned a hostname but the edge connection did not register. '
+                         'Allow outbound TCP port 7844 or try a different network.' if status['origin'] else
+                         'The helper did not receive a temporary hostname from Cloudflare.')
+                raise Denied(status['error'] or phase)
             return origin
         except BaseException:
             self.stop()

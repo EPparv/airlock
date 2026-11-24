@@ -130,14 +130,14 @@ def test_guard_uses_fixed_target_and_kills_child_when_owning_process_closes(tmp_
             'import json, os, signal, sys, time\nfrom pathlib import Path\n' +
             f'Path({str(marker)!r}).write_text(json.dumps([sys.argv[1:], sorted(os.environ)]))\n' +
             f'signal.signal(signal.SIGTERM, lambda *_: (Path({str(stopped)!r}).touch(), sys.exit(0)))\n' +
-            f'print("info | {ORIGIN} |", file=sys.stderr, flush=True)\nwhile True: time.sleep(.1)\n')
+            f'print("info | {ORIGIN} |", file=sys.stderr, flush=True)\nprint("Registered tunnel connection", file=sys.stderr, flush=True)\nwhile True: time.sleep(.1)\n')
         binary.chmod(0o700)
         return binary
     tunnel = quick_tunnel.QuickTunnel(tmp_path/'cache', prepare=prepare)
     done = threading.Event()
     assert tunnel.start(9874, lambda _: done.set()) == ORIGIN
     args, env = json.loads(marker.read_text())
-    assert args[-2:] == ['--url','http://127.0.0.1:9874'] and '127.0.0.1:0' in args
+    assert args[-2:] == ['--url','http://127.0.0.1:9874'] and '127.0.0.1:0' in args and args[args.index('--protocol')+1] == 'http2'
     assert not any(key.startswith(('TUNNEL_', 'NEAR_', 'OPENAI_')) for key in env)
     tunnel.stop()
     assert done.wait(5) and stopped.exists()
@@ -164,3 +164,48 @@ def test_official_helper_checksum_install_and_offline_version(tmp_path):
     result = subprocess.run([str(binary), '--version'], capture_output=True, text=True, check=True, timeout=8,
                             env={'HOME':str(work), 'PATH':'/usr/bin:/bin'})
     assert 'cloudflared version ' + quick_tunnel.VERSION in result.stdout
+
+
+def test_registered_edge_and_public_discovery_through_real_loopback(bundle):
+    import httpx
+    import socket
+    from privacy_layer.remote_clients import LoopbackListener, set_active_gateway
+
+    g = bundle[0]
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    with g.store.transaction() as data:
+        data['remote_bridge'] = {'enabled':False, 'port':port}
+    requests = []
+    class Edge(httpx.BaseTransport):
+        def __init__(self):
+            self.http = httpx.HTTPTransport()
+        def handle_request(self, request):
+            assert str(request.url) == ORIGIN + '/openapi.json'
+            requests.append(request.url.path)
+            # Simulate TLS termination. Forward the original public Host.
+            url = request.url.copy_with(scheme='http', host='127.0.0.1', port=port)
+            return self.http.handle_request(httpx.Request('GET', url, headers=request.headers))
+        def close(self):
+            self.http.close()
+    listener = LoopbackListener()
+    remote = RemoteClients(g, listener, tunnel_factory=Tunnel,
+        verify=lambda host, event:quick_tunnel.verify_route(host, event, transport=Edge(), seconds=2))
+    set_active_gateway(lambda:g)
+    try:
+        assert remote.start_temporary(True)['verified']
+        assert requests == ['/openapi.json']
+    finally:
+        remote.close()
+        set_active_gateway(lambda:None)
+
+
+@pytest.mark.parametrize('status,expected', [(429,'rate limit'),(502,'HTTP 502'),(403,'HTTP 403')])
+def test_safe_quick_link_diagnostics(status, expected):
+    import httpx
+    edge = httpx.MockTransport(lambda _: httpx.Response(status, text='PRIVATE_ERROR_OUTPUT'))
+    with pytest.raises(Denied, match=expected) as trouble:
+        quick_tunnel.verify_route(ORIGIN, threading.Event(), transport=edge, seconds=0)
+    assert ORIGIN not in str(trouble.value) and 'PRIVATE_ERROR_OUTPUT' not in str(trouble.value)
+    assert quick_tunnel.helper_error('quick tunnel provisioning failed with status 429: private data',None) == 'Cloudflare link provisioning returned HTTP 429.'

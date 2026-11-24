@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse, Response
 from .agent_memory import AgentMemory
 from .core import Denied
 from .setup import private_write
-from .quick_tunnel import QuickTunnel, verify_route
+from .quick_tunnel import QuickTunnel, probe_schema, verify_route
 
 VENDORS = {'muse': 'Meta Muse', 'manus': 'Manus', 'chatgpt': 'ChatGPT', 'ironclaw': 'IronClaw', 'custom': 'Custom remote MCP'}
 MCP_VENDORS = {'manus', 'ironclaw', 'custom'}
@@ -217,6 +217,11 @@ class LoopbackListener:
         self.lock = threading.Lock()
         self.server = self.thread = self.port = None
 
+    def verify_local(self, origin, cancel):
+        reason = probe_schema(f'http://127.0.0.1:{self.port}', origin, cancel, seconds=4)
+        if reason:
+            raise Denied('The local agent bridge failed its discovery check (' + reason + '). Reopen Airlock.')
+
     def stop(self):
         with self.lock:
             if self.thread and self.thread.is_alive():
@@ -333,6 +338,7 @@ class RemoteClients:
                 with self.g.store.transaction() as data:
                     data['remote_bridge'] = {'origin':origin, 'enabled':True, 'port':state['port'],
                                              'mode':'temporary', 'verified':False}
+            self.listener.verify_local(origin, tunnel.cancel)
             self.verify(origin, tunnel.cancel)
             with self.lock:
                 if self.closed or self.tunnel is not tunnel or tunnel.cancel.is_set():

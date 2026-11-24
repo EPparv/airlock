@@ -135,3 +135,29 @@ def test_phone_dedicated_host_and_browser_boundaries(phone):
     assert client.post('/phone/status',json={},headers={**headers,'Origin':ORIGIN,'Sec-Fetch-Site':'cross-site'}).status_code==403
     assert client.post('/phone/status?test=1',json={},headers={**headers,'Origin':ORIGIN}).status_code==400
     assert client.post('/phone/context',json={'query':'x'*16500},headers={**headers,'Origin':ORIGIN}).status_code==413
+
+
+def test_phone_revocation_during_a_read_withholds_the_finished_result(phone,monkeypatch):
+    g,_,_,owner,_,client = phone
+    identifier,_,session = pair(phone)
+    call = g.call
+    def revoke_before_delivery(*args):
+        result = call(*args)
+        owner.owner('phone-revoke',{'id':identifier})
+        return result
+    monkeypatch.setattr(g,'call',revoke_before_delivery)
+    response = post(client,'context',{'query':'Cypress'},session)
+    assert response.status_code == 403
+    assert 'Thursday' not in response.text and 'robin' not in response.text
+
+
+def test_phone_access_is_tied_to_the_configured_tunnel_origin(phone):
+    g,_,_,owner,live,client=phone
+    _,code,session=pair(phone)
+    with g.store.transaction() as state:
+        state['remote_bridge']['origin']='https://second.example.net'
+    newer=TestClient(BridgeApp(lambda:live[0],9874),base_url='https://second.example.net')
+    for browser,origin in ((newer,'https://second.example.net'),(client,ORIGIN)):
+        r=browser.post('/phone/context',json={'query':'Cypress'},headers={
+            'Origin':origin,'Authorization':'Bearer '+session})
+        assert r.status_code in (401,403) and 'Thursday' not in r.text

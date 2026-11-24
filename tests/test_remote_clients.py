@@ -22,6 +22,9 @@ class FakeListener:
     def is_alive(self):
         return True
 
+    def verify_local(self, origin, cancel):
+        pass
+
     def stop(self):
         self.thread = None
 

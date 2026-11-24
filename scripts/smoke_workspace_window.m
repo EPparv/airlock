@@ -27,6 +27,12 @@ int main(int argc,const char *argv[]) {
         NSApplication *app=NSApplication.sharedApplication;
         [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [app finishLaunching];
+        NSString *sample=@"https://airlock.example.test/phone#pair=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        NSData *png=AirlockPhonePairingPNG(sample);
+        require(png.length>100,@"pairing QR generated on Mac");
+        CIDetector *scanner=[CIDetector detectorOfType:CIDetectorTypeQRCode context:nil options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
+        NSArray *codes=[scanner featuresInImage:[CIImage imageWithData:png]];
+        require(codes.count==1 && [[(CIQRCodeFeature *)codes.firstObject messageString] isEqual:sample],@"camera-readable complete pairing URL");
         PrivacyLauncher *launcher=[PrivacyLauncher new];
         [launcher applicationDidFinishLaunching:nil];
         require(waitFor(^BOOL{return launcher.panel!=nil;},25),@"authenticated native window");

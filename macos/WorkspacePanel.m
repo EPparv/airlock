@@ -2,6 +2,22 @@
 #import <WebKit/WebKit.h>
 #import <CoreImage/CoreImage.h>
 
+// Build the pairing image entirely on the Mac. The empty white border is part of the QR.
+static NSData *AirlockPhonePairingPNG(NSString *url) {
+    CIFilter *filter=[CIFilter filterWithName:@"CIQRCodeGenerator"];
+    [filter setValue:[url dataUsingEncoding:NSUTF8StringEncoding] forKey:@"inputMessage"];
+    [filter setValue:@"M" forKey:@"inputCorrectionLevel"];
+    CIImage *qr=filter.outputImage;
+    if (!qr) return nil;
+    CGAffineTransform scale={6,0,0,6,0,0};
+    CIImage *pixels=[[qr imageBySamplingNearest] imageByApplyingTransform:scale];
+    CGRect frame=pixels.extent;
+    frame.origin.x-=24; frame.origin.y-=24; frame.size.width+=48; frame.size.height+=48;
+    CIImage *white=[[CIImage imageWithColor:[CIColor colorWithRed:1 green:1 blue:1]] imageByCroppingToRect:frame];
+    NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithCIImage:[pixels imageByCompositingOverImage:white]];
+    return [bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+
 // The owner interface is a single, ephemeral web view on the running service's port.
 @interface AirlockPanel : NSObject <WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply>
 @property(nonatomic,strong) WKWebView *view;
@@ -97,13 +113,7 @@
             parts.user || parts.password || parts.query || ![parts.fragment hasPrefix:@"pair="] || parts.fragment.length!=48) {
             reply(nil,@"Create a new pairing link."); return;
         }
-        CIFilter *filter=[CIFilter filterWithName:@"CIQRCodeGenerator"];
-        [filter setValue:[url dataUsingEncoding:NSUTF8StringEncoding] forKey:@"inputMessage"];
-        [filter setValue:@"M" forKey:@"inputCorrectionLevel"];
-        CIImage *qr=filter.outputImage;
-        if (!qr) { reply(nil,@"Copy the one-time link to Safari."); return; }
-        NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithCIImage:qr];
-        NSData *png=[bitmap representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+        NSData *png=AirlockPhonePairingPNG(url);
         reply([png base64EncodedStringWithOptions:0], png ? nil : @"Copy the one-time link to Safari.");
     } else if ([action isEqual:@"save-file"]) {
         NSString *name=value[@"name"], *content=value[@"content"];

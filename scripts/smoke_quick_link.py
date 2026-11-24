@@ -10,7 +10,7 @@ import tempfile
 
 import httpx
 
-from privacy_layer.core import Gateway, EncryptedStore
+from privacy_layer.core import Denied, Gateway, EncryptedStore
 from privacy_layer.remote_clients import RemoteClients, set_active_gateway
 from privacy_layer.sources import LocalSources
 
@@ -56,6 +56,10 @@ def run():
                 stage = 'check revocation'
                 gateway.revoke(rest['id'])
                 assert client.post('/v1/privacy_status', headers=auth, json={}).status_code == 401
+        except Denied as error:
+            # Bridge setup provides only allowlisted reasons and numeric HTTP codes.
+            print('Temporary HTTPS verification: '+str(error), file=sys.stderr)
+            return 1
         except Exception:
             # Keep assigned hostnames, credentials and any remote error bodies out of CI logs.
             print('Temporary HTTPS verification failed at '+stage+'.', file=sys.stderr)
