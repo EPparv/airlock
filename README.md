@@ -16,6 +16,8 @@ Only tools routed through Airlock use these policies. Free-text detection is bes
 
 ## Test on iPhone
 
+Open [the iPhone sample](https://try-airlock.parv223885.chatgpt.site/#sample) in Safari. Switch between the writing and planning agents to see which fictional memory each can read. Revoke one agent and switch back to the other. The sample runs in memory and resets when you leave. Anyone with the link can try it without an account.
+
 Open the iPhone workspace in Safari to create a passphrase and test two local agents. Its vault belongs to that Safari origin and device. Clearing website data removes the vault. To reach the Mac vault from your phone, open **Connect agent → Pair iPhone** on the Mac, enable the HTTPS bridge, select records, and scan the one-time code. You can request an assigned action from your phone and approve it on your Mac.
 
 ## Open and run on Mac

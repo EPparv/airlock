@@ -2,6 +2,7 @@
 (() => {
   const api = PhoneVault, root = document.querySelector('#app'), notice = document.querySelector('#notice');
   let vault = null, page = 'home', selected = '', request = 0, timer, busy = false, hiddenSince = 0;
+  let sample = null;
   function node(tag, text, cls) {
     const n = document.createElement(tag);
     if (text !== undefined) n.textContent = text;
@@ -37,9 +38,9 @@
   function link(host, title, dest, ref) { host.append(button(title, () => go(dest, ref), 'row')); }
   const state = () => vault.state;
   const lookup = (key, ref = selected) => state()[key].find(row => row.id === ref);
-  const needsVault = key => !['home','privacy','pair'].includes(key);
+  const needsVault = key => !['home','privacy','pair','sample'].includes(key);
   const pages = {
-    home: ['Airlock'], agents: ['Connect agent','home'], newAgent:['New test session','agents'],
+    home: ['Airlock'], sample: ['Sample workspace'], agents: ['Connect agent','home'], newAgent:['New test session','agents'],
     session:['Agent access','agents'], try:['Test session','session'], scope:['Shared records','session'],
     revoke:['Revoke session','session'], context:['Context & memory','home'], memories:['Memories','context'],
     add:['Add memory','memories'], memory:['Memory','memories'], remove:['Remove memory','memory'],
@@ -49,6 +50,33 @@
   function header(title, parent) {
     if (parent) root.append(button('‹ ' + pages[parent][0], () => go(parent), 'back'));
     root.append(node('h1', title)); document.title = title === 'Airlock' ? title : title + ' · Airlock';
+  }
+  function startSample() {
+    vault = null; sample = api.createSample(); return go('sample', '');
+  }
+  function exitSample() {
+    if (location.hash === '#sample') history.replaceState(null, '', location.pathname + location.search);
+    sample = null; return go('home', '');
+  }
+  async function showSample(ref) {
+    const demo = sample;
+    const agent = demo.agents.find(a => a.id === ref) || demo.agents[0];
+    info(root, 'Switch agents to see which memories each can read. Changes in this sample last until you leave.');
+    const choices = node('div', undefined, 'agent-choices');
+    choices.setAttribute('role', 'group'); choices.setAttribute('aria-label', 'Test agent');
+    for (const a of demo.agents) {
+      const choice = button(a.name, () => go('sample', a.id), 'choice');
+      choice.setAttribute('aria-pressed', String(a.id === agent.id)); choices.append(choice);
+    }
+    root.append(choices, node('h2', 'What this agent can read'));
+    const result = node('section'); result.setAttribute('aria-live','polite'); root.append(result);
+    try {
+      for (const row of await demo.read(agent.id)) result.append(node('p', row, 'result'));
+    } catch (error) {
+      if (!agent.revoked) throw error;
+      result.append(node('p', 'Access revoked.', 'result')); return;
+    }
+    result.append(button('Revoke access', () => { demo.revoke(agent.id); return go('sample', agent.id); }, 'danger'));
   }
   async function go(key, ref = selected) {
     if (!pages[key]) key = 'home';
@@ -72,12 +100,16 @@
       }, 'primary'));
       return;
     }
+    if (key === 'sample') root.append(button('Exit sample', exitSample, 'back'));
     header(pages[key][0], pages[key][1]);
     if (key === 'home') {
       const mark = node('span', undefined, 'mark'); mark.setAttribute('aria-hidden','true');
       root.querySelector('h1').prepend(mark);
       const nav = node('nav'); root.append(nav);
       link(nav, 'Connect agent','agents'); link(nav,'Context & memory','context'); link(nav,'Privacy & connections','privacy');
+      root.append(button('Try a sample', startSample, 'sample-entry'));
+    } else if (key === 'sample') {
+      await showSample(ref);
     } else if (key === 'agents') {
       info(root, 'Test what different agents can read on this iPhone. Each session starts with no shared records.');
       const g = group();
@@ -179,12 +211,12 @@
       info(root, 'Scan the pairing code with your iPhone camera, or open the one-time link in Safari. It opens the workspace served by your Mac. Memories saved in this iPhone vault stay separate.');
     }
   }
-  function lock() { vault = null; selected = ''; return go('home'); }
+  function lock() { vault = null; sample = null; selected = ''; return go('home'); }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) hiddenSince = Date.now();
     else if (vault && hiddenSince && Date.now() - hiddenSince > 60000) lock();
   });
   window.addEventListener('pagehide', lock);
   window.addEventListener('pageshow', e => { if (e.persisted) lock(); });
-  go('home').catch(e => say(e.message));
+  (location.hash === '#sample' ? startSample() : go('home')).catch(e => say(e.message));
 })();

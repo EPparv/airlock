@@ -146,15 +146,34 @@
     }
     return out + text.slice(last);
   }
+  function selectedRecords(state, a) {
+    return Promise.all(state.records.filter(r => !r.private && a.selected.includes(r.id))
+      .map(r => filtered(r.text, state, a)));
+  }
+  function createSample() {
+    const state = empty();
+    const writing = addRecord(state, 'Send the two-paragraph launch update to editor@example.com.');
+    const planning = addRecord(state, 'The launch check-in is Friday at 10 am.');
+    const writer = addAgent(state, 'Writing agent'), planner = addAgent(state, 'Planning agent');
+    setScope(state, writer, [writing]); setScope(state, planner, [planning]);
+    return {
+      agents: state.agents,
+      async read(reference) {
+        const rows = await selectedRecords(state, agent(state, reference));
+        agent(state, reference);
+        return rows;
+      },
+      revoke: reference => revoke(state, reference)
+    };
+  }
   async function read(vault, reference) {
     const a = agent(vault.state, reference);
     const persist = await envelope();
     if (!persist || persist.rev !== vault.rev) throw Error('This vault changed in another tab. Lock and reopen it.');
     const revision = vault.rev;
-    const permitted = vault.state.records.filter(r => !r.private && a.selected.includes(r.id));
-    const items = await Promise.all(permitted.map(r => filtered(r.text, vault.state, a)));
+    const items = await selectedRecords(vault.state, a);
     if (vault.rev !== revision || (await envelope())?.rev !== revision) throw Error('The permissions changed. Try again.');
     return items;
   }
-  globalThis.PhoneVault = {exists:async () => !!(await envelope()), open, changed, addRecord, addAgent, setScope, revoke, propose, decide, read, filtered};
+  globalThis.PhoneVault = {exists:async () => !!(await envelope()), open, changed, addRecord, addAgent, setScope, revoke, propose, decide, read, filtered, createSample};
 })();

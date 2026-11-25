@@ -22,6 +22,14 @@ if (!isSecureContext || location.protocol !== 'https:' || document.documentEleme
   throw Error('Phone viewport or HTTPS is unavailable.');
 }
 await title('Airlock');
+await press('Try a sample'); await title('Sample workspace');
+await seen('two-paragraph'); await seen('[email-');
+if (document.querySelector('main').innerText.includes('editor@example.com')) throw Error('Unfiltered sample email.');
+await press('Planning agent'); await seen('Friday at 10 am');
+if (document.querySelector('main').innerText.includes('two-paragraph')) throw Error('Planning session read the writing memory.');
+await press('Revoke access'); await seen('Access revoked.');
+await press('Writing agent'); await seen('two-paragraph');
+await press('Exit sample'); await title('Airlock');
 if (phase === 2) {
   await press('Context & memory'); await until(() => findButton('Unlock vault'), 'existing vault');
   write('Passphrase','incorrect phrase'); await press('Unlock vault');
