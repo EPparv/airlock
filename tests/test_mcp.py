@@ -1,8 +1,10 @@
 import asyncio
+from contextlib import ExitStack
 import json
 import os
 import plistlib
 import shutil
+import select
 import socket
 import subprocess
 import sys
@@ -20,8 +22,35 @@ from starlette.testclient import TestClient
 from privacy_layer.server import mcp_app,owner_app
 
 
+class _CodexStdioRPC:
+    def __init__(self, process):
+        self.process = process
+        self.buffer = b''
+
+    def send(self, message):
+        self.process.stdin.write(json.dumps(message).encode() + b'\n')
+        self.process.stdin.flush()
+
+    def call(self, number, method, params):
+        self.send({'id':number, 'method':method, 'params':params})
+        deadline = time.monotonic() + 20
+        while True:
+            if b'\n' not in self.buffer:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0 and select.select([self.process.stdout], [], [], remaining)[0], f'Codex timed out at {method}'
+                data = os.read(self.process.stdout.fileno(), 65536)
+                assert data, f'Codex exited at {method} (status {self.process.poll()})'
+                self.buffer += data
+                continue
+            line, self.buffer = self.buffer.split(b'\n', 1)
+            reply = json.loads(line)
+            if reply.get('id') == number:
+                return reply
+
+
+@pytest.mark.parametrize('mode', ['cold-stdio', 'running-socket'])
 @pytest.mark.skipif(not os.environ.get('AIRLOCK_TEST_CODEX'), reason='Requires an explicitly supplied Codex binary')
-def test_installed_codex_daemon_reloads_scoped_connection(bundle, serving, tmp_path, monkeypatch):
+def test_installed_codex_daemon_reloads_scoped_connection(bundle, serving, tmp_path, monkeypatch, mode):
     """Use a real, disposable vendor daemon and its actual MCP tool-call API without a model turn."""
     from privacy_layer import clients
     binary = Path(os.environ['AIRLOCK_TEST_CODEX']).resolve(strict=True)
@@ -54,50 +83,56 @@ def test_installed_codex_daemon_reloads_scoped_connection(bundle, serving, tmp_p
         monkeypatch.setattr(clients, 'ROOT', root)
         control = profile/'app-server-control/app-server-control.sock'
 
-        async def check():
-            daemon = await asyncio.create_subprocess_exec(str(binary), 'app-server', '--listen','unix://',
-                cwd=home, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            proxy = None
-            try:
+        selected = next(r for r in clients.connection_context(gateway)['records'] if r['ref']=='skills:s1')
+        scope = clients.selected_scope(gateway,{selected['ref']:selected['text_hash']})
+        def install():
+            saved = clients.connect(gateway, agent='codex', approved=True, home=home, scope=scope)
+            assert saved['installed'] and Path(saved['path']) == profile/'config.toml'
+            return saved
+
+        with ExitStack() as processes:
+            def launch(*arguments):
+                child = subprocess.Popen([str(binary), *arguments], cwd=home, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                processes.enter_context(child)
+                processes.callback(lambda: child.kill() if child.poll() is None else None)
+                return child
+
+            if mode == 'cold-stdio':
+                saved = install()
+                rpc = _CodexStdioRPC(launch('app-server','--stdio'))
+            else:
+                daemon = launch('app-server','--listen','unix://')
                 for _ in range(200):
-                    if control.is_socket() or daemon.returncode is not None: break
-                    await asyncio.sleep(.05)
-                assert control.is_socket(), 'The supplied Codex daemon did not expose its control socket.'
-                proxy = await asyncio.create_subprocess_exec(str(binary),'app-server','proxy','--sock',str(control),
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=home, limit=2*1024*1024)
-                async def request(number, method, params):
-                    proxy.stdin.write((json.dumps({'id':number,'method':method,'params':params})+'\n').encode())
-                    await proxy.stdin.drain()
-                    while True:
-                        line = await proxy.stdout.readline()
-                        assert line, 'Codex closed the test proxy.'
-                        reply = json.loads(line)
-                        if reply.get('id')==number: return reply
-                assert 'result' in await request(1,'initialize',{'clientInfo':{'name':'airlock_test','version':'1'},
-                    'capabilities':{'experimentalApi':True}})
-                proxy.stdin.write(b'{"method":"initialized"}\n')
-                initial=(await request(2,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'}))['result']['data']
+                    if control.is_socket() or daemon.poll() is not None:
+                        break
+                    time.sleep(.05)
+                assert control.is_socket(), f'Codex did not expose its control socket (status {daemon.poll()})'
+                physical = clients._codex_socket(control)
+                assert physical, 'Codex started, but the profile socket identity could not be verified.'
+                proxy = launch('app-server','proxy','--sock',str(physical))
+                rpc = clients._CodexSocketRPC(proxy, timeout=55, max_bytes=4*1024*1024)
+            def result(number, method, params):
+                reply = rpc.call(number, method, params)
+                assert 'result' in reply, f"Codex rejected {method} (error code {reply.get('error',{}).get('code')})"
+                return reply['result']
+            result(1,'initialize',{'clientInfo':{'name':'airlock_test','version':'1'},'capabilities':{'experimentalApi':True}})
+            rpc.send({'method':'initialized'})
+            if mode == 'running-socket':
+                initial = result(2,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'})['data']
                 assert not any(r['name']=='airlock' for r in initial)
-                selected=next(r for r in clients.connection_context(gateway)['records'] if r['ref']=='skills:s1')
-                scope=clients.selected_scope(gateway,{selected['ref']:selected['text_hash']})
-                saved=await asyncio.to_thread(clients.connect,gateway,agent='codex',approved=True,home=home,scope=scope)
-                assert saved['reload_requested'] and Path(saved['path'])==profile/'config.toml'
-                current=(await request(3,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'}))['result']['data']
-                assert 'get_private_context' in next(r['tools'] for r in current if r['name']=='airlock')
-                thread=await request(4,'thread/start',{'cwd':str(home),'ephemeral':True,'approvalPolicy':'never',
-                    'sandbox':'read-only','model':'fixture','modelProvider':'fixture'})
-                params={'threadId':thread['result']['thread']['id'],'server':'airlock','tool':'get_private_context',
-                        'arguments':{'query':''}}
-                received=(await request(5,'mcpServer/tool/call',params))['result']
-                assert not received.get('isError') and 'Be concise' in str(received) and 'Hyderabad' not in str(received)
-                gateway.revoke(saved['id'])
-                denied=await request(6,'mcpServer/tool/call',params)
-                assert 'error' in denied or denied['result'].get('isError')
-            finally:
-                for child in (proxy, daemon):
-                    if child and child.returncode is None:
-                        child.kill(); await child.wait()
-        asyncio.run(asyncio.wait_for(check(), timeout=60))
+                saved = install()
+                assert saved['reload_requested'], 'The already-running Codex daemon did not acknowledge the Airlock config reload.'
+            servers = result(3,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'})['data']
+            assert any(r['name']=='airlock' and 'get_private_context' in r['tools'] for r in servers), 'Codex did not discover the configured Airlock tool.'
+            thread = result(4,'thread/start',{'cwd':str(home),'ephemeral':True,'approvalPolicy':'never',
+                                              'sandbox':'read-only','model':'fixture','modelProvider':'fixture'})
+            params = {'threadId':thread['thread']['id'],'server':'airlock','tool':'get_private_context','arguments':{'query':''}}
+            received = result(5,'mcpServer/tool/call',params)
+            assert not received.get('isError') and 'Be concise' in str(received) and 'Hyderabad' not in str(received)
+            gateway.revoke(saved['id'])
+            denied = rpc.call(6,'mcpServer/tool/call',params)
+            assert 'error' in denied or denied['result'].get('isError')
 
 EXPECTED_TOOLS = {'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result','list_private_actions','request_private_action','private_action_status','read_private_fields','prepare_private_followup','list_agent_handoffs','claim_agent_handoff','submit_agent_handoff','read_agent_handoff'}
 

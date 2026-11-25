@@ -107,4 +107,4 @@ jobs:
           export AIRLOCK_TEST_CODEX
           echo "Airlock found ${AIRLOCK_TEST_CODEX#"$AIRLOCK_VENDOR_BUNDLE"/} inside the signed app."
           "$AIRLOCK_TEST_CODEX" --version
-          python -m pytest -q -s tests/test_mcp.py::test_installed_codex_daemon_reloads_scoped_connection
+          python -m pytest -v -s tests/test_mcp.py::test_installed_codex_daemon_reloads_scoped_connection

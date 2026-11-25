@@ -272,13 +272,29 @@ def test_codex_refresh_never_starts_a_daemon_for_missing_or_linked_socket(tmp_pa
 def test_codex_refresh_requires_acknowledgment_from_the_existing_service(tmp_path):
     import sys
     script=tmp_path/'proxy-fixture.py'
-    script.write_text('import sys,json\n'
-        'read=lambda: json.loads(sys.stdin.readline())\n'
-        'assert read()["method"]=="initialize"\n'
-        'print(json.dumps({"id":1,"result":{}}),flush=True)\n'
-        'assert read()["method"]=="initialized"\n'
-        'assert read()["method"]=="config/mcpServer/reload"\n'
-        'print(json.dumps({"id":2,sys.argv[1]:{}}),flush=True)\n')
+    script.write_text("""
+import json, os, sys
+from wsproto import ConnectionType, WSConnection
+from wsproto.events import AcceptConnection, Ping, Request, TextMessage
+ws = WSConnection(ConnectionType.SERVER)
+def send(event):
+    os.write(1, ws.send(event))
+expected = iter(['initialize', 'initialized', 'config/mcpServer/reload'])
+while data := os.read(0, 8192):
+    ws.receive_data(data)
+    for event in ws.events():
+        if isinstance(event, Request):
+            assert event.target == '/'
+            send(AcceptConnection())
+        if isinstance(event, TextMessage):
+            request = json.loads(event.data)
+            assert request['method'] == next(expected)
+            if 'id' in request:
+                response = json.dumps({'id':request['id'], 'result' if request['id']==1 else sys.argv[1]:{}})
+                send(TextMessage(data=response[:7], message_finished=False))
+                send(Ping(payload=b'test'))
+                send(TextMessage(data=response[7:]))
+""")
     assert clients._refresh_codex_proxy([sys.executable,str(script),'result'])
     assert not clients._refresh_codex_proxy([sys.executable,str(script),'error'])
 

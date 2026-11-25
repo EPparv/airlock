@@ -5,6 +5,7 @@ the fixed privacy-layer server entry is installed; unrelated settings survive.
 """
 import copy
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,10 @@ import stat
 import subprocess
 import time
 import tomllib
+
+from wsproto import ConnectionType, WSConnection
+from wsproto.events import AcceptConnection, Ping, Pong, Request, TextMessage
+from wsproto.utilities import ProtocolError
 
 from .core import Denied, digest, suggest_redaction
 from .setup import ROOT, private_write, restore_dot
@@ -274,40 +279,71 @@ def connection_status(gateway, identifier):
             'shared_records':len((grant.get('scope') or {}).get('records',[]))}
 
 
+class _CodexSocketRPC:
+    """Codex's Unix proxy relays a WebSocket byte stream over its standard pipes."""
+    def __init__(self, proxy, timeout=1.5, max_bytes=65536):
+        self.proxy = proxy
+        self.deadline = time.monotonic() + timeout
+        self.max_bytes = max_bytes
+        self.ws = WSConnection(ConnectionType.CLIENT)
+        self._write(Request(host='localhost', target='/'))
+        self.events = self._read()
+        if not isinstance(next(self.events), AcceptConnection):
+            raise ValueError('Codex declined the WebSocket upgrade.')
+
+    def _write(self, event):
+        self.proxy.stdin.write(self.ws.send(event))
+        self.proxy.stdin.flush()
+
+    def _read(self):
+        received = 0
+        while True:
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.proxy.stdout], [], [], remaining)[0]:
+                raise TimeoutError('Codex control socket timed out.')
+            data = os.read(self.proxy.stdout.fileno(), 8192)
+            received += len(data)
+            if not data or received > self.max_bytes:
+                raise ValueError('Codex control stream ended or exceeded its response limit.')
+            self.ws.receive_data(data)
+            for event in self.ws.events():
+                if isinstance(event, Ping):
+                    self._write(event.response())
+                elif not isinstance(event, Pong):
+                    yield event
+
+    def send(self, message):
+        self._write(TextMessage(data=json.dumps(message)))
+
+    def call(self, number, method, params):
+        self.send({'id':number, 'method':method, 'params':params})
+        fragments = []
+        for event in self.events:
+            if not isinstance(event, TextMessage):
+                raise ValueError('Unexpected Codex control frame.')
+            fragments.append(event.data)
+            if event.message_finished:
+                reply = json.loads(''.join(fragments))
+                fragments.clear()
+                if not isinstance(reply, dict):
+                    raise ValueError('Unexpected Codex control message.')
+                if reply.get('id') == number:
+                    return reply
+
+
 def _refresh_codex_proxy(command):
-    """Ask an existing app-server to re-read its MCP config. Only the proxy is disposable."""
-    deadline = time.monotonic() + 1.5
+    """Reload only a running service. Discard the relay after its acknowledgment."""
     with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proxy:
         try:
-            init = {'id':1, 'method':'initialize','params':{'clientInfo':{'name':'airlock','version':'1'}}}
-            reload = {'id':2, 'method':'config/mcpServer/reload'}
-            buf = b''
-            for request in (init, reload):
-                if request is reload:
-                    proxy.stdin.write(b'{"method":"initialized"}\n')
-                proxy.stdin.write(json.dumps(request).encode() + b'\n')
-                proxy.stdin.flush()
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return False
-                    if b'\n' not in buf:
-                        if not select.select([proxy.stdout], [], [], remaining)[0]:
-                            return False
-                        data = os.read(proxy.stdout.fileno(), 8192)
-                        if not data or len(buf) + len(data) > 65536:
-                            return False
-                        buf += data
-                        continue
-                    line, buf = buf.split(b'\n', 1)
-                    response = json.loads(line)
-                    if not isinstance(response, dict):
-                        return False
-                    if response.get('id') == request['id']:
-                        if 'result' not in response or 'error' in response:
-                            return False
-                        break
-            return True
+            rpc = _CodexSocketRPC(proxy)
+            init = rpc.call(1, 'initialize', {'clientInfo':{'name':'airlock','version':'1'}})
+            if 'result' not in init or 'error' in init:
+                return False
+            rpc.send({'method':'initialized'})
+            reply = rpc.call(2, 'config/mcpServer/reload', {})
+            return 'result' in reply and 'error' not in reply
+        except (OSError, ValueError, ProtocolError):
+            return False
         finally:
             if proxy.poll() is None:
                 proxy.kill()
@@ -329,15 +365,33 @@ def codex_bundle_binary(bundle):
     return None
 
 
+def _codex_socket(advertised):
+    """Match the vendor's protected local endpoint for this exact Codex profile."""
+    uid = os.geteuid()
+    parent = advertised.parent.lstat()
+    if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != uid or parent.st_mode & 0o022:
+        return None
+    alias = advertised.lstat()
+    if not stat.S_ISLNK(alias.st_mode) or alias.st_uid != uid:
+        return None
+    directory = Path('/tmp').resolve()/f'codex-daemon-{uid}'
+    digest = hashlib.sha256(os.fsencode(advertised.parent.resolve()/advertised.name)).hexdigest()
+    physical = directory/digest
+    if advertised.readlink() != physical:
+        return None
+    protected, endpoint = directory.lstat(), physical.lstat()
+    if (not stat.S_ISDIR(protected.st_mode) or stat.S_IMODE(protected.st_mode) != 0o700 or protected.st_uid != uid
+            or not stat.S_ISSOCK(endpoint.st_mode) or stat.S_IMODE(endpoint.st_mode) != 0o600 or endpoint.st_uid != uid):
+        return None
+    return physical
+
+
 def refresh_codex(config, home):
     """Never start or restart a host, or select a socket from another profile."""
     profile = Path(config).parent
-    control = profile/'app-server-control'
-    sock = control/'app-server-control.sock'
     try:
-        directory, endpoint = control.lstat(), sock.lstat()
-        if (not stat.S_ISDIR(directory.st_mode) or directory.st_mode & 0o022 or directory.st_uid != os.getuid()
-                or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid()):
+        sock = _codex_socket(profile/'app-server-control/app-server-control.sock')
+        if sock is None:
             return False
         bundles = (apps/name for apps in (Path('/Applications'),Path(home or Path.home())/'Applications')
                    for name in ('ChatGPT.app','ChatGPT 2.app','Codex.app'))
