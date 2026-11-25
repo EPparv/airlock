@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import platform
 import plistlib
+import secrets
 import socket
 import ssl
 import subprocess
@@ -57,6 +58,20 @@ class TestServer(http.server.SimpleHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == getattr(self.server, 'pair_path', None):
+            with self.server.pair_lock:
+                if self.server.issue_pair is None:
+                    self.send_error(410)
+                    return
+                issue = self.server.issue_pair
+                self.server.issue_pair = None
+            path = issue()
+            self.send_response(302)
+            self.send_header('Location', path)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.end_headers()
+            return
         if urlsplit(self.path).path.startswith('/phone'):
             return self.proxy()
         return super().do_GET()
@@ -133,26 +148,34 @@ def check(include_companion):
             stack.callback(server.shutdown)
             env = {**os.environ, 'SIMCTL_CHILD_AIRLOCK_TEST_URL': origin+'/iphone/'}
             if include_companion:
-                with socket.socket() as probe:
-                    probe.bind(('127.0.0.1',0))
-                    server.fixture_port = probe.getsockname()[1]
-                pair_file = tmp/'pair.json'
-                fixture = subprocess.Popen([sys.executable, str(ROOT/'scripts/phone_fixture.py'), '--port', str(server.fixture_port),
-                    '--public-origin', origin, '--state', str(tmp/'phone-fixture'), '--pair-output', str(pair_file)],
-                    cwd=ROOT, env={**os.environ,'PYTHONPATH':str(ROOT)})
-                def stop_fixture():
-                    fixture.terminate()
-                    try: fixture.wait(timeout=5)
-                    except subprocess.TimeoutExpired: fixture.kill(); fixture.wait()
-                stack.callback(stop_fixture)
-                end = time.monotonic() + 35
-                while not pair_file.exists():
-                    if fixture.poll() is not None or time.monotonic() > end:
-                        raise RuntimeError('Personal Mac fixture failed to open.')
-                    time.sleep(.1)
-                path = json.loads(pair_file.read_text())['path']
-                if not path.startswith('/phone#pair='): raise RuntimeError('Unexpected pairing fixture URL.')
-                env['SIMCTL_CHILD_AIRLOCK_PAIR_URL'] = origin+path
+                # Mint the real five-minute grant only when WebKit opens the companion.
+                server.pair_path = '/fixture-pair/' + secrets.token_urlsafe(32)
+                server.pair_lock = threading.Lock()
+
+                def issue_pair():
+                    with socket.socket() as probe:
+                        probe.bind(('127.0.0.1',0))
+                        server.fixture_port = probe.getsockname()[1]
+                    pair_file = tmp/'pair.json'
+                    fixture = subprocess.Popen([sys.executable, str(ROOT/'scripts/phone_fixture.py'), '--port', str(server.fixture_port),
+                        '--public-origin', origin, '--state', str(tmp/'phone-fixture'), '--pair-output', str(pair_file)],
+                        cwd=ROOT, env={**os.environ,'PYTHONPATH':str(ROOT)})
+                    def stop_fixture():
+                        fixture.terminate()
+                        try: fixture.wait(timeout=5)
+                        except subprocess.TimeoutExpired: fixture.kill(); fixture.wait()
+                    stack.callback(stop_fixture)
+                    end = time.monotonic() + 35
+                    while not pair_file.exists():
+                        if fixture.poll() is not None or time.monotonic() > end:
+                            raise RuntimeError('Personal Mac fixture failed to open.')
+                        time.sleep(.1)
+                    path = json.loads(pair_file.read_text())['path']
+                    if not path.startswith('/phone#pair='): raise RuntimeError('Unexpected pairing fixture URL.')
+                    return path
+
+                server.issue_pair = issue_pair
+                env['SIMCTL_CHILD_AIRLOCK_PAIR_URL'] = origin + server.pair_path
             run('xcrun','simctl','install',simulator,app)
             run('xcrun','simctl','launch',simulator,BUNDLE,env=env)
             container = Path(output('xcrun','simctl','get_app_container',simulator,BUNDLE,'data'))
