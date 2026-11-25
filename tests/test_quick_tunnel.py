@@ -224,10 +224,16 @@ def test_dns_pending_exposes_one_page_and_unlocks_after_owner_redeems(bundle):
     path = item['url'].removeprefix(ORIGIN)
     assert re.fullmatch(r'/link-check/[0-9a-f]{32}', path) and item['attempts_left'] == 5
     check = remote.check
-    for vendor in ('chatgpt','muse','manus','custom'):
+    for vendor in ('muse','manus','ironclaw','custom'):
         with pytest.raises(Denied):
             remote.create(vendor,60,2)
+    # ChatGPT has its own stdio transport and no grant on this public bridge.
+    local = remote.create('chatgpt', 60, 3)
+    token_file = g.store.path.parent / 'clients' / ('chatgpt-' + local['id'] + '.token')
+    token = token_file.read_text()
+    assert 'remaining_calls' in g.call(token, 'privacy_status', {})
     with TestClient(BridgeApp(lambda:g,8794),base_url=ORIGIN) as c:
+        assert c.post('/v1/privacy_status', json={}, headers={'Authorization':'Bearer '+token}).status_code == 404
         for endpoint in ['/phone','/openapi.json','/api/state','/mcp','/v1/privacy_status']:
             assert c.get(endpoint).status_code == 404
         assert c.get(path).status_code == 403
@@ -247,6 +253,7 @@ def test_dns_pending_exposes_one_page_and_unlocks_after_owner_redeems(bundle):
         assert remote.state()['verification'] is None
         assert c.get(path,headers={'cf-ray':'aabbccddeeff0011-IAD'}).status_code == 404
         assert c.get('/openapi.json').json()['servers'] == [{'url':ORIGIN}]
+        assert not c.post('/v1/privacy_status', json={}, headers={'Authorization':'Bearer '+token}).is_success
         grant=remote.create('muse',60,2)
         assert c.post('/v1/privacy_status',json={},headers={'Authorization':'Bearer '+grant['credential']}).status_code == 200
     with pytest.raises(Denied):

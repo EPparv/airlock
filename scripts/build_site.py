@@ -17,7 +17,7 @@ MAC_ARCHIVE = 'Airlock_Mac_Latest.zip'
 SOURCE_DIRS = ('privacy_layer', 'ui', 'builtin', 'integrations', 'tests', 'macos', 'scripts', 'web', '.github', 'docs', 'vendor/private_ai')
 SOURCE_FILES = ('README.md', 'PUBLISHING.md', 'SHARED_MEMORY.md', 'LICENSE', 'pyproject.toml',
                 'requirements.lock', 'requirements-near.txt', 'Run-Airlock.command',
-                'Run-NEAR-Demo.command', '.gitignore', 'netlify.toml', 'vendor/README.md')
+                'Run-NEAR-Demo.command', '.gitignore', 'netlify.toml', 'vendor/README.md', 'web/iphone/apple-touch-icon.png')
 ALLOWED_SUFFIXES = {'.py', '.js', '.cjs', '.mjs', '.html', '.css', '.svg', '.md', '.toml',
                     '.example', '.lock', '.swift', '.m', '.sh', '.yml', '.yaml', '.patch'}
 IGNORED_PARTS = {'__pycache__', '.pytest_cache', 'node_modules', '.venv', '.private', '.agent-demo', '.near-demo', '.git'}
@@ -50,7 +50,7 @@ def build(mac_archive=None, mac_report=None):
     out.mkdir()
     web = ROOT / 'web'
     phone = web / 'iphone'
-    phone_files = {'index.html', 'style.css', 'vault.js', 'app.js'}
+    phone_files = {'index.html', 'style.css', 'vault.js', 'app.js', 'apple-touch-icon.png'}
     if phone.is_symlink() or not phone.is_dir() or {p.name for p in phone.iterdir()} != phone_files:
         raise ValueError('Unexpected iPhone web assets')
     (out / 'iphone').mkdir()
@@ -92,9 +92,10 @@ def build(mac_archive=None, mac_report=None):
         metadata.update(kind='mac-app-and-source',mac=dict(archive=MAC_ARCHIVE,sha256=mac_hash,notarized=notarized,runtime='installed-automatically-on-first-open'))
         (out/'release.json').write_text(json.dumps(metadata,indent=2)+'\n')
         with (out/'SHA256SUMS').open('a') as sums:sums.write(f'{mac_hash}  {MAC_ARCHIVE}\n')
+        latest_notes = (ROOT / 'docs/RELEASE_NOTES.md').read_text().partition('\n# ')[0].strip()
         update=dict(schema=1,version=VERSION,build=BUILD,commit=commit,archive=MAC_ARCHIVE,
                     sha256=mac_hash,size=(out/MAC_ARCHIVE).stat().st_size,minimum_macos='12.0.0',
-                    notes=(ROOT/'docs/RELEASE_NOTES.md').read_text().strip())
+                    notes=latest_notes)
         (out/'updates.json').write_text(json.dumps(update,indent=2)+'\n')
     signing_note = ('Apple has notarized this Developer ID-signed Mac download.' if metadata.get('mac',{}).get('notarized')
                     else 'This test download has an ad-hoc signature. If macOS blocks it, open System Settings → Privacy &amp; Security → Open Anyway after checking that you trust the download.'

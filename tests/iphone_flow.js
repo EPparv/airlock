@@ -29,7 +29,25 @@ await press('Planning agent'); await seen('Friday at 10 am');
 if (document.querySelector('main').innerText.includes('two-paragraph')) throw Error('Planning session read the writing memory.');
 await press('Revoke access'); await seen('Access revoked.');
 await press('Writing agent'); await seen('two-paragraph');
-await press('Exit sample'); await title('Airlock');
+await press('Connect my agent'); await title('Connect agent');
+if (findButton('Create vault') || findButton('New test session')) throw Error('Agent setup landed in the local test vault.');
+await press('Set up on Mac'); await title('Mac setup');
+if (document.querySelector('a').href !== 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip') throw Error('Missing direct Mac download.');
+await press('‹ Connect agent'); await press('Pair this iPhone');
+write('Pairing link from your Mac','https://example.com/wrong#pair=bad'); await press('Check link');
+await until(() => document.querySelector('#notice').textContent.includes('complete one-time'), 'Invalid pairing link rejected');
+const fakePair = 'https://test-mac.example.org/phone#pair=' + 'A'.repeat(43);
+write('Pairing link from your Mac',fakePair); await press('Check link');
+if (document.querySelector('a')?.href !== fakePair || document.querySelector('input').value) throw Error('Pairing link handoff failed.');
+await press('‹ Connect agent'); await press('Share an excerpt from iPhone');
+if (phase === 1) {
+  await title('Share an excerpt'); write('Text to share','Send the draft to editor@example.org');
+  await press('Review excerpt'); const approved = document.querySelectorAll('textarea')[1];
+  if (!approved?.readOnly || !approved.value.includes('[email-') || approved.value.includes('example.org')) throw Error('One-time excerpt leaked raw email.');
+} else {
+  await until(() => findButton('Unlock vault'), 'saved privacy settings require unlocking before one-time sharing');
+}
+await press('‹ Connect agent'); await press('‹ Airlock'); await title('Airlock');
 if (phase === 2) {
   await press('Context & memory'); await until(() => findButton('Unlock vault'), 'existing vault');
   write('Passphrase','incorrect phrase'); await press('Unlock vault');
@@ -44,7 +62,7 @@ await press('Create vault'); await press('Memories');
 await press('Add memory'); write('Memory', message); await press('Save memory');
 await press('Add memory'); write('Memory', hidden);
 document.querySelector('input[type=checkbox]').checked = true; await press('Save memory');
-await press('‹ Context & memory'); await press('‹ Airlock'); await press('Connect agent');
+await press('‹ Context & memory'); await press('‹ Airlock'); await press('Connect agent'); await press('Local test sessions');
 async function create(name) {
   await press('New test session'); write('Session name',name); await press('Create session'); await title(name);
 }
@@ -60,15 +78,15 @@ async function share() {
 }
 await create('Atlas'); const fromAtlas = await share();
 write('Propose a memory',suggested); await press('Send for review');
-await press('‹ Agent access'); await press('‹ Connect agent');
+await press('‹ Agent access'); await press('‹ Local test sessions');
 await create('Ember'); await press('Try session'); await press('Read shared memory'); await seen('No shared records.');
 await press('‹ Agent access'); const fromEmber = await share();
 if (fromAtlas === fromEmber) throw Error('Two sessions share an email token.');
-await press('‹ Agent access'); await press('‹ Connect agent'); await press('Atlas');
-await press('Revoke session'); await press('Revoke access'); await title('Connect agent');
+await press('‹ Agent access'); await press('‹ Local test sessions'); await press('Atlas');
+await press('Revoke session'); await press('Revoke access'); await title('Local test sessions');
 if (findButton('Atlas')) throw Error('Revoked session survived.');
 await press('Ember'); await press('Try session'); write('Propose a memory',suggested); await press('Send for review');
-await press('‹ Agent access'); await press('‹ Connect agent'); await press('‹ Airlock');
+await press('‹ Agent access'); await press('‹ Local test sessions'); await press('‹ Connect agent'); await press('‹ Airlock');
 await press('Context & memory'); await press('Proposed changes'); await seen(suggested); await press('Approve');
 await seen('No changes waiting'); await press('‹ Context & memory'); await press('Memories'); await seen(suggested);
 const envelope = await new Promise((resolve,reject) => {

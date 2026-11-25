@@ -175,6 +175,88 @@ def test_actionable_config_conflict_is_not_hidden_by_valueerror_handler(tmp_path
         clients.install_config('codex',clients.server_entry(tmp_path/'root/.private/new.token'),home)
 
 
+def test_codex_active_profile_and_markerless_config_survive_reconnect(bundle,tmp_path,monkeypatch):
+    home=tmp_path/'owner'; profile=home/'Codex work'
+    profile.mkdir(parents=True)
+    monkeypatch.setenv('CODEX_HOME',str(profile))
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    gateway=bundle[0]
+    first=clients.connect(gateway,agent='codex',approved=True,home=home,scope=clients.selected_scope(gateway,{}))
+    target=profile/'config.toml'
+    assert first['installed'] and Path(first['path'])==target and not (home/'.codex/config.toml').exists()
+    entry=tomllib.loads(target.read_text())['mcp_servers']['airlock']
+    rewritten='[mcp_servers.airlock]\ncommand='+json.dumps(entry['command'])+'\nargs='+json.dumps(entry['args'],indent=2)+'\n# Keep this comment\n[mcp_servers.other]\ncommand="other"\n'
+    target.write_text(rewritten)
+    second=clients.manual_connection_details(gateway, first['id'],reinstall=True,home=home)
+    assert second['installed'] and tomllib.loads(target.read_text())==tomllib.loads(rewritten)
+    assert '# Keep this comment' in target.read_text()
+    assert len(gateway.list_grants())==1
+
+
+@pytest.mark.parametrize('agent',['codex','cursor'])
+def test_repair_uses_existing_credential_and_keeps_scope_limits(bundle,tmp_path,monkeypatch,agent):
+    gateway,sources,*_=bundle
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'owner'
+    selected=clients.connection_context(gateway)['records'][0]
+    scope=clients.selected_scope(gateway,{selected['ref']:selected['text_hash']})
+    first=clients.connect(gateway,agent=agent,approved=True,home=home,scope=scope,max_calls=5)
+    config=Path(first['path']);original=config.read_text();config.unlink()
+    from privacy_layer.workspace import Workspace
+    sources.context_home=home;gateway.device_apps=object()
+    workspace=Workspace(gateway)
+    before=gateway.list_grants()[0]
+    result=workspace.owner('workspace-reconnect',{'id':first['id']})
+    assert result['installed'] and config.read_text()==original
+    assert gateway.list_grants()==[before]
+    gateway.revoke(first['id']);config.unlink()
+    with pytest.raises(Denied):workspace.owner('workspace-reconnect',{'id':first['id']})
+    assert not config.exists()
+
+
+def test_external_codex_profile_offers_manual_setup_without_writing(bundle,tmp_path,monkeypatch):
+    home=tmp_path/'owner';home.mkdir()
+    monkeypatch.setenv('HOME',str(home))
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path/'outside'))
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    result=clients.connect(bundle[0],agent='codex',approved=True,scope=clients.selected_scope(bundle[0],{}))
+    assert not result['installed'] and 'outside this home' in result['message']
+    assert '[mcp_servers.airlock]' in result['client_config']
+    assert not (home/'.codex').exists() and not (tmp_path/'outside').exists()
+
+
+def test_finder_detects_user_command_line_install(tmp_path,monkeypatch):
+    binary=tmp_path/'.local/bin/claude'
+    binary.parent.mkdir(parents=True);binary.touch()
+    monkeypatch.setenv('PATH',str(tmp_path/'empty'))
+    binary.chmod(0o700)
+    assert next(c['app_present'] for c in clients.catalog(tmp_path) if c['id']=='claude-code')
+
+
+def test_codex_refresh_never_starts_a_daemon_for_missing_or_linked_socket(tmp_path,monkeypatch):
+    cfg=tmp_path/'codex'/'config.toml'
+    control=cfg.parent/'app-server-control'
+    control.mkdir(parents=True)
+    monkeypatch.setattr(clients, '_refresh_codex_proxy', lambda *a: pytest.fail('A proxy was launched.'))
+    assert not clients.refresh_codex(cfg,tmp_path)
+    (control/'app-server-control.sock').symlink_to(tmp_path/'other')
+    assert not clients.refresh_codex(cfg,tmp_path)
+
+
+def test_codex_refresh_requires_acknowledgment_from_the_existing_service(tmp_path):
+    import sys
+    script=tmp_path/'proxy-fixture.py'
+    script.write_text('import sys,json\n'
+        'read=lambda: json.loads(sys.stdin.readline())\n'
+        'assert read()["method"]=="initialize"\n'
+        'print(json.dumps({"id":1,"result":{}}),flush=True)\n'
+        'assert read()["method"]=="initialized"\n'
+        'assert read()["method"]=="config/mcpServer/reload"\n'
+        'print(json.dumps({"id":2,sys.argv[1]:{}}),flush=True)\n')
+    assert clients._refresh_codex_proxy([sys.executable,str(script),'result'])
+    assert not clients._refresh_codex_proxy([sys.executable,str(script),'error'])
+
+
 def test_connection_wizard_shares_only_reviewed_selection_and_reports_real_request(bundle,tmp_path,monkeypatch):
     g,s,*_=bundle;monkeypatch.setattr(clients,'ROOT',tmp_path)
     with TestClient(owner_app(g,'owner'),base_url='http://127.0.0.1:8791') as c:
@@ -189,7 +271,9 @@ def test_connection_wizard_shares_only_reviewed_selection_and_reports_real_reque
         assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
         args=entry['args'];token=Path(args[args.index('--token-file')+1]).read_text()
         g.call(token,'privacy_status',{})
-        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
+        status=c.post('/api/client-status',json={'id':entry['id']},headers=h).json()
+        assert status['status']=='waiting' and status['last_call'] is not None
+        assert status['last_context_read'] is None and status['last_discovery'] is None
         result=g.call(token,'get_private_context',{'query':''})
         assert 'Be concise' in str(result) and 'Hyderabad' not in str(result)
         assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='verified'

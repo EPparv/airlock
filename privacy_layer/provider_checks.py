@@ -53,7 +53,8 @@ class ProviderChecks:
                 local = 'Dedicated credential available' if ready else 'Dedicated credential file missing'
             else:
                 listener = self.remote.listener
-                ready = (bridge.get('enabled') and bridge.get('origin') == grant.get('cloud_origin')
+                ready = (bridge.get('enabled') and (bridge.get('mode') != 'temporary' or bridge.get('verified'))
+                         and bridge.get('origin') == grant.get('cloud_origin')
                          and listener.thread and listener.thread.is_alive() and listener.port == bridge.get('port'))
                 local = 'Agent bridge listening' if ready else 'HTTPS bridge paused or unavailable'
                 if ready and live:

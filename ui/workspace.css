@@ -401,6 +401,11 @@ h3 {
   background: var(--control)
 }
 
+.external-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
 .secondary:hover:enabled,
 .icon-button:hover {
   background: var(--soft)

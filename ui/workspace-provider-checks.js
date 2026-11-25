@@ -17,13 +17,15 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
   const id = options.id;
   const status = await api('provider-check-state', {id});
   const name = cloudClients[status.vendor];
-  const expected = status.expires ? (status.received ? 'Code sent to caller' : 'Waiting for a status call') : 'Idle';
+  const expected = status.expires ? (status.received ? 'Code sent to caller' : 'Waiting for a status call') :
+    status.confirmed ? 'Confirmed' : 'Unconfirmed';
   host.append(facts([['Connection', name + ' · ' + id.slice(-6)], ['On this Mac', status.local],
     ['Current test', expected], ['Last code confirmed', status.confirmed ? when(status.confirmed) : 'Never']]));
   const form = el('div', null, 'form');
   host.append(form);
   if (!status.active) {
     note(form, 'This connection has expired or was revoked. Create a new connection to test again.');
+    form.append(button('Create new connection', () => go('remote-create', {vendor:status.vendor, newConnection:true})));
     return;
   }
   if (!status.expires) {
@@ -55,6 +57,7 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
       await refresh();
     }));
   }
+  form.append(button('Choose permissions', () => go('agent', {agent:'mcp', id})));
   const help = details(host, 'Connection help');
   if (status.vendor === 'chatgpt') {
     note(help, 'Open the personal workspace and keep the tunnel command running. Select the same tunnel in your ChatGPT workspace. Enable the privacy_status tool and invoke your installed plugin in the chat.');
@@ -76,6 +79,14 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
     const url = field(help, 'Configured endpoint', input('url', status.url));
     url.readOnly = true;
     help.append(button('Copy endpoint', () => copyText(status.url)));
+  }
+  if (status.vendor !== 'chatgpt') {
+    help.append(button('Lost the token?', () => confirmAction('Replace this connection?',
+      'This revokes the old token. Create a new connection and choose its shared records again.',
+      'Revoke and start again', async () => {
+        await api('revoke', {id});
+        await go('remote-create', {vendor:status.vendor, newConnection:true});
+      }, true)));
   }
   note(help, 'A local setup check runs only on the Mac. A returned code means someone used that connection’s credential. Confirm it here after you see it in the intended agent.');
 });

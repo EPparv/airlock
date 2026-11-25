@@ -8,8 +8,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+import select
 import shutil
+import stat
+import subprocess
 import time
 import tomllib
 
@@ -50,6 +54,7 @@ PROFILES = {
     'openclaw': (('mcp','servers'), {'transport':'stdio'}),
 }
 SETUP_HINTS = {
+    'codex':'Open the active Codex config.toml in Settings, add the exported TOML entry, and restart Codex.',
     'muse-code':'Merge the entry into your Muse Code user settings, then restart Muse Code and check /mcp.',
     'gemini-cli':'Merge the entry into your Gemini CLI user settings, then start a new session and check /mcp list.',
     'vscode':'Merge the entry into Copilot Global on this Mac, then start a local Copilot session in VS Code.',
@@ -65,10 +70,13 @@ def catalog(home=None):
     home=Path(home or Path.home())
     apps={'codex':('ChatGPT.app','ChatGPT 2.app','Codex.app'), 'claude-desktop':('Claude.app',), 'cursor':('Cursor.app',), 'vscode':('Visual Studio Code.app',)}
     commands = {'muse-code':'muse','gemini-cli':'gemini','openclaw':'openclaw','codex':'codex','claude-code':'claude'}
+    # Apps launched from Finder do not inherit the user's interactive shell PATH.
+    cli_path=os.pathsep.join([os.environ.get('PATH',os.defpath),'/opt/homebrew/bin','/usr/local/bin',
+                              str(home/'.local/bin'),str(home/'.bun/bin'),str(home/'.npm-global/bin')])
     result=[]
     for agent,details in CLIENTS.items():
         installed=any((p/name).exists() for name in apps.get(agent,()) for p in (Path('/Applications'),home/'Applications'))
-        if agent in commands: installed = installed or shutil.which(commands[agent]) is not None
+        if agent in commands: installed = installed or shutil.which(commands[agent],path=cli_path) is not None
         if agent=='claude-code':installed=installed or (ROOT/'.tools/node_modules/.bin/claude').exists()
         result.append(dict(id=agent,**details,app_present=installed,can_install=agent in RELATIVE_CONFIGS))
     return result
@@ -163,8 +171,23 @@ def codex_config(original,entry,server_name=SERVER):
             if not owned(servers[name]):
                 if name==LEGACY_SERVER:continue
                 raise Denied('Codex already has an unrelated Airlock connection. Its settings were left unchanged.')
-            if original.count(left)!=1 or original.count(right)!=1:raise Denied('The existing managed connection needs review. No settings were changed.')
-            a=original.index(left);b=original.index(right)+len(right)
+            if left not in original and right not in original:
+                # Codex and its settings editor can rewrite TOML without our markers.
+                # Only remove a complete table that parses to the already verified entry.
+                header=re.search(r'^\[mcp_servers\.'+re.escape(name)+r'\][ \t]*(?:#[^\n]*)?$', original, re.MULTILINE)
+                if not header:
+                    raise ManualSetup('The existing Codex entry uses custom TOML. Review it in Codex settings.')
+                a=header.start();b=header.end()
+                for line in original[b:].splitlines(keepends=True):
+                    b+=len(line)
+                    try: table=tomllib.loads(original[a:b])
+                    except tomllib.TOMLDecodeError: continue
+                    if table=={'mcp_servers':{name:servers[name]}}: break
+                else: raise ManualSetup('The existing Codex entry uses custom TOML. Review it in Codex settings.')
+            elif original.count(left)==1 and original.count(right)==1:
+                a=original.index(left);b=original.index(right)+len(right)
+            else:
+                raise Denied('The existing managed connection needs review. No settings were changed.')
             if b<a:raise Denied('The existing managed connection needs review. No settings were changed.')
             ranges.append((a,b));removed.append(name)
         elif left in original or right in original:raise Denied('The previous connection settings need review. No settings were changed.')
@@ -181,6 +204,13 @@ def codex_config(original,entry,server_name=SERVER):
 def install_config(agent,entry,home=None,server_name=SERVER):
     if agent not in RELATIVE_CONFIGS:raise Denied('Choose a local agent to install.')
     home=Path(home or Path.home());path=home/RELATIVE_CONFIGS[agent]
+    if agent=='codex' and os.environ.get('CODEX_HOME'):
+        profile=Path(os.environ['CODEX_HOME']).expanduser()
+        # A disposable profile must never write settings in the actual user's home.
+        if home.resolve()==Path.home().resolve() or (profile.is_absolute() and profile.is_relative_to(home)):
+            if not profile.is_absolute() or not profile.resolve().is_relative_to(home.resolve()):
+                raise ManualSetup('The active Codex profile is outside this home folder. Add Airlock in that profile.')
+            path=profile/'config.toml'
     if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
         raise ManualSetup('These settings are linked elsewhere. Use the exported setup.')
     overrides = {'muse-code':('XDG_CONFIG_HOME',), 'vscode':('COPILOT_HOME',), 'openclaw':('OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE')}
@@ -239,8 +269,109 @@ def connection_status(gateway, identifier):
     if not grant:raise Denied('This connection no longer exists. Connect your AI again.')
     status=('revoked' if grant['revoked'] else 'expired' if grant['expires']<=gateway.clock() or grant['remaining']<=0
             else 'verified' if grant.get('last_context_read') else 'waiting')
-    return {'status':status,'last_context_read':grant.get('last_context_read'),
+    return {'status':status,'last_call':grant['last_call'],'last_discovery':grant['last_discovery'],'last_context_read':grant.get('last_context_read'),
             'shared_records':len((grant.get('scope') or {}).get('records',[]))}
+
+
+def _refresh_codex_proxy(command):
+    """Ask an existing app-server to re-read its MCP config. Only the proxy is disposable."""
+    deadline = time.monotonic() + 1.5
+    with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proxy:
+        try:
+            init = {'id':1, 'method':'initialize','params':{'clientInfo':{'name':'airlock','version':'1'}}}
+            reload = {'id':2, 'method':'config/mcpServer/reload'}
+            buf = b''
+            for request in (init, reload):
+                if request is reload:
+                    proxy.stdin.write(b'{"method":"initialized"}\n')
+                proxy.stdin.write(json.dumps(request).encode() + b'\n')
+                proxy.stdin.flush()
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    if b'\n' not in buf:
+                        if not select.select([proxy.stdout], [], [], remaining)[0]:
+                            return False
+                        data = os.read(proxy.stdout.fileno(), 8192)
+                        if not data or len(buf) + len(data) > 65536:
+                            return False
+                        buf += data
+                        continue
+                    line, buf = buf.split(b'\n', 1)
+                    response = json.loads(line)
+                    if not isinstance(response, dict):
+                        return False
+                    if response.get('id') == request['id']:
+                        if 'result' not in response or 'error' in response:
+                            return False
+                        break
+            return True
+        finally:
+            if proxy.poll() is None:
+                proxy.kill()
+
+
+def refresh_codex(config, home):
+    """Never start or restart a host, or select a socket from another profile."""
+    profile = Path(config).parent
+    control = profile/'app-server-control'
+    sock = control/'app-server-control.sock'
+    try:
+        directory, endpoint = control.lstat(), sock.lstat()
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_mode & 0o022 or directory.st_uid != os.getuid()
+                or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid()):
+            return False
+        candidates = [apps/name/'Contents/Resources/codex' for apps in (Path('/Applications'),Path(home or Path.home())/'Applications')
+                      for name in ('Codex.app','ChatGPT.app','ChatGPT 2.app')]
+        candidates += [Path('/opt/homebrew/bin/codex'), Path('/usr/local/bin/codex')]
+        binary = next((p for p in candidates if p.is_file() and os.access(p,os.X_OK)), None)
+        return bool(binary and _refresh_codex_proxy([str(binary),'app-server','proxy','--sock',str(sock)]))
+    except (OSError, ValueError):
+        return False
+
+
+def finish_client_install(result, home):
+    agent = result['agent']
+    result['installed'] = True
+    if agent == 'codex':
+        result['reload_requested'] = refresh_codex(result['path'], home)
+        if result['reload_requested']:
+            result['message'] = 'Settings saved. Your running Codex service accepted a request to reload Airlock.'
+            return
+    result['message'] = f'Settings saved. Open {CLIENTS[agent]["name"]} and enable Airlock if prompted.'
+
+
+def manual_connection_details(gateway, identifier, *, reinstall=False, home=None):
+    """Export or reinstall the same active local credential without renewing its grant."""
+    grant = next((g for g in gateway.list_grants() if g['id'] == identifier), None)
+    if (not grant or grant['agent'] not in (*RELATIVE_CONFIGS, 'mcp') or grant['configured'] is None
+            or grant['revoked'] or grant['expires'] <= gateway.clock() or grant['remaining'] <= 0):
+        raise Denied('Manual setup is unavailable for this connection.')
+    agent = grant['agent']
+    if reinstall and agent not in RELATIVE_CONFIGS:
+        raise Denied('Add this connection in your MCP client using its settings.')
+    if not reinstall and grant['configured'] is not False:
+        raise Denied('Manual setup is unavailable for this connection.')
+    path = ROOT / '.private' / 'clients' / f'{agent}-{identifier}.token'
+    if not path.is_file() or path.is_symlink():
+        raise Denied('The local credential is missing. Revoke this connection and connect again.')
+    if gateway.authenticate(path.read_text().strip())['id'] != identifier:
+        raise Denied('The local credential no longer matches. Revoke this connection and connect again.')
+    entry = server_entry(path)
+    config = codex_config('', entry).lstrip() if agent == 'codex' else json_config('', entry, agent=agent)
+    result = {'id':identifier, 'agent':agent, 'installed':False, 'config':config,
+              'message':SETUP_HINTS.get(agent, 'Add this entry to your agent’s local MCP settings.')}
+    if reinstall:
+        try:
+            result['path'] = install_config(agent, entry, home)
+        except ManualSetup as error:
+            result['message'] = f'{error} {result["message"]}'
+        else:
+            finish_client_install(result, home)
+        with gateway.store.transaction() as data:
+            data['grants'][identifier]['client_setup'] = {'installed':result['installed'], 'at':gateway.clock()}
+    return result
 
 def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, install=True, home=None, scope=None):
     if agent not in CLIENTS or approved is not True or not isinstance(install,bool):raise Denied('Choose an agent and approve its connection.')
@@ -278,7 +409,7 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
                 try:
                     result['path'] = install_config(agent,entry,home)
                 except ManualSetup as error:
-                    if agent not in PROFILES:
+                    if agent not in PROFILES and agent!='codex':
                         raise
                     result['message'] = f'{error} {SETUP_HINTS[agent]}'
                 else:
@@ -287,8 +418,7 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
                         # Export only generated values, even if a client edits its file after install.
                         if 'mcpServers' in installed:
                             result['config'] = json_config('{"mcpServers":{}}',entry,agent=agent)
-                    result['installed'] = True
-                    result['message'] = f'Settings saved. Restart {CLIENTS[agent]["name"]} or reload its MCP connections, then enable Airlock if prompted.'
+                    finish_client_install(result, home)
         with gateway.store.transaction() as data:
             data['grants'][grant['id']]['client_setup']={'installed':result['installed'],'at':gateway.clock()}
         return result

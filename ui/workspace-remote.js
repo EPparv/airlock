@@ -2,6 +2,18 @@
 
 const cloudClients = {muse: 'Meta Muse', manus: 'Manus', chatgpt: 'ChatGPT', ironclaw: 'IronClaw', custom: 'Other remote MCP client'};
 
+function cloudConnectionRow(host, grant) {
+  const subtitle = grant.confirmed ? 'Confirmed ' + when(grant.confirmed) :
+    grant.last_call ? 'Last tool call ' + when(grant.last_call) : 'Waiting for first call';
+  item(host, cloudClients[grant.vendor] + ' · ' + grant.id.slice(-6), subtitle,
+    () => go('provider-check', {id: grant.id}));
+}
+
+async function startProviderCheck(id) {
+  await api('provider-check-start', {id});
+  await go('provider-check', {id});
+}
+
 addPage('remote-clients', 'Cloud agents', 'connect', async host => {
   if (preview) {
     note(host, 'Open Airlock on your Mac to connect a cloud agent.');
@@ -15,10 +27,7 @@ addPage('remote-clients', 'Cloud agents', 'connect', async host => {
   const grants = state.connections.filter(c => c.active);
   if (grants.length) {
     const connected = section(host, 'Your connections');
-    for (const grant of grants) {
-      item(connected, cloudClients[grant.vendor] + ' · ' + grant.id.slice(-6), grant.last_call ? 'Last tool call ' + when(grant.last_call) :
-        'Expires ' + when(grant.expires), () => go('agent', {id: grant.id, agent: 'mcp'}));
-    }
+    for (const grant of grants) cloudConnectionRow(connected, grant);
   }
   if (state.connections.length) choose(host, 'Test a connection', 'provider-checks');
   const area = section(host, 'HTTPS bridge');
@@ -117,7 +126,14 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
   if (!name) return go('remote-clients');
   bar.querySelector('h1').textContent = name;
   const state = await api('remote-state');
-  if (state.mode === 'temporary' && state.enabled && !state.verified) {
+  const existing = state.connections.filter(c => c.vendor === opt.vendor && c.active);
+  if (existing.length && !opt.newConnection) {
+    const list = section(host, 'Your connections');
+    for (const grant of existing) cloudConnectionRow(list, grant);
+    host.append(button('Add another connection', () => go('remote-create', {vendor: opt.vendor, newConnection: true})));
+    return;
+  }
+  if (opt.vendor !== 'chatgpt' && state.mode === 'temporary' && state.enabled && !state.verified) {
     temporaryLinkVerification(host, state, refresh);
     return;
   }
@@ -130,12 +146,13 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
   const form = el('div', null, 'form');
   host.append(form);
   note(form, opt.vendor === 'chatgpt' ?
-    'Use a dedicated OpenAI Secure MCP Tunnel linked to your ChatGPT workspace. Each person allowed to use this tunnel shares its Airlock grant.' :
-    'Create a credential for ' + name + ' alone. Enter it in the connector’s credential settings.');
-  note(form, 'The connection starts with zero shared records. Choose its permissions after setup.');
-  const getLimits = limits(form);
+    'You need a dedicated OpenAI Secure MCP Tunnel linked to your ChatGPT workspace. Everyone with access to that tunnel shares its Airlock permissions.' :
+    'Airlock will give you an address and a token for ' + name + '.');
+  note(form, 'Start with zero shared records. You can choose what to share after the first call.');
+  const getLimits = limits(details(form, 'Connection limits'));
   formAction(form, 'Create connection', async () => {
     const result = await api('remote-create', {vendor: opt.vendor, ...getLimits()});
+    const destination = go('provider-check', {id: result.id});
     const f = modal('Connect ' + name);
     if (opt.vendor === 'chatgpt') {
       note(f, 'Install OpenAI’s tunnel-client on your Mac. Run this command in Terminal, enter your dedicated tunnel ID and restricted runtime key, and leave the process running.');
@@ -143,10 +160,10 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       cmd.value = result.command;
       cmd.readOnly = true;
       f.append(button('Copy command', () => copyText(result.command)));
-      note(f, 'In ChatGPT, open Plugins → Add custom MCP server → Tunnel. Choose the same tunnel and No authentication. Install privately and ask ChatGPT to call privacy_status.');
+      note(f, 'In ChatGPT on the web, open Plugins → + → Add custom MCP server. Choose Tunnel, select the same tunnel and choose No authentication. Create and install the plugin.');
     } else {
       note(f, opt.vendor === 'muse' ?
-        'Ask Muse to create a custom connector from this API schema. Set HTTP Bearer authentication in the secure credential prompt.' :
+        'Paste the setup request into Muse. When Muse opens its secure credential prompt, enter the token there.' :
         opt.vendor === 'manus' ? 'In Manus, open Settings → Integrations → Custom MCP Servers. Add this URL and select Bearer token.' :
         opt.vendor === 'ironclaw' ? 'Review the manifest and install it in IronClaw. Save the token under airlock_scoped_token in its secret settings.' :
         'Add this URL as a Streamable HTTP MCP server. Set Authorization to Bearer followed by the token in the client’s secret settings.');
@@ -158,13 +175,20 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       }
       const url = field(f, opt.vendor === 'muse' ? 'OpenAPI schema URL' : 'MCP server URL', input('url', result.url));
       url.readOnly = true;
+      if (opt.vendor === 'muse') {
+        f.append(button('Copy setup request for Muse', () => copyText(
+          'Create a private Airlock connector using this OpenAPI schema: ' + result.url +
+          '. Use HTTP bearer authentication and ask me for the token through the secure credential store.'
+        )));
+      } else {
+        f.append(button('Copy server URL', () => copyText(result.url)));
+      }
       const secret = field(f, 'Bearer token · shown once', input('password', result.credential));
       secret.autocomplete = 'off';
       secret.readOnly = true;
       f.append(button('Copy token', () => copyText(result.credential)));
-      note(f, 'Ask the agent to call privacy_status. A successful response confirms it can reach your Mac.');
     }
-    f.append(button('Test this connection', () => go('provider-check', {id: result.id})));
-    formAction(f, 'Choose permissions', () => go('agent', {agent: 'mcp', id: result.id}));
+    formAction(f, 'Test this connection', () => startProviderCheck(result.id));
+    await destination;
   });
 });

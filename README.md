@@ -4,7 +4,7 @@ Airlock is a local context and permissions layer for MCP agents. It solves two p
 
 Download the Mac app: https://epparv.github.io/airlock/
 
-Version **0.11.1** opens in its own Mac window. The home screen has three controls.
+Version **0.11.2** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
@@ -38,7 +38,7 @@ Your existing AI generates answers with its own account. Optional private-task i
 
 The main setup shows common desktop AIs and the records to share together. Manual integrations, connection duration and request limits are under optional controls. Private, retired and stale records are excluded; changing a selected record requires a fresh review before connecting. Memory proposals remain opt-in and owner-reviewed.
 
-Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. A saved settings file is not proof that an AI connected: the UI waits for a real context request.
+Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. The connection screen shows separate status for saved settings, tool discovery, the first tool call and the first context read.
 
 ## Connect cloud agents and hand work to another agent
 

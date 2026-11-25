@@ -160,8 +160,8 @@ class CloudGateway:
                 raise Denied('Access is closed.')
         return gateway
 
-    def authenticate(self, token):
-        return self.authorize(token, 'mcp').authenticate(token)
+    def authenticate(self, token, *, discovered=False):
+        return self.authorize(token, 'mcp').authenticate(token, discovered=discovered)
 
     def dispatch(self, token, tool, args, vendor):
         gateway = self.authorize(token, vendor)
@@ -336,7 +336,8 @@ class RemoteClients:
             config = data.get('remote_bridge', {})
             calls = {event['agent']: event['at'] for event in data['audit'] if event['status'] == 'released'}
             grants = [{'id': g['id'], 'vendor': g['cloud_client'], 'expires': g['expires'],
-                       'remaining': g['remaining'], 'last_call': calls.get(g['id']), 'revoked': g['revoked'], 'last_read': g.get('last_context_read'),
+                       'remaining': g['remaining'], 'last_call': calls.get(g['id']), 'confirmed': g.get('provider_confirmed'),
+                       'revoked': g['revoked'], 'last_read': g.get('last_context_read'),
                        'active': not g['revoked'] and g['expires'] > self.g.clock() and g['remaining'] > 0}
                       for g in data['grants'].values() if g.get('cloud_client') in VENDORS]
         port = config.get('port', DEFAULT_PORT)
@@ -531,10 +532,11 @@ class RemoteClients:
         if vendor not in VENDORS:
             raise Denied('Choose a supported cloud client.')
         state = self.state()
-        if state['mode'] == 'temporary' and not state['verified']:
-            raise Denied('Verify the temporary link before creating a connection.')
-        if vendor != 'chatgpt' and not (state['enabled'] and state['listening'] and (state['mode'] != 'temporary' or state['verified'])):
-            raise Denied('Set up the HTTPS bridge first.')
+        if vendor != 'chatgpt':
+            if state['mode'] == 'temporary' and not state['verified']:
+                raise Denied('Verify the temporary link before creating a connection.')
+            if not (state['enabled'] and state['listening']):
+                raise Denied('Set up the HTTPS bridge first.')
         result = self.g.create(agent='mcp', purpose='Private connection for ' + VENDORS[vendor],
                                views=[], mode='automatic', approved=True, lifetime=lifetime, max_calls=max_calls)
         identifier = result['id']

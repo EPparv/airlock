@@ -10,7 +10,7 @@ import re
 import secrets
 
 from .agent_memory import AgentMemory
-from .clients import CLIENTS, RELATIVE_CONFIGS, connect, connection_context, selected_scope
+from .clients import CLIENTS, RELATIVE_CONFIGS, connect, connection_context, manual_connection_details, selected_scope
 from .context import ContextHub
 from .core import Denied, digest, EMAIL
 from .data_view import api_settings, fetch_api, field_names, inspect_file, project, screened_view, select_fields, submit_api, write_payload
@@ -327,7 +327,7 @@ class Workspace:
             grants = [g for g in grants if g['agent'] != 'test']
         memory_state = memory.state()
         return {'example':self.example, 'local_file_picker':not self.example and picker_available(), 'actions':actions[::-1], 'receipts':receipts[::-1],
-                'agents':[{'id':g['id'],'name':g['agent'],'display_name':g.get('display_name'),'scope':g['scope'], 'remaining':g['remaining'], 'expires':g['expires'], 'last_read':g['last_context_read'], 'mode':g['mode'], 'capabilities':g['capabilities'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
+                'agents':[{'id':g['id'],'name':g['agent'],'display_name':g.get('display_name'),'scope':g['scope'], 'remaining':g['remaining'], 'expires':g['expires'], 'last_read':g['last_context_read'], 'last_call':g['last_call'], 'last_discovery':g['last_discovery'], 'installed':g['configured'], 'mode':g['mode'], 'capabilities':g['capabilities'], 'device':device[g['id']], 'proposals':bool(g['capabilities'].get('context_updates')),
                            'status':'revoked' if g['revoked'] else 'expired' if g['expires']<=self.g.clock() or not g['remaining'] else 'used' if g['last_context_read'] else 'configured'}
                           for g in grants],
                 'records':memory_state['records'], 'proposals':[p for p in memory_state['proposals'] if p['status']=='pending']}
@@ -403,6 +403,10 @@ class Workspace:
             return self.state()
         if action == 'workspace-connect':
             return self.configure(**body)
+        if action == 'workspace-manual-config' and not self.example and set(body) == {'id'}:
+            return manual_connection_details(self.g, body['id'])
+        if action == 'workspace-reconnect' and not self.example and set(body) == {'id'}:
+            return manual_connection_details(self.g, body['id'], reinstall=True, home=getattr(self.g.sources, 'context_home', None))
         if action == 'workspace-create' and set(body)=={'kind','label','audience','values'}:
             return self.create(**body)
         if action == 'workspace-decide':

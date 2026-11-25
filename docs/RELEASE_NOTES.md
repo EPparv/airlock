@@ -1,3 +1,9 @@
+# Airlock 0.11.2
+
+Choose Codex or Cursor and approve the records it may use. Airlock saves those permissions and opens the desktop app, or brings the running app forward. Airlock shows when an agent discovers its tools, makes its first call, or reads shared context. Repairing a connection preserves its existing permissions.
+
+On iPhone, choose a one-time filtered excerpt, use a Mac for a live agent connection, or practice with two local test sessions.
+
 # Airlock 0.11.1
 
 A Mac can verify a temporary link itself or ask a second device to open a verification page. Enter the code displayed by the second device on the Mac. The pending link accepts only reachability verification. Pairing and agent access open after confirmation.

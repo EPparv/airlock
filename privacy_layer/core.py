@@ -126,9 +126,11 @@ class Gateway:
             raise Denied('Connection unavailable. Ask the owner to review its access.')
         return grant
 
-    def authenticate(self, token):
+    def authenticate(self, token, *, discovered=False):
         with self.store.transaction() as data:
             grant = self._grant(data, token)
+            if discovered and grant['remaining'] > 0:
+                grant['last_discovery'] = self.clock()
             return {'id':grant['id'], 'agent':grant['agent']}
 
     def create(self, *, agent, purpose, views, approved=False, lifetime=86400, max_calls=100, mode='reviewed'):
@@ -210,9 +212,11 @@ class Gateway:
 
     def list_grants(self):
         with self.store.transaction() as data:
+            # These receipts also cover connections created by older versions.
+            calls = {r['agent']:r['at'] for r in data['audit'] if r['status']=='released'}
             return [{'id':g['id'],'agent':g['agent'],'display_name':g.get('display_name'),'purpose':g['purpose'],'expires':g['expires'],
                      'remaining':g['remaining'],'revoked':g['revoked'],'mode':g.get('mode','reviewed'),'configured':g.get('client_setup',{}).get('installed'),
-                     'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
+                     'last_call':calls.get(g['id']), 'last_discovery':g.get('last_discovery'), 'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
 
     def call(self, token, tool, args, *, connection_route='local'):

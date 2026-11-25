@@ -12,7 +12,11 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 
 ## Connect a local agent
 
-Open **Connect agent**, choose the client and select the records it may use. Leave the selection empty to start with no shared records. In **Client settings**, turn off **Save to the default profile on this Mac** if you want to copy the entry into a custom profile. The generated configuration references an expiring credential stored on your Mac.
+Open **Connect agent**, then **Connect & open Codex** or **Connect & open Cursor**. Airlock opens the workspace, saves the local settings and opens the desktop app. A new connection starts with zero shared records. Returning connections keep their existing permissions. To select memories before connecting, open **Choose what to share first**. You can edit access later.
+
+Airlock shows when a client requests its tool list, makes a successful tool call, or reads context. For a manual check in your agent, ask it to call Airlock’s `privacy_status` tool. This check works with zero shared records. Return to the same agent in Airlock to open it again or use **Connection help → Repair setup**. The repair preserves the connection’s approved records, expiry and call budget.
+
+For a custom profile, use **More settings → Client settings** and turn off **Save to the default profile on this Mac**. The generated configuration references an expiring credential stored on your Mac.
 
 | Client | Default Mac profile | Check in the client |
 | --- | --- | --- |

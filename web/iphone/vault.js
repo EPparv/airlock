@@ -146,6 +146,16 @@
     }
     return out + text.slice(last);
   }
+  async function previewExcerpt(value, vault) {
+    const text = clean(value, 4000, 'an excerpt');
+    const current = await envelope();
+    if ((current?.rev || 0) !== (vault?.rev || 0)) {
+      throw Error('Your vault changed. Reopen it to use its current privacy settings.');
+    }
+    const result = await filtered(text, vault?.state || empty(), {salt:b64(random(32))});
+    if ((await envelope())?.rev !== current?.rev) throw Error('Your vault changed. Review the excerpt again.');
+    return result;
+  }
   function selectedRecords(state, a) {
     return Promise.all(state.records.filter(r => !r.private && a.selected.includes(r.id))
       .map(r => filtered(r.text, state, a)));
@@ -175,5 +185,5 @@
     if (vault.rev !== revision || (await envelope())?.rev !== revision) throw Error('The permissions changed. Try again.');
     return items;
   }
-  globalThis.PhoneVault = {exists:async () => !!(await envelope()), open, changed, addRecord, addAgent, setScope, revoke, propose, decide, read, filtered, createSample};
+  globalThis.PhoneVault = {exists:async () => !!(await envelope()), open, changed, addRecord, addAgent, setScope, revoke, propose, decide, read, filtered, createSample, previewExcerpt};
 })();

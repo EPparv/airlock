@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 const preview = typeof window.airlockExample === 'function';
 const personal = !preview && location.pathname.endsWith('/personal');
 const tokenKey = personal ? 'private-ai-owner' : 'airlock-test-owner';
+const enteringPersonal = personal && Boolean(location.hash.slice(1));
 const owner = preview ? '' : location.hash.slice(1) || sessionStorage.getItem(tokenKey) || '';
 if (owner) sessionStorage.setItem(tokenKey, owner);
 if (!preview && location.hash) history.replaceState(history.state, '', location.pathname + location.search);
@@ -20,6 +21,8 @@ const names = {
   ironclaw: 'IronClaw'
 };
 const pages = {};
+let usingExampleAgents = false;
+let openingWorkspace = false;
 let page = 'home',
   params = {},
   sequence = 0,
@@ -222,7 +225,18 @@ function formAction(form, label, fn) {
 function nativeOnly(feature) {
   const f = modal(feature);
   note(f, 'Open the Mac app to use this with your device.');
+  if (preview) f.append(previewSetupLink());
   f.append(button('Close', close));
+}
+
+function previewSetupLink() {
+  const mac = /^Mac/.test(navigator.platform) && navigator.maxTouchPoints <= 1;
+  const link = el('a', mac ? 'Download Airlock for Mac' : 'Open agent setup', 'primary external-link');
+  link.href = mac ? 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip' :
+    'https://try-airlock.parv223885.chatgpt.site/#connect';
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  return link;
 }
 async function api(action, body = {}, override) {
   if (preview) return window.airlockExample(action, body);
@@ -255,11 +269,19 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     flash('Copied.');
   } catch {
-    const f = modal('Copy text');
+    const d = $('dialog');
+    const keepOpen = d.open;
+    const parent = keepOpen ? $('dialog-content') : modal('Copy text');
+    parent.querySelector('.manual-copy')?.remove();
+    const f = el('div', null, 'form manual-copy');
+    parent.append(f);
     const box = field(f, 'Text', el('textarea'));
     box.value = text;
     box.readOnly = true;
+    box.focus();
     box.select();
+    note(f, 'Press Command-C on your Mac, or choose Copy from the selected text.');
+    f.append(button('Done copying', () => keepOpen ? f.remove() : close()));
   }
 }
 async function upload(file, limit = 4 * 1024 * 1024) {
@@ -296,23 +318,50 @@ function addPage(key, title, parent, draw, requiresPersonal = true) {
   };
 }
 
+async function enterPersonal(target, options, desktopAgent) {
+  if (openingWorkspace) return;
+  openingWorkspace = true;
+  try {
+    const result = await testAPI('open-personal', {approved: true});
+    const intent = {target, options};
+    if (desktopAgent) intent.desktopApproval = {agent: desktopAgent, at: Date.now()};
+    sessionStorage.setItem('airlock-next-view', JSON.stringify(intent));
+    location.replace('/workspace/personal' + new URL(result.url).hash);
+  } catch (error) {
+    openingWorkspace = false;
+    throw error;
+  }
+}
+
+async function connectDesktopNow(agent) {
+  if (!canOpen(agent)) throw Error('Open Airlock.app on this Mac to connect.');
+  if (!personal) return enterPersonal('connect', {}, agent);
+  return startDesktopConnection(agent);
+}
+
+let connectingDesktop = false;
+async function startDesktopConnection(agent) {
+  if (connectingDesktop) return;
+  connectingDesktop = true;
+  try {
+    await finishDefaultDesktopConnection(agent);
+  } catch (error) {
+    await go('agent', {agent, openHelp:true});
+    errorAt(error.message || 'Setup could not finish. Review the connection and try again.');
+  } finally {
+    connectingDesktop = false;
+  }
+}
+
 function unlock(target, options = {}) {
   const f = modal('Unlock your workspace');
   note(f, 'This opens your local library and resumes the connections you previously approved.');
-  formAction(f, 'Unlock workspace', async () => {
-    const result = await testAPI('open-personal', {
-      approved: true
-    });
-    sessionStorage.setItem('airlock-next-view', JSON.stringify({
-      target,
-      options
-    }));
-    location.replace('/workspace/personal' + new URL(result.url).hash);
-  });
+  formAction(f, 'Unlock workspace', () => enterPersonal(target, options));
 }
 
 function go(key, options = {}, push = true) {
   if (!pages[key]) key = 'home';
+  if (key === 'home') usingExampleAgents = false;
   if (pages[key].requiresPersonal && !preview && !personal) {
     unlock(key, options);
     return;
@@ -373,7 +422,17 @@ async function render(navigated = true) {
   document.title = key === 'home' ? 'Airlock' : cfg.title + ' · Airlock';
   body.setAttribute('aria-busy', 'true');
   try {
-    await cfg.draw(body, targetParams, bar);
+    if (preview && key === 'connect' && !usingExampleAgents) {
+      note(body, 'Open Airlock to connect an AI you use, or try the controls here with fictional data.');
+      const options = el('div', null, 'buttons');
+      options.append(previewSetupLink(), button('Try sample agents', () => {
+        usingExampleAgents = true;
+        return refresh();
+      }));
+      body.append(options);
+    } else {
+      await cfg.draw(body, targetParams, bar);
+    }
   } catch (e) {
     if (id === sequence) {
       empty(body, e.message);
@@ -415,9 +474,9 @@ function lockWorkspace() {
       location.replace('/workspace');
     });
 }
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   let key = 'home',
-    data = {};
+    data = {}, desktopAgent;
   if (!preview) {
     const intent = personal && sessionStorage.getItem('airlock-next-view');
     if (intent) {
@@ -426,6 +485,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const v = JSON.parse(intent);
         key = v.target;
         data = v.options || {};
+        const approval = v.desktopApproval;
+        if (enteringPersonal && key === 'connect' && ['codex', 'cursor'].includes(approval?.agent) &&
+            Date.now() >= approval.at && Date.now() - approval.at < 120000) desktopAgent = approval.agent;
       } catch {}
     } else {
       key = new URLSearchParams(location.search).get('view') || 'home';
@@ -437,7 +499,10 @@ document.addEventListener('DOMContentLoaded', () => {
       options: data
     }, '', location.pathname + (key === 'home' ? '' : '?view=' + encodeURIComponent(key)));
   }
-  go(key, data, false);
+  await go(key, data, false);
+  if (desktopAgent) {
+    await startDesktopConnection(desktopAgent);
+  }
 });
 window.addEventListener('popstate', e => {
   go(e.state?.view || 'home', e.state?.options || {}, false);

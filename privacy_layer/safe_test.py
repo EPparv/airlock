@@ -55,16 +55,16 @@ class GatewayRouter:
     def __init__(self, controller):
         self.controller = controller
 
-    def authenticate(self, token):
+    def authenticate(self, token, *, discovered=False):
         """The HTTP boundary authenticates before dispatching any MCP method."""
         c = self.controller
         try:
-            return c.g.authenticate(token)
+            return c.g.authenticate(token, discovered=discovered)
         except Denied:
             personal = c.personal
             if personal is None:
                 raise Denied('Personal access is closed.') from None
-            result = personal.authenticate(token)
+            result = personal.authenticate(token, discovered=discovered)
             if c.personal is not personal:
                 raise Denied('The personal workspace closed during authentication.')
             return result

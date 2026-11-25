@@ -40,6 +40,9 @@ for page in (out / 'index.html', out / 'iphone' / 'index.html'):
     Links(page.parent).feed(page.read_text())
 if meta.get('mac'):
     mac=out/meta['mac']['archive']
+    sys.path.insert(0, str(ROOT))
+    from privacy_layer.updater import validate_manifest
+    validate_manifest(json.loads((out / 'updates.json').read_text()))
     assert hashlib.sha256(mac.read_bytes()).hexdigest()==meta['mac']['sha256']
     with zipfile.ZipFile(mac) as z:
         assert z.testzip() is None

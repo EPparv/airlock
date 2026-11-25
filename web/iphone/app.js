@@ -38,14 +38,17 @@
   function link(host, title, dest, ref) { host.append(button(title, () => go(dest, ref), 'row')); }
   const state = () => vault.state;
   const lookup = (key, ref = selected) => state()[key].find(row => row.id === ref);
-  const needsVault = key => !['home','privacy','pair','sample'].includes(key);
+  const needsVault = key => !['home','privacy','pair','sample','agents','mac','excerpt'].includes(key);
+  const macSetup = 'https://try-airlock.parv223885.chatgpt.site/#mac';
+  const macDownload = 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip';
   const pages = {
-    home: ['Airlock'], sample: ['Sample workspace'], agents: ['Connect agent','home'], newAgent:['New test session','agents'],
-    session:['Agent access','agents'], try:['Test session','session'], scope:['Shared records','session'],
+    home: ['Airlock'], sample: ['Sample workspace'], agents: ['Connect agent','home'], mac:['Mac setup','agents'],
+    excerpt:['Share an excerpt','agents'], sessions:['Local test sessions','agents'], newAgent:['New test session','sessions'],
+    session:['Agent access','sessions'], try:['Test session','session'], scope:['Shared records','session'],
     revoke:['Revoke session','session'], context:['Context & memory','home'], memories:['Memories','context'],
     add:['Add memory','memories'], memory:['Memory','memories'], remove:['Remove memory','memory'],
     proposals:['Proposed changes','context'], privacy:['Privacy & connections','home'],
-    protection:['Data protection','privacy'], pair:['Connect to your Mac','privacy']
+    protection:['Data protection','privacy'], pair:['Pair this iPhone','agents']
   };
   function header(title, parent) {
     if (parent) root.append(button('‹ ' + pages[parent][0], () => go(parent), 'back'));
@@ -54,9 +57,9 @@
   function startSample() {
     vault = null; sample = api.createSample(); return go('sample', '');
   }
-  function exitSample() {
+  function exitSample(destination = 'home') {
     if (location.hash === '#sample') history.replaceState(null, '', location.pathname + location.search);
-    sample = null; return go('home', '');
+    sample = null; return go(destination, '');
   }
   async function showSample(ref) {
     const demo = sample;
@@ -78,27 +81,102 @@
     }
     result.append(button('Revoke access', () => { demo.revoke(agent.id); return go('sample', agent.id); }, 'danger'));
   }
+  function external(host, label, url, cls = 'secondary') {
+    const a = node('a', label, cls + ' external');
+    a.href = url; a.rel = 'noreferrer'; host.append(a);
+  }
+  async function copyText(text, feedback, fallback) {
+    try {
+      await navigator.clipboard.writeText(text);
+      say(feedback);
+    } catch {
+      fallback.readOnly = true; fallback.hidden = false; fallback.value = text;
+      fallback.focus(); fallback.select(); say('Select Copy to use the highlighted text.');
+    }
+  }
+  function showMacSetup() {
+    const steps = node('ol', undefined, 'steps');
+    for (const text of ['Open Airlock on your Mac and choose Connect agent.', 'Click Connect & open Codex or Connect & open Cursor. Airlock saves your choice and opens the app.']) {
+      steps.append(node('li', text));
+    }
+    root.append(steps);
+    const phone = window.matchMedia('(pointer: coarse)').matches;
+    const manual = node('textarea', undefined, 'field'); manual.hidden = true;
+    manual.setAttribute('aria-label', 'Mac setup link');
+    const send = button('Send setup link to Mac', async () => {
+      if (navigator.share) {
+        try { await navigator.share({title:'Airlock for Mac', url:macSetup}); return; }
+        catch (error) { if (error.name === 'AbortError') return; }
+      }
+      await copyText(macSetup, 'Setup link copied. Open it on your Mac.', manual);
+    }, phone ? 'primary' : 'secondary');
+    if (phone) root.append(send);
+    external(root, 'Download Airlock for Mac', macDownload, phone ? 'secondary' : 'primary');
+    if (!phone) root.append(send);
+    root.append(manual);
+  }
+  function showExcerpt(generation) {
+    info(root, 'Review a filtered note, then paste it into any agent. This shares it once.');
+    const input = field(root, 'Text to share', 'textarea');
+    input.maxLength = 4000; input.autocomplete = 'off'; input.spellcheck = false;
+    const section = node('section'); section.setAttribute('aria-live', 'polite');
+    const review = button('Review excerpt', async () => {
+      input.readOnly = true;
+      let output;
+      try { output = await api.previewExcerpt(input.value, vault); }
+      catch (error) { input.readOnly = false; throw error; }
+      if (generation !== request) return;
+      review.hidden = true;
+      const approved = field(section, 'Text to copy', 'textarea');
+      approved.value = output; approved.readOnly = true;
+      section.append(button('Copy reviewed text', () => copyText(output, 'Copied. Paste it into your agent.', approved), 'primary'),
+        button('Edit', () => { section.replaceChildren(); input.readOnly = false; review.hidden = false; input.focus(); }));
+    }, 'primary');
+    root.append(review, section);
+  }
+  function showPairing() {
+    info(root, 'On your Mac, choose Connect agent → Pair iPhone, select the records to share, and create a pairing link. Scan its QR with Camera or paste the link below.');
+    const input = field(root, 'Pairing link from your Mac', 'url'); input.autocomplete = 'off';
+    input.autocapitalize = 'none'; input.spellcheck = false;
+    const next = node('div');
+    input.oninput = () => next.replaceChildren();
+    root.append(button('Check link', () => {
+      next.replaceChildren();
+      const raw = input.value.trim();
+      const match = raw.match(/^https:\/\/((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?::[0-9]{1,5})?)\/phone#pair=[A-Za-z0-9_-]{43}$/);
+      const invalid = 'Paste the complete one-time pairing link from your Mac.';
+      if (!match || raw.length > 400) throw Error(invalid);
+      let url;
+      try { url = new URL(raw); } catch { throw Error(invalid); }
+      if (url.port === '0' || /\.(?:localhost|local|internal|invalid)$/.test(url.hostname)) throw Error(invalid);
+      input.value = '';
+      info(next, 'Open the address shown on your Mac, then tap Connect to Mac.');
+      external(next, 'Open ' + url.host, url.href, 'primary');
+    }), next);
+  }
   async function go(key, ref = selected) {
     if (!pages[key]) key = 'home';
     const generation = ++request; page = key; selected = ref; say('');
     root.replaceChildren(); root.className = key === 'home' ? 'home' : '';
-    if (needsVault(key) && !vault) {
-      header('Your iPhone vault', 'home');
+    if (!vault && (needsVault(key) || key === 'excerpt')) {
       const available = await api.exists();
       if (generation !== request) return;
-      info(root, available ? 'Open your local vault with its passphrase.' :
-        'Choose a passphrase to encrypt memories in this browser. Keep it safe. Clearing website data removes this vault.');
-      const pass = field(root, 'Passphrase', 'password'); pass.autocomplete = available ? 'current-password' : 'new-password';
-      const confirm = available ? null : field(root, 'Confirm passphrase', 'password');
-      if (confirm) { confirm.autocomplete = 'new-password'; info(root, 'Use at least 12 characters.'); }
-      root.append(button(available ? 'Unlock vault' : 'Create vault', async () => {
-        if (confirm && pass.value !== confirm.value) throw Error('The passphrases differ.');
-        const opened = await api.open(pass.value, !available);
-        if (generation !== request) return;
-        pass.value = ''; if (confirm) confirm.value = '';
-        vault = opened; await go(key, ref);
-      }, 'primary'));
-      return;
+      if (needsVault(key) || available) {
+        header('Your iPhone vault', key === 'excerpt' || key === 'sessions' ? 'agents' : 'home');
+        info(root, available ? 'Open your local vault with its passphrase.' :
+          'Choose a passphrase to encrypt memories in this browser. Keep it safe. Clearing website data removes this vault.');
+        const pass = field(root, 'Passphrase', 'password'); pass.autocomplete = available ? 'current-password' : 'new-password';
+        const confirm = available ? null : field(root, 'Confirm passphrase', 'password');
+        if (confirm) { confirm.autocomplete = 'new-password'; info(root, 'Use at least 12 characters.'); }
+        root.append(button(available ? 'Unlock vault' : 'Create vault', async () => {
+          if (confirm && pass.value !== confirm.value) throw Error('The passphrases differ.');
+          const opened = await api.open(pass.value, !available);
+          if (generation !== request) return;
+          pass.value = ''; if (confirm) confirm.value = '';
+          vault = opened; await go(key, ref);
+        }, 'primary'));
+        return;
+      }
     }
     if (key === 'sample') root.append(button('Exit sample', exitSample, 'back'));
     header(pages[key][0], pages[key][1]);
@@ -110,12 +188,21 @@
       root.append(button('Try a sample', startSample, 'sample-entry'));
     } else if (key === 'sample') {
       await showSample(ref);
+      if (generation === request) root.append(button('Connect my agent', () => exitSample('agents'), 'primary'));
     } else if (key === 'agents') {
-      info(root, 'Test what different agents can read on this iPhone. Each session starts with no shared records.');
+      info(root, 'Connect Codex, Cursor or Claude through Airlock on your Mac. You choose the memories each agent can read.');
+      root.append(button('Set up on Mac', () => go('mac'), 'primary'));
+      const g = group(); link(g, 'Share an excerpt from iPhone', 'excerpt');
+      link(g, 'Pair this iPhone', 'pair'); link(g, 'Local test sessions', 'sessions');
+    } else if (key === 'mac') {
+      showMacSetup();
+    } else if (key === 'excerpt') {
+      showExcerpt(generation);
+    } else if (key === 'sessions') {
+      info(root, 'Test permissions in this browser using your iPhone vault.');
       const g = group();
       state().agents.filter(a => !a.revoked).forEach(a => link(g, a.name, 'session', a.id));
       root.append(button('New test session', () => go('newAgent'), 'primary'));
-      link(root, 'Connect to your Mac', 'pair');
     } else if (key === 'newAgent') {
       const name = field(root, 'Session name'); name.placeholder = 'e.g. Research assistant';
       root.append(button('Create session', async () => {
@@ -124,7 +211,7 @@
       }, 'primary'));
     } else if (['session','try','scope','revoke'].includes(key)) {
       const a = lookup('agents');
-      if (!a || a.revoked) { await go('agents'); say('Session revoked.'); return; }
+      if (!a || a.revoked) { await go('sessions'); say('Session revoked.'); return; }
       if (key === 'session') {
         root.querySelector('h1').textContent = a.name;
         info(root, a.selected.length + ' shared ' + (a.selected.length === 1 ? 'record' : 'records') + '. Local test session.');
@@ -141,7 +228,7 @@
       } else if (key === 'revoke') {
         info(root, 'End ' + a.name + '’s access and discard its pending proposals.');
         root.append(button('Revoke access', async () => {
-          await api.changed(vault, s => api.revoke(s, a.id)); await go('agents'); say('Session revoked.');
+          await api.changed(vault, s => api.revoke(s, a.id)); await go('sessions'); say('Session revoked.');
         }, 'danger'));
       } else {
         root.querySelector('h1').textContent = a.name;
@@ -195,7 +282,7 @@
         })); root.append(row);
       }
     } else if (key === 'privacy') {
-      const g = group(); link(g, 'Connect to your Mac', 'pair'); link(g, 'Data protection', 'protection');
+      const g = group(); link(g, 'Pair this iPhone', 'pair'); link(g, 'Data protection', 'protection');
       if (vault) g.append(button('Lock iPhone vault', () => lock(), 'row'));
     } else if (key === 'protection') {
       info(root, 'Test-session reads replace detected emails and phone numbers with session-specific tokens. Protected phrases and recognized credentials are withheld. Free text may still identify you.');
@@ -207,16 +294,16 @@
         await api.changed(vault, s => { s.phrases = entries; }); say('Phrases saved.');
       }, 'primary'));
     } else if (key === 'pair') {
-      info(root, 'On your Mac, open Airlock and choose Connect agent → Pair iPhone. Enable the HTTPS bridge when prompted.');
-      info(root, 'Scan the pairing code with your iPhone camera, or open the one-time link in Safari. It opens the workspace served by your Mac. Memories saved in this iPhone vault stay separate.');
+      showPairing();
     }
   }
   function lock() { vault = null; sample = null; selected = ''; return go('home'); }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) hiddenSince = Date.now();
-    else if (vault && hiddenSince && Date.now() - hiddenSince > 60000) lock();
+    else if ((vault || page === 'excerpt' || page === 'pair') && hiddenSince && Date.now() - hiddenSince > 60000) lock();
   });
   window.addEventListener('pagehide', lock);
   window.addEventListener('pageshow', e => { if (e.persisted) lock(); });
-  (location.hash === '#sample' ? startSample() : go('home')).catch(e => say(e.message));
+  const routes = {'#connect':'agents', '#mac':'mac', '#pair':'pair'};
+  (location.hash === '#sample' ? startSample() : go(routes[location.hash] || 'home')).catch(e => say(e.message));
 })();
