@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import plistlib
+import shutil
 import socket
 import subprocess
 import sys
@@ -32,8 +34,18 @@ def test_installed_codex_daemon_reloads_scoped_connection(bundle, serving, tmp_p
             monkeypatch.delenv(key, raising=False)
         (profile/'config.toml').write_text('model="fixture"\nmodel_provider="fixture"\n'
             '[model_providers.fixture]\nname="Offline test"\nbase_url="http://127.0.0.1:1"\nwire_api="responses"\n')
-        shim = home/'Applications/Codex.app/Contents/Resources/codex'
-        shim.parent.mkdir(parents=True); shim.symlink_to(binary)
+        app = home/'Applications/ChatGPT.app'
+        app.parent.mkdir()
+        supplied_app = next((p for p in reversed(binary.parents) if p.suffix == '.app'), None)
+        if supplied_app:
+            # Preserve the real bundle layout, code signature, and relative framework paths.
+            app.symlink_to(supplied_app, target_is_directory=True)
+            assert clients.codex_bundle_binary(app) == binary
+        else:
+            embedded = app/'Contents/Resources/codex'
+            embedded.parent.mkdir(parents=True)
+            (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.codex'}))
+            shutil.copy2(binary, embedded)
         root = tmp_path/'installed app'
         (root/'.venv/bin').mkdir(parents=True); (root/'.venv/bin/python').symlink_to(sys.executable)
         (root/'privacy_layer').symlink_to(Path(clients.__file__).parent)

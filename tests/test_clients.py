@@ -233,6 +233,32 @@ def test_finder_detects_user_command_line_install(tmp_path,monkeypatch):
     assert next(c['app_present'] for c in clients.catalog(tmp_path) if c['id']=='claude-code')
 
 
+def test_codex_bundle_binary_supports_current_and_legacy_vendor_layouts(tmp_path):
+    import plistlib
+    app = tmp_path/'ChatGPT.app'
+    resources = app/'Contents/Resources'
+    nested = resources/'codex-cli/CodexCLI.app/Contents/MacOS/codex'
+    wrapper = resources/'codex-cli/bin/codex'
+    legacy = resources/'codex'
+    for exe in (nested, wrapper, legacy):
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.touch()
+        exe.chmod(0o755)
+    info = app/'Contents/Info.plist'
+    info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.chat'}))
+    assert clients.codex_bundle_binary(app) is None
+    info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.codex'}))
+    assert clients.codex_bundle_binary(app) == nested
+    nested.chmod(0o644)
+    assert clients.codex_bundle_binary(app) == legacy
+    legacy.unlink()
+    assert clients.codex_bundle_binary(app) == wrapper
+    wrapper.unlink()
+    external = tmp_path/'external-executable'; external.touch(); external.chmod(0o755)
+    wrapper.symlink_to(external)
+    assert clients.codex_bundle_binary(app) is None
+
+
 def test_codex_refresh_never_starts_a_daemon_for_missing_or_linked_socket(tmp_path,monkeypatch):
     cfg=tmp_path/'codex'/'config.toml'
     control=cfg.parent/'app-server-control'

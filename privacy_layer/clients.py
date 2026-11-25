@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import secrets
 import select
@@ -312,6 +313,22 @@ def _refresh_codex_proxy(command):
                 proxy.kill()
 
 
+def codex_bundle_binary(bundle):
+    """Find the vendor runtime in a Codex desktop bundle, including the renamed ChatGPT.app."""
+    try:
+        root = Path(bundle).resolve(strict=True)
+        with (root/'Contents/Info.plist').open('rb') as info:
+            if plistlib.load(info).get('CFBundleIdentifier') != 'com.openai.codex':
+                return None
+        for relative in ('codex-cli/CodexCLI.app/Contents/MacOS/codex', 'codex', 'codex-cli/bin/codex'):
+            candidate = (root/'Contents/Resources'/relative).resolve()
+            if candidate.is_relative_to(root) and candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    except (OSError, ValueError, RuntimeError, plistlib.InvalidFileException, AttributeError):
+        pass
+    return None
+
+
 def refresh_codex(config, home):
     """Never start or restart a host, or select a socket from another profile."""
     profile = Path(config).parent
@@ -322,10 +339,12 @@ def refresh_codex(config, home):
         if (not stat.S_ISDIR(directory.st_mode) or directory.st_mode & 0o022 or directory.st_uid != os.getuid()
                 or not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid()):
             return False
-        candidates = [apps/name/'Contents/Resources/codex' for apps in (Path('/Applications'),Path(home or Path.home())/'Applications')
-                      for name in ('Codex.app','ChatGPT.app','ChatGPT 2.app')]
-        candidates += [Path('/opt/homebrew/bin/codex'), Path('/usr/local/bin/codex')]
-        binary = next((p for p in candidates if p.is_file() and os.access(p,os.X_OK)), None)
+        bundles = (apps/name for apps in (Path('/Applications'),Path(home or Path.home())/'Applications')
+                   for name in ('ChatGPT.app','ChatGPT 2.app','Codex.app'))
+        binary = next(filter(None, map(codex_bundle_binary, bundles)), None)
+        if binary is None:
+            candidates = (Path('/opt/homebrew/bin/codex'), Path('/usr/local/bin/codex'))
+            binary = next((p for p in candidates if p.is_file() and os.access(p,os.X_OK)), None)
         return bool(binary and _refresh_codex_proxy([str(binary),'app-server','proxy','--sock',str(sock)]))
     except (OSError, ValueError):
         return False

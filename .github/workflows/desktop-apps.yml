@@ -93,6 +93,18 @@ jobs:
         if: matrix.agent == 'codex'
         run: |
           set -eu
-          export AIRLOCK_TEST_CODEX="$AIRLOCK_VENDOR_BUNDLE/Contents/Resources/codex"
-          test -x "$AIRLOCK_TEST_CODEX"
+          AIRLOCK_TEST_CODEX="$(python - <<'PY'
+          import os
+          from pathlib import Path
+          from privacy_layer.clients import codex_bundle_binary
+          bundle = Path(os.environ['AIRLOCK_VENDOR_BUNDLE'])
+          binary = codex_bundle_binary(bundle)
+          if binary is None:
+              raise SystemExit('Airlock could not locate the CLI inside the signed ChatGPT app.')
+          print(binary)
+          PY
+          )"
+          export AIRLOCK_TEST_CODEX
+          echo "Airlock found ${AIRLOCK_TEST_CODEX#"$AIRLOCK_VENDOR_BUNDLE"/} inside the signed app."
+          "$AIRLOCK_TEST_CODEX" --version
           python -m pytest -q -s tests/test_mcp.py::test_installed_codex_daemon_reloads_scoped_connection
