@@ -1,0 +1,183 @@
+name: Verify hosted MCP in official IronClaw
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: empty-vendor-test/provider-ironclaw-4fbe24f8ef14
+  cancel-in-progress: false
+jobs:
+  host:
+    name: Disposable Mac tunnel
+    runs-on: macos-15-intel
+    timeout-minutes: 32
+    env:
+      PYTHONPATH: .
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: requirements.lock
+    - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
+    - name: Wait until the independent device is ready
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-ready-$GITHUB_RUN_ATTEMPT\" --peer \"External\
+        \ HTTPS witness\" --seconds 1100\n"
+    - name: Start the empty, expiring agent bridge on the Mac
+      run: 'set -eu
+
+        route_dir="$RUNNER_TEMP/airlock-route"
+
+        umask 077
+
+        nohup python -u scripts/vendor_session.py "$route_dir" from-witness ironclaw
+        > "$route_dir/host.log" 2>&1 < /dev/null &
+
+        echo $! > "$route_dir/host.pid"
+
+        python scripts/smoke_quick_link.py wait-file "$route_dir" --name offer.json
+        --seconds 210
+
+        '
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/offer.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Wait for the independent HTTPS proof
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-proof-$GITHUB_RUN_ATTEMPT\" --peer \"External\
+        \ HTTPS witness\" --seconds 390\n"
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+    - name: Deliver the public challenge response to the Mac owner
+      run: mv "$RUNNER_TEMP/airlock-proof/proof.json" "$RUNNER_TEMP/airlock-route/proof.json"
+    - name: Wait for the grant sealed for the external runner
+      run: python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route"
+        --name sealed.json --seconds 60
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sealed-vendor-session-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/sealed.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Wait for a status result or expiration
+      run: python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route"
+        --name receipt.json --seconds 660
+    - uses: actions/upload-artifact@v4
+      with:
+        name: vendor-receipt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/receipt.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Stop any remaining disposable service
+      if: always()
+      run: 'dir="$RUNNER_TEMP/airlock-route"
+
+        if test -f "$dir/host.pid" && ! test -f "$dir/receipt.json"; then touch "$dir/stop";
+        kill -TERM "$(cat "$dir/host.pid")" 2>/dev/null || true; fi
+
+        if test -f "$dir/host.log"; then cat "$dir/host.log"; fi'
+  witness:
+    name: External HTTPS witness
+    runs-on: ubuntu-latest
+    timeout-minutes: 32
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Start isolated official IronClaw and await local profile readiness
+      run: "set -eu\numask 077\nbase=\"$RUNNER_TEMP/ironclaw\"\nmkdir -m 700 \"$base\"\
+        \npython3 -c 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM'\n\
+        nohup python3 -u scripts/official_ironclaw.py --ready-file \"$base/ready\"\
+        \ --connection-file \"$base/private/connection.json\" --observed-file \"$base/observed\"\
+        \ --summary-file \"$base/summary.json\" >\"$base/log\" 2>&1 < /dev/null &\n\
+        echo \"$!\" >\"$base/pid\"\nfor i in $(seq 1 160); do\n  if test -s \"$base/ready\"\
+        ; then exit 0; fi\n  if ! kill -0 \"$(cat \"$base/pid\")\" 2>/dev/null; then\n\
+        \    python3 scripts/vendor_verdict.py progress \"$base/summary.json\"\n \
+        \   exit 1\n  fi\n  sleep 3\ndone\necho 'Official product did not reach the\
+        \ registry readiness check in time.'\nexit 1"
+    - name: Mark the independent runner ready
+      run: 'mkdir -p "$RUNNER_TEMP/airlock-route"
+
+        echo ready > "$RUNNER_TEMP/airlock-route/ready"
+
+        '
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-ready-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/ready
+        retention-days: 1
+    - name: Wait for the Mac offer
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python3 scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-offer-$GITHUB_RUN_ATTEMPT\" --peer \"Disposable\
+        \ Mac tunnel\" --seconds 1350\n"
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+    - name: Read the disposable challenge over public HTTPS
+      run: python3 scripts/smoke_quick_link.py witness "$RUNNER_TEMP/airlock-route"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/proof.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Wait for the independently encrypted grant
+      env: &id001
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route"
+        --name "sealed-vendor-session-$GITHUB_RUN_ATTEMPT" --peer "Disposable Mac
+        tunnel" --seconds 180
+    - uses: actions/download-artifact@v4
+      with:
+        name: sealed-vendor-session-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+    - name: Deliver the temporary credential privately to the official agent
+      run: "set -eu\numask 077\nbase=\"$RUNNER_TEMP/ironclaw\"\nroute=\"$RUNNER_TEMP/airlock-route\"\
+        \npython3 scripts/vendor_unseal.py \"$route/sealed.json\" \"$route/witness.private\"\
+        \ \"$base/pending\" ironclaw\nrm -f \"$route/witness.private\"\nmv \"$base/pending\"\
+        \ \"$base/private\"\nfor i in $(seq 1 120); do\n  if test -s \"$base/summary.json\"\
+        ; then break; fi\n  if ! kill -0 \"$(cat \"$base/pid\")\" 2>/dev/null; then\
+        \ break; fi\n  sleep 2\ndone\npython3 scripts/vendor_verdict.py progress \"\
+        $base/summary.json\"\ntest -s \"$base/observed\""
+    - name: Wait for matching Airlock receipt and revocation
+      env: *id001
+      run: python3 scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route"
+        --name "vendor-receipt-$GITHUB_RUN_ATTEMPT" --peer "Disposable Mac tunnel"
+        --seconds 180
+    - uses: actions/download-artifact@v4
+      with:
+        name: vendor-receipt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ironclaw/receipt
+    - name: Match official tool return value to Airlock receipt
+      run: python3 scripts/vendor_verdict.py verify "$RUNNER_TEMP/ironclaw"
+    - if: always()
+      name: Clear the isolated test profile and credential
+      run: 'base="$RUNNER_TEMP/ironclaw"
+
+        if test -f "$base/pid"; then kill "$(cat "$base/pid")" 2>/dev/null || true;
+        fi
+
+        rm -f "$RUNNER_TEMP/airlock-route/witness.private"
+
+        rm -rf "$base"'
+'on':
+  push:
+    branches:
+    - test/provider-ironclaw-4fbe24f8ef14
