@@ -1,7 +1,14 @@
 import asyncio
+from contextlib import ExitStack
 import json
+import os
+import plistlib
+import shutil
+import select
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -13,6 +20,121 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.client.stdio import stdio_client
 from starlette.testclient import TestClient
 from privacy_layer.server import mcp_app,owner_app
+
+
+class _CodexStdioRPC:
+    def __init__(self, process):
+        self.process = process
+        self.buffer = b''
+
+    def send(self, message):
+        self.process.stdin.write(json.dumps(message).encode() + b'\n')
+        self.process.stdin.flush()
+
+    def call(self, number, method, params):
+        self.send({'id':number, 'method':method, 'params':params})
+        deadline = time.monotonic() + 20
+        while True:
+            if b'\n' not in self.buffer:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0 and select.select([self.process.stdout], [], [], remaining)[0], f'Codex timed out at {method}'
+                data = os.read(self.process.stdout.fileno(), 65536)
+                assert data, f'Codex exited at {method} (status {self.process.poll()})'
+                self.buffer += data
+                continue
+            line, self.buffer = self.buffer.split(b'\n', 1)
+            reply = json.loads(line)
+            if reply.get('id') == number:
+                return reply
+
+
+@pytest.mark.parametrize('mode', ['cold-stdio', 'running-socket'])
+@pytest.mark.skipif(not os.environ.get('AIRLOCK_TEST_CODEX'), reason='Requires an explicitly supplied Codex binary')
+def test_installed_codex_daemon_reloads_scoped_connection(bundle, serving, tmp_path, monkeypatch, mode):
+    """Use a real, disposable vendor daemon and its actual MCP tool-call API without a model turn."""
+    from privacy_layer import clients
+    binary = Path(os.environ['AIRLOCK_TEST_CODEX']).resolve(strict=True)
+    gateway = bundle[0]
+    # Unix sockets have a short maximum path on macOS.
+    with tempfile.TemporaryDirectory(prefix='al-',dir='/tmp') as temp:
+        home = Path(temp); profile = home/'cli'; profile.mkdir()
+        monkeypatch.setenv('HOME', str(home)); monkeypatch.setenv('CODEX_HOME', str(profile))
+        for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL'):
+            monkeypatch.delenv(key, raising=False)
+        (profile/'config.toml').write_text('model="fixture"\nmodel_provider="fixture"\n'
+            '[model_providers.fixture]\nname="Offline test"\nbase_url="http://127.0.0.1:1"\nwire_api="responses"\n')
+        app = home/'Applications/ChatGPT.app'
+        app.parent.mkdir()
+        supplied_app = next((p for p in reversed(binary.parents) if p.suffix == '.app'), None)
+        if supplied_app:
+            # Preserve the real bundle layout, code signature, and relative framework paths.
+            app.symlink_to(supplied_app, target_is_directory=True)
+            assert clients.codex_bundle_binary(app) == binary
+        else:
+            embedded = app/'Contents/Resources/codex'
+            embedded.parent.mkdir(parents=True)
+            (app/'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.codex'}))
+            shutil.copy2(binary, embedded)
+        root = tmp_path/'installed app'
+        (root/'.venv/bin').mkdir(parents=True); (root/'.venv/bin/python').symlink_to(sys.executable)
+        (root/'privacy_layer').symlink_to(Path(clients.__file__).parent)
+        (root/'.private').mkdir(); (root/'release.json').write_text('{}')
+        (root/'.private/launch.json').write_text(json.dumps({'mcp_url':serving[0]}))
+        monkeypatch.setattr(clients, 'ROOT', root)
+        control = profile/'app-server-control/app-server-control.sock'
+
+        selected = next(r for r in clients.connection_context(gateway)['records'] if r['ref']=='skills:s1')
+        scope = clients.selected_scope(gateway,{selected['ref']:selected['text_hash']})
+        def install():
+            saved = clients.connect(gateway, agent='codex', approved=True, home=home, scope=scope)
+            assert saved['installed'] and Path(saved['path']) == profile/'config.toml'
+            return saved
+
+        with ExitStack() as processes:
+            def launch(*arguments):
+                child = subprocess.Popen([str(binary), *arguments], cwd=home, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                processes.enter_context(child)
+                processes.callback(lambda: child.kill() if child.poll() is None else None)
+                return child
+
+            if mode == 'cold-stdio':
+                saved = install()
+                rpc = _CodexStdioRPC(launch('app-server','--stdio'))
+            else:
+                daemon = launch('app-server','--listen','unix://')
+                for _ in range(200):
+                    if control.is_socket() or daemon.poll() is not None:
+                        break
+                    time.sleep(.05)
+                assert control.is_socket(), f'Codex did not expose its control socket (status {daemon.poll()})'
+                physical = clients._codex_socket(control)
+                assert physical, 'Codex started, but the profile socket identity could not be verified.'
+                proxy = launch('app-server','proxy','--sock',str(physical))
+                rpc = clients._CodexSocketRPC(proxy, timeout=55, max_bytes=4*1024*1024)
+            def result(number, method, params):
+                reply = rpc.call(number, method, params)
+                assert 'result' in reply, f"Codex rejected {method} (error code {reply.get('error',{}).get('code')})"
+                return reply['result']
+            result(1,'initialize',{'clientInfo':{'name':'airlock_test','version':'1'},'capabilities':{'experimentalApi':True}})
+            rpc.send({'method':'initialized'})
+            if mode == 'running-socket':
+                initial = result(2,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'})['data']
+                assert not any(r['name']=='airlock' for r in initial)
+                saved = install()
+                assert saved['reload_requested'], 'The already-running Codex daemon did not acknowledge the Airlock config reload.'
+            servers = result(3,'mcpServerStatus/list',{'detail':'toolsAndAuthOnly'})['data']
+            assert any(r['name']=='airlock' and 'get_private_context' in r['tools'] for r in servers), 'Codex did not discover the configured Airlock tool.'
+            thread = result(4,'thread/start',{'cwd':str(home),'ephemeral':True,'approvalPolicy':'never',
+                                              'sandbox':'read-only','model':'fixture','modelProvider':'fixture'})
+            params = {'threadId':thread['thread']['id'],'server':'airlock','tool':'get_private_context','arguments':{'query':''}}
+            received = result(5,'mcpServer/tool/call',params)
+            assert not received.get('isError') and 'Be concise' in str(received) and 'Hyderabad' not in str(received)
+            gateway.revoke(saved['id'])
+            denied = rpc.call(6,'mcpServer/tool/call',params)
+            assert 'error' in denied or denied['result'].get('isError')
+
+EXPECTED_TOOLS = {'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result','list_private_actions','request_private_action','private_action_status','read_private_fields','prepare_private_followup','list_agent_handoffs','claim_agent_handoff','submit_agent_handoff','read_agent_handoff'}
 
 @pytest.fixture
 def serving(bundle):
@@ -32,7 +154,7 @@ async def check_session(s):
     await s.initialize()
     tools=(await s.list_tools()).tools
     names={t.name for t in tools}
-    assert names=={'privacy_status','get_private_context','search_gmail','read_gmail','stage_context_import','context_status','list_local_skills','read_local_skill','run_local_skill','prepare_private_brief','update_shared_context','request_private_task','get_private_task_result'}
+    assert names == EXPECTED_TOOLS
     for tool in tools:
         if tool.name in ('get_private_context','search_gmail'):
             assert tool.inputSchema['properties']['query']['maxLength']==2000
@@ -170,7 +292,8 @@ def test_native_client_export_over_real_stdio(bundle,serving,tmp_path,monkeypatc
         async with stdio_client(StdioServerParameters(**config)) as (read,write):
             async with ClientSession(read,write) as session:
                 await session.initialize()
-                tools=await session.list_tools();assert len(tools.tools)==13
+                tools=await session.list_tools()
+                assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
                 context=await session.call_tool('get_private_context',{'query':'interview'})
                 assert not context.isError
                 assert 'Hyderabad' in context.content[0].text
@@ -209,3 +332,52 @@ def test_native_mcp_context_transfer_stages_only_until_owner_saves(bundle,servin
                     result=await session.call_tool('get_private_context',{'query':'Phoenix solar interview'})
                     assert not result.isError and 'November 12' in str(result) and 'solar launch example' in str(result)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('agent,keys', [
+    ('muse-code', ('mcp_servers',)),
+    ('gemini-cli', ('mcpServers',)),
+    ('vscode', ('mcpServers',)),
+    ('openclaw', ('mcp','servers')),
+])
+def test_new_client_profile_runs_shipped_bridge(bundle,serving,tmp_path,monkeypatch,agent,keys):
+    """Use the exact command in the installed profile against a temporary gateway."""
+    from privacy_layer import clients
+    gateway = bundle[0]
+    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE'):
+        monkeypatch.delenv(key,raising=False)
+    url, _ = serving
+    install_root = tmp_path/'Airlock App'
+    (install_root/'.venv/bin').mkdir(parents=True)
+    (install_root/'.venv/bin/python').symlink_to(sys.executable)
+    (install_root/'privacy_layer').symlink_to(Path(clients.__file__).resolve().parent)
+    (install_root/'release.json').write_text('{}')
+    (install_root/'.private').mkdir()
+    (install_root/'.private/launch.json').write_text(json.dumps({'mcp_url':url}))
+    monkeypatch.setattr(clients,'ROOT',install_root)
+    rows = clients.connection_context(gateway)['records']
+    chosen = next(r for r in rows if r['ref']=='skills:s1')
+    scope = clients.selected_scope(gateway,{chosen['ref']:chosen['text_hash']})
+    result = clients.connect(gateway,agent=agent,approved=True,home=tmp_path/'profile',scope=scope)
+    config = json.loads(Path(result['path']).read_text())
+    for key in keys:
+        config = config[key]
+    entry = config['airlock']
+
+    async def probe():
+        command = StdioServerParameters(command=entry['command'],args=entry['args'])
+        async with stdio_client(command) as (read,write), ClientSession(read,write) as session:
+            await session.initialize()
+            assert clients.connection_status(gateway,result['id'])['last_discovery'] is None
+            assert 'get_private_context' in {tool.name for tool in (await session.list_tools()).tools}
+            status = clients.connection_status(gateway,result['id'])
+            assert status['last_discovery'] is not None
+            assert status['last_call'] is None and status['last_context_read'] is None
+            answer = await session.call_tool('get_private_context',{'query':''})
+            assert not answer.isError
+            assert 'Be concise' in answer.content[0].text and 'Hyderabad' not in answer.content[0].text
+            assert clients.connection_status(gateway,result['id'])['status'] == 'verified'
+            gateway.revoke(result['id'])
+            with pytest.raises(Exception):
+                await session.call_tool('privacy_status',{})
+    asyncio.run(probe())

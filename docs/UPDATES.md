@@ -48,7 +48,7 @@ rollback compatibility before being published.
 Airlock must be in a writable folder, normally Applications. Read-only disks or
 macOS App Translocation can block replacement; move the app, reopen it and retry.
 The updater does not request administrator access or modify Gatekeeper settings.
-The Mac app is not Apple-notarized; release verification is a separate control.
+The download metadata gives the Apple notarization status of each Mac archive. Publisher setup and checks are documented in [Mac signing and notarization](MAC_SIGNING.md).
 
 The prior bundle is retained in a private `.Airlock-update-*` folder beside the
 installed app; its exact path is recorded in Application Support's

@@ -201,3 +201,18 @@ def test_real_mcp_http_authentication_and_revocation(safe):
         safe.g.revoke(safe.metadata()['local']['id'])
         assert c.post('/mcp',json=init,headers=headers).status_code==401
         assert c.post('/mcp',json=init,headers={**headers,'Authorization':'Bearer unknown'}).status_code==401
+
+
+def test_locked_workspace_only_advertises_launch_options(safe, monkeypatch):
+    from privacy_layer import quick_connect
+    monkeypatch.setattr(quick_connect, 'launch_options', lambda:['cursor'])
+    headers = {'Authorization':'Bearer test-owner'}
+    with TestClient(safe.app('test-owner',8791),base_url='http://127.0.0.1:8791') as client:
+        route = '/api/workspace-launch-options'
+        assert client.post(route, json={}).status_code == 401
+        assert client.post(route, json={}, headers=headers).json() == {'agents':['cursor']}
+        assert client.post(route, json={}, headers={**headers,'Origin':'https://outside.test'}).status_code == 403
+        assert client.post(route, json={'agent':'cursor'}, headers=headers).status_code == 400
+        for action in ('workspace-quick-connect','workspace-open-client','workspace-agent-help'):
+            assert client.post('/api/'+action, json={'agent':'cursor','approved':True}, headers=headers).status_code == 400
+    assert safe.personal is None and not (safe.state/'connections.enc').exists()

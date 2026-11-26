@@ -1,14 +1,30 @@
 """Browser fixture: disposable profile, fixed test key, no personal source access."""
 import sys
 import json
+import os
 from pathlib import Path
 import uvicorn
-from privacy_layer import clients, sources
+from privacy_layer import agent_launch, clients, quick_connect, remote_clients, sources
 from privacy_layer.safe_test import SafeTest
 
 root=Path(__file__).resolve().parents[1]
 state=Path(sys.argv[1]);profile=state/'profile';profile.mkdir(parents=True)
+for variable in ('CODEX_HOME', 'XDG_CONFIG_HOME', 'COPILOT_HOME', 'OPENCLAW_PROFILE',
+                 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH'):
+    os.environ.pop(variable, None)
 clients.ROOT=state/'app'
+# Only the final OS launch is replaced. The browser still uses actual owner
+# authentication, grant creation, configuration writes, and connection status.
+quick_connect.launch_options=lambda:[*sorted(agent_launch.LOCAL_AGENTS), 'dot']
+def record_open(agent):
+    with (state/'launched.jsonl').open('a') as log:
+        log.write(json.dumps({'agent':agent})+'\n')
+    return {'opened':True,'drafted':True,'method':'draft','message':'Status request prepared in the agent.'}
+agent_launch.open_agent=record_open
+def provider_surface(vendor, setup):
+    assert vendor == 'chatgpt' and setup
+    return {'opened':False, 'url':'https://chatgpt.com/plugins', 'message':'Open ChatGPT to continue.'}
+remote_clients.open_provider=provider_surface
 original=sources.LocalSources
 sources.LocalSources=lambda **kw:original(key=b'b'*32,context_home=profile)
 # Reproduce a valid Codex config that still points to an earlier Airlock copy.

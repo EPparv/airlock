@@ -13,7 +13,8 @@ def manifest(endpoint='https://airlock.invalid/mcp'):
     u=urlsplit(endpoint)
     if u.scheme!='https' or not u.hostname or u.username or u.password or u.query or u.fragment or u.path!='/mcp':
         raise Denied('Use an HTTPS endpoint ending in /mcp with no credentials, query or fragment.')
-    return '''# REVIEW TEMPLATE: replace airlock.invalid with your secured MCP endpoint.
+    heading = '# REVIEW TEMPLATE: replace airlock.invalid with your secured MCP endpoint.' if u.hostname == 'airlock.invalid' else '# Configure the scoped bearer token in IronClaw secret settings.'
+    return heading + '''
 # No public endpoint is created by Airlock. Never expose the owner UI.
 schema_version = "reborn.extension_manifest.v3"
 id = "airlock"
