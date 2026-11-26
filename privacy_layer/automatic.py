@@ -332,6 +332,7 @@ class Automatic:
         for row in eligible:
             if row['text'] in seen:continue
             item=self.public(row,row['text']);item['core']=bool(row.get('core'))
+            if row.get('chat_source'):item['evidence_type']='Owner-selected conversation excerpt. It may be a question, quotation or historical statement.'
             if row.get('shared_reference'):item.update(shared_reference=row['shared_reference'],revision=row['revision'],evidence_type='agent-authored shared note; not independently verified')
             candidates.append(item);seen.add(row['text'])
         from .continuity import select

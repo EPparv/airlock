@@ -199,23 +199,8 @@ def swap_apps(installed, staged):
 
 def live_session(base):
     """Read only the owner's local launch receipt, never the encrypted library."""
-    try:
-        path = Path(base) / "app/.private/launch.json"
-        metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077 or metadata.st_size > 8192:
-            return None
-        record = json.loads(path.read_bytes())
-        url = urlsplit(record["url"])
-        if url.scheme != "http" or url.hostname != "127.0.0.1" or url.username or url.password or not url.port:
-            return None
-        request = Request(f"http://127.0.0.1:{url.port}/api/state", data=b"{}",
-                          headers={"Authorization": "Bearer " + record["owner_token"], "Content-Type": "application/json"})
-        with build_opener(ProxyHandler({}), NoRedirect()).open(request, timeout=1) as response:
-            if response.status == 200:
-                return record
-    except Exception:
-        pass
-    return None
+    from .launcher import probe_session
+    return probe_session(Path(base) / 'app/.private/launch.json', timeout=1)
 
 
 def launch_app(app, base, profile_home=None, restored=False):

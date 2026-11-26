@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>Airlock · Mac connection</title><link rel="stylesheet" href="/phone/phone.css"><script defer src="/phone/phone.js"></script></head>
+<body><main>
+<header><span class="wordmark">Airlock</span><h1>Mac connection</h1></header>
+<p id="notice" role="status" aria-live="polite"></p>
+<section id="welcome">
+<p id="pair-help">Open Airlock on your Mac and choose Privacy & connections → Pair iPhone.</p>
+<button id="connect" hidden>Connect to Mac</button>
+</section>
+<section id="connected" hidden>
+<p id="scope"></p>
+<form id="search-form"><label for="topic">Search shared context</label><div class="search"><input id="topic" type="search" placeholder="Topic or keyword" maxlength="200" autocomplete="off"><button>Search</button></div></form>
+<ul id="records"></ul><button id="more" class="quiet" hidden>More results</button>
+<h2>Assigned actions</h2><p id="action-help">Requests for writes go to your Mac for approval.</p>
+<button id="refresh-actions" class="quiet">Check actions</button><ul id="actions"></ul>
+<footer><button id="disconnect" class="quiet">Disconnect this iPhone</button></footer>
+</section></main></body></html>

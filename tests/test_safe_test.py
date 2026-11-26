@@ -141,7 +141,15 @@ def test_personal_workspace_requires_separate_owner_token_and_closes(safe,monkey
         assert 'PERSONAL_ONLY' not in str(router.call(safe.metadata()['local']['token'],'get_private_context',{'query':''}))
         c.post('/api/close-personal',json={},headers=test).raise_for_status()
         assert not safe.status()['personal_open']
+        page = c.get('/workspace/personal')
+        assert page.status_code == 200 and page.headers['cache-control'] == 'no-store'
+        assert 'PERSONAL_ONLY' not in page.text
         assert c.post('/api/library',json={},headers=personal).status_code==401
+        with TestClient(app, base_url='http://localhost:8791') as second_window:
+            unlocked = second_window.post('/api/open-personal', json={'approved':True}, headers=test)
+            assert unlocked.json()['url'].startswith('http://localhost:8791/personal#')
+            assert unlocked.json()['url'].split('#')[1] != owner
+            c.post('/api/close-personal',json={},headers=test).raise_for_status()
         with pytest.raises(Denied):router.call(grant['token'],'get_private_context',{'query':''})
         assert SafeTest(ROOT,safe.state,profile_home=safe.profile_home).personal is None
 
@@ -201,3 +209,54 @@ def test_real_mcp_http_authentication_and_revocation(safe):
         safe.g.revoke(safe.metadata()['local']['id'])
         assert c.post('/mcp',json=init,headers=headers).status_code==401
         assert c.post('/mcp',json=init,headers={**headers,'Authorization':'Bearer unknown'}).status_code==401
+
+
+def test_locked_workspace_only_advertises_launch_options(safe, monkeypatch):
+    from privacy_layer import quick_connect
+    monkeypatch.setattr(quick_connect, 'launch_options', lambda:['cursor'])
+    headers = {'Authorization':'Bearer test-owner'}
+    with TestClient(safe.app('test-owner',8791),base_url='http://127.0.0.1:8791') as client:
+        route = '/api/workspace-launch-options'
+        assert client.post(route, json={}).status_code == 401
+        assert client.post(route, json={}, headers=headers).json() == {'agents':['cursor']}
+        assert client.post(route, json={}, headers={**headers,'Origin':'https://outside.test'}).status_code == 403
+        assert client.post(route, json={'agent':'cursor'}, headers=headers).status_code == 400
+        for action in ('workspace-quick-connect','workspace-open-client','workspace-agent-help'):
+            assert client.post('/api/'+action, json={'agent':'cursor','approved':True}, headers=headers).status_code == 400
+    assert safe.personal is None and not (safe.state/'connections.enc').exists()
+
+
+def test_mcp_handshake_receipt_is_for_the_responding_grant_only(safe):
+    from privacy_layer.server import mcp_app
+    from privacy_layer.workspace import Workspace
+    app, _ = mcp_app(GatewayRouter(safe), 8792)
+    workspace = Workspace(safe.g)
+    workspace.seed()
+    with safe.g.store.transaction() as data:
+        first = data['workspace_examples']['codex']
+        other = data['workspace_examples']['claude-desktop']
+    def state(grant):
+        return next(g for g in safe.g.list_grants() if g['id'] == grant['id'])
+    budget = state(first)['remaining']
+    headers = {'Authorization':'Bearer '+first['token'], 'Accept':'application/json, text/event-stream'}
+    hello = {'jsonrpc':'2.0', 'id':1, 'method':'initialize', 'params':{
+        'protocolVersion':'2025-03-26', 'capabilities':{}, 'clientInfo':{'name':'fixture','version':'1'}}}
+    with TestClient(app, base_url='http://127.0.0.1:8792') as client:
+        assert state(first)['last_initialized'] is None
+        client.post('/mcp', json={**hello, 'method':'ping', 'params':{}}, headers=headers).raise_for_status()
+        malformed = client.post('/mcp', json={**hello, 'params':{}}, headers=headers)
+        assert 'error' in malformed.json()
+        assert client.post('/mcp', json=hello, headers={**headers,'Origin':'https://elsewhere.test'}).status_code == 403
+        assert client.post('/mcp', json=hello, headers={**headers,'Authorization':'Bearer invalid'}).status_code == 401
+        assert state(first)['last_initialized'] is None
+        assert state(other)['last_initialized'] is None
+        response = client.post('/mcp', json=hello, headers=headers)
+        assert response.json()['result']['serverInfo']['name'] == 'Airlock'
+        after = state(first)
+        assert after['last_initialized'] is not None and after['remaining'] == budget
+        assert after['last_discovery'] is after['last_call'] is after['last_context_read'] is None
+        assert state(other)['last_initialized'] is None
+        assert next(a for a in workspace.state()['agents'] if a['id']==first['id'])['last_initialized'] == after['last_initialized']
+        safe.g.revoke(first['id'])
+        assert client.post('/mcp', json=hello, headers=headers).status_code == 401
+        assert state(first)['last_initialized'] == after['last_initialized']

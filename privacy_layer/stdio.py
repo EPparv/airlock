@@ -1,37 +1,81 @@
-"""Native MCP stdio bridge. Holds only one scoped agent token, never vault access."""
+"""Forward one local client's MCP requests using its own scoped credential."""
 import argparse
 import json
 from pathlib import Path
 import sys
-from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+
+LIMIT = 1024 * 1024
 
 
 class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self,*args,**kwargs): return None
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def endpoint(session_file, port):
+    if session_file is not None:
+        value = json.loads(session_file.read_text(encoding='utf-8'))
+        url = urlsplit(value['mcp_url'])
+        if (url.scheme != 'http' or url.hostname != '127.0.0.1' or url.path != '/mcp'
+                or url.username or url.password or url.query or url.fragment or not url.port):
+            raise ValueError('Invalid local gateway address')
+        port = url.port
+    return f'http://127.0.0.1:{port}/mcp'
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--token-file',required=True,type=Path);p.add_argument('--port',type=int,default=8792);p.add_argument('--session-file',type=Path);a=p.parse_args()
-    token=a.token_file.read_text().strip()
-    opener=build_opener(ProxyHandler({}),NoRedirect())
-    for line in sys.stdin:
-        request=None
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--token-file', required=True, type=Path)
+    parser.add_argument('--port', type=int, default=8792)
+    parser.add_argument('--session-file', type=Path)
+    args = parser.parse_args()
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    version = None
+    for line in sys.stdin.buffer:
+        request = None
+        message = None
         try:
-            if len(line.encode())>1024*1024: raise ValueError()
-            request=json.loads(line)
-            port=a.port
-            if a.session_file:
-                session=json.loads(a.session_file.read_text());url=urlsplit(session['mcp_url'])
-                if url.scheme!='http' or url.hostname!='127.0.0.1' or url.path!='/mcp' or url.username or url.password or url.query or url.fragment or not url.port:raise ValueError()
-                port=url.port
-            r=Request(f'http://127.0.0.1:{port}/mcp',data=line.encode(),headers={'Authorization':'Bearer '+token,'Content-Type':'application/json','Accept':'application/json, text/event-stream'})
-            with opener.open(r,timeout=90) as response: raw=response.read(1024*1024)
-            if raw: print(raw.decode(),flush=True)
-        except Exception:
-            if isinstance(request,dict) and 'id' in request:
-                print(json.dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32000,'message':'Privacy service unavailable or connection not authorized. Open Airlock to review access.'}}),flush=True)
+            if len(line) > LIMIT:
+                raise ValueError('Request too large')
+            request = json.loads(line)
+            if not isinstance(request, dict):
+                raise ValueError('Invalid client request')
+            # Resolve both per request so reopening Airlock picks up the new
+            # ephemeral port. A missing credential gets an actionable RPC error.
+            headers = {'Authorization':'Bearer ' + args.token_file.read_text(encoding='utf-8').strip(),
+                       'Content-Type':'application/json', 'Accept':'application/json, text/event-stream'}
+            if version is not None and request.get('method') != 'initialize':
+                headers['MCP-Protocol-Version'] = version
+            gateway = Request(endpoint(args.session_file, args.port), data=line, headers=headers)
+            with opener.open(gateway, timeout=90) as response:
+                if 'id' not in request:
+                    # A successful HTTP acknowledgment has no stdio counterpart.
+                    continue
+                raw = response.read(LIMIT + 1)
+                if len(raw) > LIMIT:
+                    raise ValueError('Response too large')
+            reply = json.loads(raw)
+            if not isinstance(reply, dict) or 'id' not in reply or reply['id'] != request['id']:
+                raise ValueError('Invalid local gateway response')
+            if request.get('method') == 'initialize' and 'result' in reply:
+                version = reply['result']['protocolVersion']
+                if not isinstance(version, str) or not version.isascii() or not version.replace('-', '').isdigit():
+                    raise ValueError('Invalid negotiated MCP version')
+            print(json.dumps(reply, separators=(',', ':')), flush=True)
+        except HTTPError as error:
+            if error.code in (401, 403):
+                message = 'Airlock access is closed. Unlock the workspace on this Mac and check the connection’s expiry or revocation.'
+            else:
+                message = 'Airlock’s local gateway rejected the request. Open Airlock and reconnect this agent.'
+        except (OSError, URLError, ValueError, KeyError, TypeError):
+            message = 'Airlock’s local gateway or credential is unavailable. Open Airlock on the Mac running this agent and reconnect.'
+        if message and isinstance(request, dict) and 'id' in request:
+            print(json.dumps({'jsonrpc':'2.0', 'id':request['id'], 'error':{'code':-32000, 'message':message}}), flush=True)
 
 
-if __name__=='__main__':main()
-
+if __name__ == '__main__':
+    main()

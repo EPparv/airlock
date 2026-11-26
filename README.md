@@ -2,22 +2,35 @@
 
 Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives selected, locally filtered context. Sensitive records use private tasks with separate input and result approvals. Useful preferences stay available across sessions.
 
-Download the Mac app: https://epparv.github.io/airlock/
+[Download the Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip)
 
-This is **0.7.0**, now packaged as a Mac app with the shared memory features. No Terminal, separate Python installation or Ollama is needed for the main context flow.
+Version **0.11.5** opens in its own Mac window. The home screen has three controls.
+
+## The workspace
+
+- **Connect agent** lets you choose an installed app or an online agent. Supported clients open with the Airlock privacy check ready. New connections share zero records.
+- **Context & memory** holds memories, reusable skills, imports, linked sources and agent proposals. Search, edit, pin, retire or restrict a record. Review imported records before saving. Skill packages and their generated files are under Skills.
+- **Privacy & connections** contains connected agents, the local redaction tester, app and data permissions, write approvals, disclosure receipts, private inference, diagnostics and app settings. Mail recipients, calendar details and attachments resolve locally. You can give each agent selected fields from a live on-device SQLite database, CSV or JSON file, or a snapshot. Agents can request a write to one configured API endpoint or an append to a specific file. You approve the exact payload. The endpoint receives approved values and the agent receives a receipt.
+
+Only tools routed through Airlock use these policies. Free-text detection is best effort. Providers can retain the excerpts you release. Apple Mail needs a configured sending account, and Calendar needs a writable calendar. macOS may ask for Automation permission. If a write is unconfirmed, check the destination before retrying it.
+
+## Test on iPhone
+
+Open [the iPhone sample](https://try-airlock.parv223885.chatgpt.site/#sample) in Safari. Switch between the writing and planning agents to see which fictional memory each can read. Revoke one agent and switch back to the other. The sample runs in memory and resets when you leave. Anyone with the link can try it without an account.
+
+On iPhone, **Connect agent → Set up on Mac** shares the Mac setup link. To test permissions with your own iPhone vault, open **Privacy & connections → Local test sessions**. Safari stores this vault on your device. Clearing website data removes it. To use Mac records on your phone, open **Privacy & connections → Pair iPhone** on the Mac, enable the HTTPS bridge, select records, and scan the one-time code. You can request an assigned action from your phone and approve it on your Mac.
 
 ## Open and run on Mac
 
-1. Download and unzip **Airlock_Mac_Latest.zip**. Move **Airlock.app** to Applications and open it.
-2. The app installs its pinned runtime automatically, then opens the local control panel in your browser. First setup needs internet.
-3. Run the seven checks in the **fictional test workspace**. Your existing personal library, Gmail and source files stay closed.
-4. Optionally add the separate **airlock-test** connection to Codex, Claude or Cursor. Restart that AI and use the prompts shown. Only allowed fictional records are available through this connection; the AI's other tools and memories are outside Airlock's control.
-5. When ready, explicitly open the personal workspace. Add context, click **Connect my AI**, and select the exact records in the same screen. Nothing is preselected. Connect, restart your AI and paste the first question. Airlock distinguishes saved settings from a real context request. Connections created without a selection still have no record access. Existing approved connections retain their permissions and can resume only while personal access is open.
+1. Unzip the Mac download, move **Airlock.app** to Applications and open it. First setup downloads the pinned runtime. Subsequent launches use the installation on your Mac.
+2. Choose **Context & memory → Memories → Unlock workspace → Add memory**, or import existing context. Personal access opens only after you choose to unlock it.
+3. Choose **Connect agent** and pick an app. For Codex and Cursor, Airlock saves the connection and opens the app with a privacy check ready. You can give it access to selected memories under **Privacy & connections → Connected agents**.
+4. Manage access under **Privacy & connections → Connected agents**. Use **App settings → Lock workspace** to close personal access. To explore with fictional data while locked, choose **Privacy checks**.
 
-Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. New Gmail sign-in is not configured in this public build; existing configured installations retain it.
+Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. For Gmail on a fresh installation, open Apps & data → Gmail search. Choose Connect Gmail if this download includes the publisher’s Google Desktop app, or add your own OAuth client. Gmail reads require consent from the account holder. [Gmail setup](docs/GOOGLE_SIGN_IN.md)
 
 
-The Mac app is ad-hoc signed, **not Apple-notarized**. If macOS blocks it, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the release. A Developer ID certificate and notarization are still required to remove that first-open friction. From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
+The download page shows the signing status for its exact Mac archive. Pull-request testing builds are ad-hoc signed. If macOS blocks one, try opening it, then use System Settings → Privacy & Security → Open Anyway if you trust the build. Public releases can use [Developer ID signing and Apple notarization](docs/MAC_SIGNING.md). From build 67, use **Airlock → Check for Updates → Update and Restart**. The app checks at launch by default; this can be disabled in its menu. Versions before build 67 need one manual replacement to add the updater. Your encrypted Application Support data is preserved, and personal access closes on restart. Numbered downloads are kept in [GitHub Releases](https://github.com/EPparv/airlock/releases). See [update verification and recovery](docs/UPDATES.md).
 
 Your existing AI generates answers with its own account. Optional private-task inference requires separately configured Ollama or NEAR. Those are not required for importing, sharing context, agent connections, or memory proposals and approvals. See [the Mac test steps](docs/MAC.md).
 
@@ -25,7 +38,15 @@ Your existing AI generates answers with its own account. Optional private-task i
 
 The main setup shows common desktop AIs and the records to share together. Manual integrations, connection duration and request limits are under optional controls. Private, retired and stale records are excluded; changing a selected record requires a fresh review before connecting. Memory proposals remain opt-in and owner-reviewed.
 
-Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. A saved settings file is not proof that an AI connected: the UI waits for a real context request.
+Managed connections from an earlier Airlock installation are migrated to the installed app. Settings are backed up first, unrelated connections are preserved, and unknown/custom entries are never overwritten. Invalid configuration errors are distinct from ownership conflicts. The connection screen shows separate status for saved settings, tool discovery, the first tool call and the first context read.
+
+## Connect cloud agents and hand work to another agent
+
+Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
+
+Under **Privacy & connections → Approvals & activity → Agent handoffs**, give one agent an assignment and choose who should receive the outcome. The worker claims the assignment and submits a report. You review and release the exact text for the second agent. Each agent uses its own permissions, and a separately approved memory proposal can outlive the handoff.
+
+Under **Privacy & connections → Data protection → Filter model requests**, create a client key for Ollama on this Mac or your OpenAI API account. Point a compatible client at the displayed base URL with model `airlock`. Airlock screens plain text before dispatch. It rejects unsupported traffic, including native tool calls and attachments. Each connection has its own key, call budget and lifetime. See [gateway behavior](docs/PRIVACY.md).
 
 ## Privacy by default
 
@@ -41,7 +62,7 @@ The updated transfer prompt captures a core profile, detailed projects, dated de
 
 Shared memory lets the owner pin core records, correct imported facts and retire outdated ones. New approved agent notes record source hashes and are withheld if their sources change. Connections show their last successful context request. To learn from ongoing work, enable memory proposals, review them, and include approved notes in the relevant agents' scopes.
 
-Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Retrieval remains local lexical ranking with aliases, not semantic embeddings. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
+Airlock instructs clients to refresh before substantive personalized answers and after compaction. It cannot force a host to call its tools, read hidden conversations, or reproduce a provider's internal memory and model behavior. Airlock combines lexical matches with local associations and, where available, Apple’s on-device English sentence embeddings. You can also import selected user messages from ChatGPT and Claude exports. See [the continuity acceptance test and boundaries](docs/CONTINUITY.md).
 
 ## Developer walkthrough
 
@@ -63,13 +84,13 @@ Expected: tests pass; the site check reports a valid archive and checksum. Provi
 
 ## Use NEAR from the app
 
-On the first screen, choose **Open NEAR private AI**, then **Set up NEAR private AI**. This workspace uses fictional data and does not open personal sources.
+Choose **Privacy & connections → Privacy checks → Private inference walkthrough → Walkthrough NEAR settings**. This workspace uses fictional data and does not open personal sources.
 
 1. Get a key from [NEAR AI Cloud](https://cloud.near.ai) or [NEAR Builders hackathon credits](https://nearbuilders.org/dashboard). Paste it into Airlock's local masked field. Keys remain in process memory only and are cleared on restart.
-2. Click **Install NEAR verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
-3. Click **Verify deployment without sending a prompt**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
-4. Click **Approve and run this test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
-5. Open **Private AI walkthrough**, choose **NEAR**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
+2. Click **Install verifier** if needed. This installs the pinned official SDK and dependencies; it makes no model call.
+3. Click **Verify deployment**. Airlock checks TLS and CPU/GPU evidence, then displays the measured gateway/model configurations. Review and explicitly approve those exact configurations. This pins them for the session; hardware attestation is not a code audit.
+4. Click **Test inference**, review the displayed prompt and choose **Run test**. The displayed synthetic prompt uses no personal context, makes one small billable call, and must return the expected signed result. The UI records actual checks and time; readiness alone is never labelled a live pass.
+5. Open **Inference walkthrough**, choose **NEAR confidential inference**, allow the fictional meeting note, review the request, and generate. The restricted financial note must remain blocked. For real agent requests, Shared memory also requires separate approval before releasing the result to the requesting agent.
 
 The setup route is local and owner-authenticated. It has no Incognito or unverified fallback. The cloud API key is never stored beside the fictional vault key. Live operation still needs the user's key, available credits, supported verification hardware evidence, reviewed deployment configurations and network access. See [the NEAR demo and submission guide](docs/NEAR_LIVE.md).
 

@@ -115,16 +115,19 @@ class AgentMemory:
             for g in d['grants'].values():g['policy_revision']=g.get('policy_revision',0)+1
         return {'saved':True,'message':'Correction saved. Agents must refresh context; already shared copies cannot be recalled.'}
 
-    def configure(self, identifier, records, disclose=False, compute=False, proposals=False, disclose_records=None):
+    def configure(self, identifier, records, disclose=False, compute=False, proposals=False, disclose_records=None, device_permissions=None):
         if not isinstance(records, list) or len(records) > 100 or any(not isinstance(r, str) for r in records):
             raise Denied('Select up to 100 memory or skill records.')
         if any(type(v) is not bool for v in (disclose, compute, proposals)):
             raise Denied('Choose the agent permissions.')
-        rows = self.snapshot()
+        rows = self.snapshot() if records else {}
         if any(not self.allowed(r, rows) for r in records):
             raise Denied('A selected record or its source must stay local.')
         if disclose_records is not None and (not isinstance(disclose_records,list) or any(not isinstance(r,str) or r not in records for r in disclose_records)):
             raise Denied('Excerpt access must be a subset of selected records.')
+        if device_permissions is not None and (not isinstance(device_permissions, dict) or set(device_permissions) != {'mail','calendar'}
+                or any(type(value) is not bool for value in device_permissions.values())):
+            raise Denied('Choose the device permissions.')
         scope = {'records': sorted(set(records)), 'disclose': disclose, 'compute': compute}
         if disclose_records is not None: scope['disclose_records'] = sorted(set(disclose_records))
         with self.g.store.transaction() as d:
@@ -132,6 +135,8 @@ class AgentMemory:
             if not g or g['revoked'] or g['expires'] <= self.g.clock():
                 raise Denied('Choose an active connection.')
             g['scope'] = scope
+            if device_permissions is not None:
+                g['device_permissions'] = dict(device_permissions)
             g['capabilities'] = {'context_updates': proposals, 'skill_execution': False}
             g['policy_revision'] = g.get('policy_revision', 0) + 1
             self.g.audit(d, g, 'scope', 'updated')
@@ -196,6 +201,8 @@ class AgentMemory:
             eligible.append({'ref': self.alias(grant, ref), 'kind': row['kind'], 'text': text,'core':rows[ref].get('core',False),
                            'citation': f'[A{len(eligible)+1}]', 'evidence_type': 'owner-selected context; not independent verification',
                            'revision': rows[ref].get('revision', 0)})
+            if rows[ref].get('chat_source'):
+                eligible[-1]['evidence_type'] = 'Owner-selected conversation excerpt. It may be a question, quotation or historical statement.'
             if rows[ref].get('shared_reference'):
                 eligible[-1]['shared_reference'] = rows[ref]['shared_reference']
         from .continuity import select
@@ -244,7 +251,7 @@ class AgentMemory:
             pending = d.setdefault('memory_proposals', {})
             if sum(p['status'] == 'pending' for p in pending.values()) >= 50:
                 raise Denied('Review pending memory proposals before adding more.')
-            pending[key] = {'id': key, 'grant_id': grant['id'], 'agent': grant['agent'], 'operation': operation,
+            pending[key] = {'id': key, 'grant_id': grant['id'], 'agent': (grant['display_name']+' · '+grant['id'][-6:]) if grant.get('display_name') else grant['agent'], 'operation': operation,
                             'kind': kind, 'text': safe, 'reference': reference, 'expected_revision': expected_revision,
                             'parents': parents, 'source_hashes': {p: digest(rows[p]) for p in parents},
                             'policy_revision': grant.get('policy_revision'), 'at': self.g.clock(),
@@ -338,7 +345,7 @@ class PrivateTasks:
     def prepare(self, grant, instruction, records, route='local'):
         body, sources, destination = self.body(grant, instruction, records, route)
         task_id = 'task_' + secrets.token_hex(12)
-        task = {'id': task_id, 'grant_id': grant['id'], 'agent': grant['agent'], 'instruction': instruction,
+        task = {'id': task_id, 'grant_id': grant['id'], 'agent': (grant['display_name']+' · '+grant['id'][-6:]) if grant.get('display_name') else grant['agent'], 'instruction': instruction,
                 'records': records, 'route': route, 'destination': destination, 'payload': body.decode(),
                 'sha256': hashlib.sha256(body).hexdigest(), 'source_hashes': sources,
                 'policy_revision': grant.get('policy_revision'), 'expires': min(grant['expires'], self.g.clock()+600),
