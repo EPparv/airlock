@@ -236,6 +236,9 @@ def test_dns_pending_exposes_one_page_and_unlocks_after_owner_redeems(bundle):
         assert c.post('/v1/privacy_status', json={}, headers={'Authorization':'Bearer '+token}).status_code == 404
         for endpoint in ['/phone','/openapi.json','/api/state','/mcp','/v1/privacy_status']:
             assert c.get(endpoint).status_code == 404
+        browser = {'Origin':'https://importer.example.org'}
+        unverified = c.head('/openapi.json', headers=browser)
+        assert unverified.status_code == 404 and 'access-control-allow-origin' not in unverified.headers
         assert c.get(path).status_code == 403
         local = c.get(path, headers={'Host':'127.0.0.1:8794'})
         assert local.status_code == 204 and check.code not in local.text
@@ -253,6 +256,8 @@ def test_dns_pending_exposes_one_page_and_unlocks_after_owner_redeems(bundle):
         assert remote.state()['verification'] is None
         assert c.get(path,headers={'cf-ray':'aabbccddeeff0011-IAD'}).status_code == 404
         assert c.get('/openapi.json').json()['servers'] == [{'url':ORIGIN}]
+        imported = c.head('/openapi.json', headers=browser)
+        assert imported.status_code == 200 and imported.headers['access-control-allow-origin'] == '*'
         assert not c.post('/v1/privacy_status', json={}, headers={'Authorization':'Bearer '+token}).is_success
         grant=remote.create('muse',60,2)
         assert c.post('/v1/privacy_status',json={},headers={'Authorization':'Bearer '+grant['credential']}).status_code == 200
@@ -292,3 +297,16 @@ def test_system_resolver_failure_leaves_device_option():
     pending = quick_tunnel.verify_route(ORIGIN, threading.Event(), LinkCheck(lambda:0),
                                         transport=httpx.MockTransport(no_dns),seconds=0)
     assert pending is False
+
+
+@pytest.mark.parametrize('fault', ['timeout','connect','browser'])
+def test_local_network_restrictions_keep_external_device_verification_available(fault):
+    import httpx
+    def edge(request):
+        if fault == 'browser':
+            return httpx.Response(403,headers={'cf-mitigated':'challenge'})
+        if fault == 'timeout':
+            raise httpx.ReadTimeout('local network timeout', request=request)
+        raise httpx.ConnectError('local network unreachable', request=request)
+    assert quick_tunnel.verify_route(ORIGIN, threading.Event(), LinkCheck(lambda:0),
+                                     transport=httpx.MockTransport(edge), seconds=0) is False

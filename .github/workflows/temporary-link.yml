@@ -78,6 +78,14 @@ jobs:
           path: ${{ runner.temp }}/airlock-proof
       - name: Deliver the public challenge response to the Mac owner
         run: mv "$RUNNER_TEMP/airlock-proof/proof.json" "$RUNNER_TEMP/airlock-route/proof.json"
+      - name: Wait for grants encrypted to the external witness
+        run: python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route" --name sealed.json --seconds 60
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airlock-route-sealed-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route/sealed.json
+          retention-days: 1
+          if-no-files-found: error
       - name: Wait for the external discovery check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,7 +150,17 @@ jobs:
           path: ${{ runner.temp }}/airlock-route/proof.json
           retention-days: 1
           if-no-files-found: error
-      - name: Check the publicly confirmed endpoint and authentication boundary
+      - name: Wait for the encrypted one-call grants from the Mac
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/smoke_quick_link.py wait-artifact "$RUNNER_TEMP/airlock-route" \
+            --name "airlock-route-sealed-$GITHUB_RUN_ATTEMPT" --peer "Disposable Mac tunnel" --seconds 200
+      - uses: actions/download-artifact@v4
+        with:
+          name: airlock-route-sealed-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/airlock-route
+      - name: Verify authorized external HTTPS calls and the private owner boundary
         run: python3 scripts/smoke_quick_link.py discovery "$RUNNER_TEMP/airlock-route"
       - uses: actions/upload-artifact@v4
         with:

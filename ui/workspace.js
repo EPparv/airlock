@@ -1,12 +1,12 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const preview = typeof window.airlockExample === 'function';
-const personal = !preview && location.pathname.endsWith('/personal');
+const personal = !preview && localWorkspaceOrigin() && location.pathname === '/workspace/personal';
 const tokenKey = personal ? 'private-ai-owner' : 'airlock-test-owner';
 const enteringPersonal = personal && Boolean(location.hash.slice(1));
-const owner = preview ? '' : location.hash.slice(1) || sessionStorage.getItem(tokenKey) || '';
+const owner = preview ? '' : localSessionToken(tokenKey);
 if (owner) sessionStorage.setItem(tokenKey, owner);
-if (!preview && location.hash) history.replaceState(history.state, '', location.pathname + location.search);
+if (!preview && localWorkspaceOrigin() && location.hash) history.replaceState(history.state, '', location.pathname + location.search);
 const names = {
   'claude-desktop': 'Claude Desktop',
   'claude-code': 'Claude Code',
@@ -120,7 +120,16 @@ function flash(message) {
   }, 6500);
 }
 
-function errorAt(message) {
+function errorAt(error) {
+  if (error instanceof WorkspaceConnectionError) {
+    const host = $('dialog').open ? $('dialog-content') : $('app').firstElementChild?.lastElementChild;
+    if (host) {
+      if (!$('dialog').open) host.replaceChildren();
+      renderWorkspaceRecovery(host, error);
+      return;
+    }
+  }
+  const message = typeof error === 'string' ? error : error.message || 'The change could not be saved.';
   if ($('dialog').open) {
     $('dialog-error').textContent = message;
     $('dialog-error').hidden = false;
@@ -140,7 +149,7 @@ function run(fn) {
       if ($('dialog').open) $('dialog-error').hidden = true;
       await fn(event);
     } catch (e) {
-      errorAt(e.message || 'The change could not be saved.');
+      errorAt(e);
     } finally {
       if (b) {
         delete b.dataset.busy;
@@ -241,29 +250,64 @@ function previewSetupLink() {
 }
 async function api(action, body = {}, override) {
   if (preview) return window.airlockExample(action, body);
-  const token = override ?? owner;
-  if (!token) throw Error('Open Airlock.app to reconnect.');
-  const r = await fetch('/api/' + action, {
-    method: 'POST',
-    headers: {
-      Authorization: 'Bearer ' + token,
-      'Content-Type': 'application/json'
-    },
-    cache: 'no-store',
-    body: JSON.stringify(body)
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Error(data.error || (r.status === 401 ? 'Access has closed. Reopen Airlock.' :
-    'Airlock could not complete this request.'));
-  return data;
+  try {
+    return await workspaceRequest(action, body, override ?? owner);
+  } catch (error) {
+    if (error instanceof WorkspaceConnectionError) error.canUnlock = personal && override === undefined && !!testToken();
+    throw error;
+  }
 }
 
 function testToken() {
-  return preview ? '' : sessionStorage.getItem('airlock-test-owner') || (!personal ? owner : '');
+  return preview || !localWorkspaceOrigin() ? '' : sessionStorage.getItem('airlock-test-owner') || (!personal ? owner : '');
 }
 
 function testAPI(action, body = {}) {
   return api(action, body, testToken());
+}
+
+function renderWorkspaceRecovery(host, error) {
+  host.querySelector('.workspace-recovery')?.remove();
+  const card = el('section', null, 'workspace-recovery');
+  card.setAttribute('role', 'alert');
+  const titles = {offline:'Airlock is offline', session:'Open Airlock again', origin:'Open the Mac workspace',
+    version:'Update Airlock', response:'Unexpected workspace response'};
+  const native = localWorkspaceOrigin() && window.webkit?.messageHandlers?.airlockSettings;
+  card.append(el('h2', titles[error.kind], 'handoff-status'));
+  const stages = {
+    'workspace-launch-options':'The agent list couldn’t load.',
+    'workspace-quick-connect':'The launch request may have reached Airlock. Check the agent before trying again.',
+    'workspace-open-client':'The request to reopen the agent may have reached Airlock.',
+    'remote-connect':'The connection request may have reached Airlock. Check the agent before trying again.',
+    'client-status':'This tab couldn’t verify the agent’s latest activity.',
+    'open-personal':'This tab couldn’t confirm whether the workspace unlocked.'
+  };
+  if (['offline','response'].includes(error.kind) && stages[error.action]) note(card, stages[error.action]);
+  if (error.kind === 'session' && error.canUnlock) note(card, 'Unlock your workspace to start a fresh session.');
+  else if (error.kind === 'offline' && native) note(card, 'Reconnect to the local service on this Mac.');
+  else note(card, error.message);
+  const destination = ['connect','other-agents','agent','agent-handoff','remote-create','remote-handoff','dot'].includes(page) ? 'connect' : 'home';
+  const actions = el('div', null, 'buttons');
+  if (error.kind === 'session' && error.canUnlock) {
+    actions.append(button('Unlock workspace', () => enterPersonal(destination, {}), 'primary'));
+  } else if (native && error.kind !== 'version') {
+    actions.append(button('Reconnect Airlock', () => native.postMessage({action:'reconnect'}), 'primary'));
+  } else if (error.kind === 'offline' || error.kind === 'response') {
+    actions.append(button('Check connection', async () => {
+      // A launch may have succeeded even if its reply was lost. Only test the current session.
+      await (personal ? api : testAPI)('workspace-launch-options');
+      close();
+      await go(destination);
+      if (!$('app').querySelector('.workspace-recovery')) flash('Workspace reconnected.');
+    }, 'primary'));
+  } else if (error.kind === 'version') {
+    if (native) actions.append(button('Check for update', () => native.postMessage({action:'check'}), 'primary'));
+    else actions.append(previewSetupLink());
+  } else if (error.kind === 'origin') {
+    actions.append(previewSetupLink());
+  }
+  if (actions.childElementCount) card.append(actions);
+  host.append(card);
 }
 async function copyText(text) {
   try {
@@ -324,10 +368,11 @@ async function enterPersonal(target, options, selectedAgent) {
   openingWorkspace = true;
   try {
     const result = await testAPI('open-personal', {approved: true});
+    const hash = personalSessionHash(result.url);
     const intent = {target, options};
     if (selectedAgent) intent.agentApproval = {agent:selectedAgent, at:Date.now()};
     sessionStorage.setItem('airlock-next-view', JSON.stringify(intent));
-    location.replace('/workspace/personal' + new URL(result.url).hash);
+    location.replace('/workspace/personal' + hash);
   } catch (error) {
     openingWorkspace = false;
     throw error;
@@ -351,7 +396,7 @@ function go(key, options = {}, push = true) {
   page = key;
   params = options;
   flash('');
-  if (push && !preview) {
+  if (push && !preview && localWorkspaceOrigin()) {
     const dest = location.pathname + (key === 'home' ? '' : '?view=' + encodeURIComponent(key));
     history.pushState({
       view: key,
@@ -403,8 +448,10 @@ async function render(navigated = true) {
   document.title = key === 'home' ? 'Airlock' : cfg.title + ' · Airlock';
   body.setAttribute('aria-busy', 'true');
   try {
-    if (preview && key === 'connect' && !usingExampleAgents) {
-      note(body, 'Connect your agent on a Mac, or try a sample here with fictional data.');
+    if (!preview && !localWorkspaceOrigin()) {
+      renderWorkspaceRecovery(body, new WorkspaceConnectionError('origin', '', 'Open Airlock on your Mac to use the live workspace.'));
+    } else if (preview && key === 'connect' && !usingExampleAgents) {
+      note(body, 'This preview uses fictional data. Open Airlock on your Mac to connect a real agent.');
       const options = el('div', null, 'buttons');
       options.append(previewSetupLink(), button('Try sample agents', () => {
         usingExampleAgents = true;
@@ -416,8 +463,13 @@ async function render(navigated = true) {
     }
   } catch (e) {
     if (id === sequence) {
-      empty(body, e.message);
-      body.append(button('Try again', refresh));
+      if (e instanceof WorkspaceConnectionError) {
+        body.replaceChildren();
+        renderWorkspaceRecovery(body, e);
+      } else {
+        empty(body, e.message);
+        body.append(button('Try again', refresh));
+      }
     }
   } finally {
     body.removeAttribute('aria-busy');
@@ -458,7 +510,7 @@ function lockWorkspace() {
 document.addEventListener('DOMContentLoaded', async () => {
   let key = 'home',
     data = {}, chosenAgent;
-  if (!preview) {
+  if (!preview && localWorkspaceOrigin()) {
     const intent = personal && sessionStorage.getItem('airlock-next-view');
     if (intent) {
       sessionStorage.removeItem('airlock-next-view');
@@ -481,7 +533,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, '', location.pathname + (key === 'home' ? '' : '?view=' + encodeURIComponent(key)));
   }
   await go(key, data, false);
-  if (chosenAgent) await startAgentConnection(chosenAgent);
+  if (chosenAgent && !$('app').querySelector('.workspace-recovery')) {
+    try { await startAgentConnection(chosenAgent); } catch (error) { errorAt(error); }
+  }
 });
 window.addEventListener('popstate', e => {
   go(e.state?.view || 'home', e.state?.options || {}, false);

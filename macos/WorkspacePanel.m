@@ -24,6 +24,8 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
 @property(nonatomic,weak) NSWindow *window;
 @property(nonatomic,strong) NSURL *entry;
 @property(nonatomic,copy) void (^checkUpdates)(void);
+@property(nonatomic,copy) void (^reconnect)(void);
+@property(nonatomic,copy) void (^loadFailed)(void);
 @property(nonatomic,copy) void (^setAutomatic)(BOOL);
 - (instancetype)initWithWindow:(NSWindow *)window entry:(NSURL *)entry;
 - (void)detach;
@@ -76,6 +78,13 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
     }
     decide(WKNavigationActionPolicyCancel);
 }
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    if ([error.domain isEqual:NSURLErrorDomain] && error.code!=NSURLErrorCancelled && self.loadFailed)
+        self.loadFailed();
+}
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    [self webView:webView didFailProvisionalNavigation:navigation withError:error];
+}
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
     [webView loadRequest:[NSURLRequest requestWithURL:self.entry]];
 }
@@ -101,6 +110,9 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
     } else if ([action isEqual:@"automatic"] && [value[@"enabled"] isKindOfClass:NSNumber.class] && self.setAutomatic) {
         self.setAutomatic([value[@"enabled"] boolValue]);
         reply(@YES,nil);
+    } else if ([action isEqual:@"reconnect"] && self.reconnect) {
+        reply(@YES,nil);
+        dispatch_async(dispatch_get_main_queue(),self.reconnect);
     } else if ([action isEqual:@"check"] && self.checkUpdates) {
         reply(@YES,nil);
         dispatch_async(dispatch_get_main_queue(),self.checkUpdates);

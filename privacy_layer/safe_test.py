@@ -1,4 +1,5 @@
 """Isolated first-run checks. Personal sources are constructed only after opt-in."""
+import asyncio
 import copy
 import json
 import os
@@ -55,16 +56,16 @@ class GatewayRouter:
     def __init__(self, controller):
         self.controller = controller
 
-    def authenticate(self, token, *, discovered=False):
+    def authenticate(self, token, *, discovered=False, initialized=False):
         """The HTTP boundary authenticates before dispatching any MCP method."""
         c = self.controller
         try:
-            return c.g.authenticate(token, discovered=discovered)
+            return c.g.authenticate(token, discovered=discovered, initialized=initialized)
         except Denied:
             personal = c.personal
             if personal is None:
                 raise Denied('Personal access is closed.') from None
-            result = personal.authenticate(token, discovered=discovered)
+            result = personal.authenticate(token, discovered=discovered, initialized=initialized)
             if c.personal is not personal:
                 raise Denied('The personal workspace closed during authentication.')
             return result
@@ -264,7 +265,7 @@ class SafeTest:
             if isinstance(error,Denied):raise
             raise Denied('The test connection could not be installed. Its access was revoked.') from None
 
-    def open_personal(self, approved, port):
+    def open_personal(self, approved, port, host=None):
         if approved is not True:
             raise Denied('Confirm before opening personal sources and previously approved connections.')
         with self.lock:
@@ -278,11 +279,12 @@ class SafeTest:
                 token = secrets.token_urlsafe(32)
                 app = owner_app(personal, token, port)
                 self.personal, self.personal_app, self.personal_token = personal, app, token
-            return {'url':f'http://127.0.0.1:{port}/personal#'+self.personal_token}
+            authority = f'localhost:{port}' if host == f'localhost:{port}' else f'127.0.0.1:{port}'
+            return {'url':f'http://{authority}/personal#'+self.personal_token}
 
     def app(self, owner_token, port):
         async def asset(req):
-            name = {'/workspace':'workspace.html',**WORKSPACE_ASSETS,'/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
+            name = {'/workspace':'workspace.html','/workspace/personal':'workspace.html',**WORKSPACE_ASSETS,'/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
             if not name:return Response(status_code=404)
             return FileResponse(self.root/'ui'/name,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
                 'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
@@ -322,7 +324,8 @@ class SafeTest:
                 elif action=='test-disconnect':
                     for key in self.metadata()['live']:self.g.revoke(key)
                     result={'revoked':True}
-                elif action=='open-personal':result=self.open_personal(body['approved'],port)
+                elif action=='open-personal':
+                    result=await asyncio.to_thread(self.open_personal, body['approved'], port, req.headers.get('host'))
                 else:
                     with self.lock:
                         closing = self.personal_app
@@ -337,7 +340,7 @@ class SafeTest:
             except (Denied,ValueError,TypeError) as e:return JSONResponse({'error':str(e)},status_code=400)
             except Exception:return JSONResponse({'error':'The test could not finish. Review the workspace status, or reopen Airlock to close personal access.'},status_code=400)
 
-        test_app=Starlette(routes=[Route('/workspace',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+        test_app=Starlette(routes=[Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
         near_app = None
         async def dispatch(scope, receive, send):
             nonlocal near_app

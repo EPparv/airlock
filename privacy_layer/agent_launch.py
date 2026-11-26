@@ -69,11 +69,7 @@ def open_setup_help(agent):
 
 
 def _cli(command):
-    home = Path.home()
-    roots = [p for p in os.get_exec_path() if os.path.isabs(p)]
-    roots += ['/opt/homebrew/bin', '/usr/local/bin', str(home/'.local/bin'), str(home/'.bun/bin'),
-              str(home/'.npm-global/bin'), str(home/'.local/share/mise/shims')]
-    return shutil.which(command, path=os.pathsep.join(roots))
+    return shutil.which(command, path=clients.executable_path(Path.home()))
 
 
 def _work_folder(*parts):
@@ -114,8 +110,16 @@ def _terminal(agent):
         '#!/bin/sh', 'set -eu', 'umask 077',
         'cd -- ' + shlex.quote(str(folder)),
         '/bin/rm -f -- "$0"',
-        'export PATH=' + shlex.quote(str(Path(binary).parent)) + ':"$PATH"',
+        'export PATH=' + shlex.quote(str(Path(binary).parent) + os.pathsep + clients.executable_path(Path.home())) + ':"$PATH"',
     ]
+    # Terminal is another existing macOS process. Match the profile Airlock
+    # configured even when that process inherited a different shell environment.
+    profile_vars = {'codex': ('CODEX_HOME',), 'claude-code': ('CLAUDE_CONFIG_DIR',),
+                    'gemini-cli': ('GEMINI_CLI_HOME',), 'muse-code': ('XDG_CONFIG_HOME',),
+                    'openclaw': ('OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE')}
+    for key in profile_vars.get(agent, ()):
+        value = os.environ.get(key)
+        lines.append('export ' + key + '=' + shlex.quote(value) if value else 'unset ' + key)
     if agent == 'muse-code':
         # Muse exec runs a model turn. Show the exact request and leave dispatch to the user.
         lines.extend([
@@ -123,7 +127,16 @@ def _terminal(agent):
             "printf '%s' 'Press Return to run this in Muse Code, or close the window to cancel. '",
             'IFS= read -r confirm', '[ -z "$confirm" ] || exit 0',
         ])
-    lines.append('exec ' + shlex.join((binary, *arguments)))
+    if agent == 'gemini-cli':
+        # With folder trust enabled, Gemini's noninteractive list command only
+        # prints a warning. Open its own interactive trust dialog in that folder.
+        lines += [
+            'report=$(' + shlex.join((binary, *arguments)) + ' 2>&1) || { printf "%s\\n" "$report"; exit 1; }',
+            'printf "%s\\n" "$report"',
+            'case "$report" in *"because this folder is untrusted"*) exec ' + shlex.quote(binary) + ' ;; esac',
+        ]
+    else:
+        lines.append('exec ' + shlex.join((binary, *arguments)))
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as out:
             os.fchmod(out.fileno(), 0o700)
@@ -145,17 +158,18 @@ def _vscode():
     if config.stat().st_size > 2 * 1024 * 1024:
         raise ValueError('Unexpected Copilot configuration size')
     registered = json.loads(config.read_text(encoding='utf-8'), object_pairs_hook=clients.unique_keys)
-    entry = registered.get('mcpServers', {}).get(clients.SERVER)
+    servers = registered.get('mcpServers') if isinstance(registered, dict) else None
+    entry = servers.get(clients.SERVER) if isinstance(servers, dict) else None
     if not isinstance(entry, dict) or not isinstance(entry.get('args'), list) or len(entry['args']) not in (3, 5):
         raise ValueError('Missing Airlock connection')
     token = Path(entry['args'][2])
     if (token.parent != clients.ROOT/'.private/clients' or not token.name.startswith('vscode-')
-            or token.suffix != '.token' or entry != {'type':'stdio', **clients.server_entry(token)}):
+            or token.suffix != '.token' or entry != {'type':'stdio', 'tools':['*'], **clients.server_entry(token)}):
         raise ValueError('Unexpected server registration')
     root = _work_folder('vscode', token.stem)
     server_dir = _work_folder('vscode', token.stem, '.vscode')
     prompts = _work_folder('vscode', token.stem, '.github', 'prompts')
-    _write_private(server_dir/'mcp.json', json.dumps({'servers': {'airlock': entry}}))
+    _write_private(server_dir/'mcp.json', json.dumps({'servers': {'airlock': {'type':'stdio', **clients.server_entry(token)}}}))
     prompt = prompts/'airlock-status.prompt.md'
     _write_private(prompt, "---\ndescription: Check the Airlock connection\ntools: ['airlock/privacy_status']\n---\n\n"
                    + STATUS_PROMPT + '\n')
@@ -173,7 +187,12 @@ def open_agent(agent):
     try:
         if agent in DESKTOP:
             name, bundle_id, base = DESKTOP[agent]
-            if _open(bundle_id, base + quote(STATUS_PROMPT, safe='')):
+            url = base + quote(STATUS_PROMPT, safe='')
+            if agent == 'codex':
+                # The combined ChatGPT desktop app can have a remote or non-Codex
+                # chat active. Select an explicit local workspace for the stdio server.
+                url += '&path=' + quote(str(_work_folder(agent)), safe='')
+            if _open(bundle_id, url):
                 return _result('draft', f'Opened {name} with the Airlock status request ready to send.')
             if agent not in TERMINAL_CHECKS:
                 return _result('unavailable', f'Install the Mac app for {name}, then choose Connect again.')

@@ -48,9 +48,11 @@ int main(int argc,const char *argv[]) {
     @autoreleasepool {
         require(argc==3,@"Expected a vendor key and a bundle path.");
         NSString *agent=[NSString stringWithUTF8String:argv[1]];
-        NSString *name=[agent isEqual:@"codex"]?@"Codex":@"Cursor";
-        NSString *identifier=[agent isEqual:@"codex"]?@"com.openai.codex":@"com.todesktop.230313mzl4w4u92";
-        require([agent isEqual:@"codex"] || [agent isEqual:@"cursor"],@"Unknown test agent.");
+        NSDictionary *names=@{@"codex":@"Codex", @"cursor":@"Cursor", @"claude-desktop":@"Claude Desktop"};
+        NSDictionary *identifiers=@{@"codex":@"com.openai.codex", @"cursor":@"com.todesktop.230313mzl4w4u92",
+                                     @"claude-desktop":@"com.anthropic.claudefordesktop"};
+        NSString *name=names[agent], *identifier=identifiers[agent];
+        require(name != nil && identifier != nil, @"Unknown test agent.");
         NSBundle *installed=[NSBundle bundleWithPath:[NSString stringWithUTF8String:argv[2]]];
         require([installed.bundleIdentifier isEqual:identifier],@"Unexpected vendor bundle.");
         NSURL *entry=[NSURL URLWithString:NSProcessInfo.processInfo.environment[@"AIRLOCK_VENDOR_WORKSPACE"]];

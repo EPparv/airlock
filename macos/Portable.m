@@ -1,5 +1,7 @@
 #import "WorkspacePanel.m"
 #import <sys/stat.h>
+#import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <signal.h>
 
 @interface PrivacyLauncher : NSObject <NSApplicationDelegate, NSURLSessionTaskDelegate>
@@ -15,6 +17,7 @@
 @property NSURL *url;
 @property NSNumber *serverPID;
 @property BOOL preparing;
+@property BOOL needsFreshEntry;
 @property BOOL quitting;
 @property BOOL updating;
 @property BOOL updateReady;
@@ -32,14 +35,29 @@
  if(![record isKindOfClass:NSDictionary.class]||![record[@"url"] isKindOfClass:NSString.class]||![record[@"owner_token"] isKindOfClass:NSString.class]||![record[@"pid"] isKindOfClass:NSNumber.class])return nil;
  NSURL *url=[NSURL URLWithString:record[@"url"]];
  if(![url.scheme isEqual:@"http"]||![url.host isEqual:@"127.0.0.1"]||url.user||url.password||url.port.integerValue<1||url.port.integerValue>65535)return nil;
- NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@/api/state",url.port]] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:2];
- request.HTTPMethod=@"POST";request.HTTPBody=[@"{}" dataUsingEncoding:NSUTF8StringEncoding];
- [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
- [request setValue:[@"Bearer " stringByAppendingString:record[@"owner_token"]] forHTTPHeaderField:@"Authorization"];
+ BOOL verifiesListener=[record[@"session_check"] isEqual:@1];
+ NSString *pathPart=verifiesListener?@"/_airlock/session":@"/api/state";
+ NSURL *probe=[NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@%@",url.port,pathPart]];
+ NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:probe cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:2];
+ NSData *expected=nil;
+ if(verifiesListener){
+  NSString *challenge=NSUUID.UUID.UUIDString.lowercaseString;
+  NSData *message=[[@"Airlock session v1 " stringByAppendingString:challenge] dataUsingEncoding:NSUTF8StringEncoding];
+  NSData *key=[record[@"owner_token"] dataUsingEncoding:NSUTF8StringEncoding];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CCHmac(kCCHmacAlgSHA256,key.bytes,key.length,message.bytes,message.length,digest);
+  expected=[[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedDataWithOptions:0];
+  [request setValue:challenge forHTTPHeaderField:@"X-Airlock-Challenge"];
+ }else{
+  // Older releases expose only the authenticated state check.
+  request.HTTPMethod=@"POST";request.HTTPBody=[@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+  [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [request setValue:[@"Bearer " stringByAppendingString:record[@"owner_token"]] forHTTPHeaderField:@"Authorization"];
+ }
  NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;config.connectionProxyDictionary=@{};
  NSURLSession *session=[NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
  dispatch_semaphore_t done=dispatch_semaphore_create(0);__block BOOL ok=NO;
- [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){ok=!error&&[(NSHTTPURLResponse *)response statusCode]==200;dispatch_semaphore_signal(done);}] resume];
+ [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){ok=!error&&[(NSHTTPURLResponse *)response statusCode]==200&&(!expected||[expected isEqual:data]);dispatch_semaphore_signal(done);}] resume];
  dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC));[session invalidateAndCancel];return ok?record:nil;
 }
 - (NSTextField *)label:(NSString *)text frame:(NSRect)frame size:(CGFloat)size {
@@ -77,11 +95,17 @@
  [self.window center];[self.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];[self prepare];
 }
 - (void)ready:(NSDictionary *)record {
- dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;[self.panel detach];
+ dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.needsFreshEntry=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;[self.panel detach];
   self.panel=[[AirlockPanel alloc] initWithWindow:self.window entry:self.url];
   __weak PrivacyLauncher *weakSelf=self;
   self.panel.setAutomatic=^(BOOL enabled){[weakSelf setAutomaticUpdates:enabled];};
   self.panel.checkUpdates=^{[weakSelf checkUpdates:YES];};
+  self.panel.reconnect=^{[weakSelf revalidatePanel:YES];};
+  self.panel.loadFailed=^{
+   PrivacyLauncher *launcher=weakSelf;
+   [launcher.panel detach];launcher.panel=nil;launcher.window.contentView=launcher.startup;
+   [launcher failed];
+  };
   self.window.contentView=self.panel.view;[self.window makeKeyAndOrderFront:nil];[self.window makeFirstResponder:self.panel.view];
   if(!self.checkedAutomatically){self.checkedAutomatically=YES;
    if([NSProcessInfo.processInfo.arguments containsObject:@"--update-restored"])[self alert:@"Previous version restored" message:@"The update could not start. Airlock restored the previous app. Your library has not been reset."];
@@ -90,15 +114,19 @@
  });
 }
 - (void)failed {
- dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Setup could not finish. Check your internet connection and try again.";[self.window makeKeyAndOrderFront:nil];});
+ dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Airlock’s local service could not start. Try opening it again.";[self.window makeKeyAndOrderFront:nil];});
 }
 - (void)prepare {
- if(self.preparing)return;self.preparing=YES;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
+ if(self.preparing||self.updating||self.quitting)return;self.preparing=YES;self.window.contentView=self.startup;self.detail.stringValue=@"Opening Airlock…";self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   NSString *resource=NSBundle.mainBundle.resourcePath;
   NSDictionary *release=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[resource stringByAppendingPathComponent:@"payload/release.json"]] options:0 error:nil];
   NSDictionary *existing=[self session];
-  if(existing&&[existing[@"version"] isEqual:release[@"version"]]&&[existing[@"mode"] isEqual:@"safe-test"]){[self ready:existing];return;}
+  NSString *runningVersion=existing[@"version"], *bundledVersion=release[@"version"];
+  if([runningVersion isKindOfClass:NSString.class]&&[bundledVersion isKindOfClass:NSString.class]&&
+     [runningVersion compare:bundledVersion options:NSNumericSearch]!=NSOrderedAscending&&[existing[@"mode"] isEqual:@"safe-test"]){
+   [self ready:existing];return;
+  }
   if(existing){
    // Replace only this installation's authenticated service; keep its vault and key.
    int pid=[existing[@"pid"] intValue];if(pid<=1){[self failed];return;}
@@ -168,9 +196,28 @@
   dispatch_async(dispatch_get_main_queue(),^{self.updating=NO;if(self.quitting)return;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;if(self.panel)self.window.contentView=self.panel.view;[self alert:@"Update not installed" message:state[@"message"]?:@"The update could not be verified or downloaded. Your current app is unchanged. Try again from Check for Updates."];});
  });
 }
-- (void)openPanel:(id)sender { [self.window makeKeyAndOrderFront:nil];if(self.preparing||self.updating||self.panel)return;[self prepare]; }
+- (void)revalidatePanel:(BOOL)freshEntry {
+ if(self.updating||self.quitting)return;
+ if(freshEntry)self.needsFreshEntry=YES;
+ if(self.preparing)return;
+ if(!self.panel){[self prepare];return;}
+ self.preparing=YES;
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+  NSDictionary *record=[self session];
+  dispatch_async(dispatch_get_main_queue(),^{
+   self.preparing=NO;
+   if(self.quitting||self.updating)return;
+   BOOL sameService=[record[@"url"] isEqual:self.url.absoluteString]&&[record[@"pid"] isEqual:self.serverPID];
+   if(sameService&&!self.needsFreshEntry)return;
+   [self.panel detach];self.panel=nil;
+   if(sameService){[self ready:record];return;}
+   [self prepare];
+  });
+ });
+}
+- (void)openPanel:(id)sender { [self.window makeKeyAndOrderFront:nil];[self revalidatePanel:NO]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self openPanel:nil];return YES; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];if(self.updateTask.running&&!self.updateReady)[self.updateTask terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];if(self.updateTask.running&&!self.updateReady)[self.updateTask terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID]&&[live[@"url"] isEqual:self.url.absoluteString])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
 @end
 int main(int argc,const char *argv[]){@autoreleasepool{umask(0077);NSApplication *app=NSApplication.sharedApplication;PrivacyLauncher *delegate=[PrivacyLauncher new];app.delegate=delegate;[app setActivationPolicy:NSApplicationActivationPolicyRegular];[app run];}return 0;}

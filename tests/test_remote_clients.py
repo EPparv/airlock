@@ -188,3 +188,46 @@ def test_muse_handoffs_and_ironclaw_manifest(cloud):
     assert client.post('/v1/claim_agent_handoff', json={'reference': handle}, headers=headers).status_code == 200
     submitted = client.post('/v1/submit_agent_handoff', json={'reference': handle, 'result':'Checklist ready'}, headers=headers)
     assert submitted.status_code == 200
+
+
+def test_readonly_public_schema_import_from_a_browser(cloud):
+    _, _, remote, client = cloud
+    before = remote.state()
+    headers = {'Origin':'https://importer.example.org'}
+    get = client.get('/openapi.json', headers=headers)
+    assert get.status_code == 200 and get.json()['servers'] == [{'url':'https://bridge.example.net'}]
+    head = client.head('/openapi.json', headers=headers)
+    assert head.status_code == 200 and head.content == b''
+    assert head.headers['content-length'] == get.headers['content-length']
+    assert head.headers['content-type'] == get.headers['content-type']
+    for method in ('GET','HEAD'):
+        preflight = client.options('/openapi.json',headers={**headers,
+            'Access-Control-Request-Method':method,'Access-Control-Request-Headers':'Accept, Content-Type'})
+        assert preflight.status_code == 204 and not preflight.content
+        assert set(preflight.headers['access-control-allow-methods'].split(', ')) == {'GET','HEAD'}
+        assert 'authorization' not in preflight.headers.get('access-control-allow-headers','').lower()
+        for reply in (get,head,preflight):
+            assert reply.headers['access-control-allow-origin'] == '*'
+            assert 'access-control-allow-credentials' not in reply.headers
+    assert remote.state() == before
+
+
+def test_schema_import_never_grants_credentialed_or_private_cors(cloud):
+    _, _, _, client = cloud
+    browser = {'Origin':'https://importer.example.org'}
+    def rejected(method, path, headers):
+        response = client.request(method,path,headers={**browser,**headers})
+        assert response.status_code >= 400
+        assert not any(key.startswith('access-control-allow') for key in response.headers)
+    for fields in ({'Authorization':'Bearer sample'}, {'Cookie':'session=sample'}, {'Host':'127.0.0.1:9874'},
+                   {'Host':'elsewhere.example.net'}):
+        rejected('HEAD','/openapi.json',fields)
+    for requested in ('Authorization','Cookie','X-API-Key'):
+        rejected('OPTIONS','/openapi.json',{'Access-Control-Request-Method':'GET','Access-Control-Request-Headers':requested})
+    rejected('OPTIONS','/openapi.json',{'Access-Control-Request-Method':'POST'})
+    rejected('OPTIONS','/openapi.json',{'Access-Control-Request-Method':'GET','Access-Control-Request-Private-Network':'true'})
+    for path in ('/openapi.json?cache=no','/mcp','/v1/privacy_status','/api/workspace-state','/phone/pair'):
+        rejected('GET',path,{})
+        rejected('OPTIONS',path,{'Access-Control-Request-Method':'GET'})
+    local = client.get('/openapi.json', headers={'Host':'127.0.0.1:9874'})
+    assert local.status_code == 200 and 'access-control-allow-origin' not in local.headers

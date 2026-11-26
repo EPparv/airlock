@@ -2,12 +2,17 @@
 import argparse
 import base64
 import asyncio
+from contextlib import nullcontext
 from contextvars import ContextVar
+import fcntl
 import json
 import logging
 import os
 from pathlib import Path
 import secrets
+import signal
+import socket
+import uuid
 from typing import Annotated, Literal
 from pydantic import Field
 
@@ -132,6 +137,57 @@ def mcp_app(gateway, port=8792):
     return AuthBoundary(app,gateway),mcp
 
 
+async def observe_mcp_post(app, gateway, token, scope, receive, send):
+    # The SDK handles initialize inside its session, before tool handlers run.
+    # Match its successful JSON reply to the authenticated request, using the
+    # same body limit as the transport. Payloads never enter a receipt.
+    chunks = []
+    size = 0
+    success = False
+
+    async def read():
+        nonlocal size
+        message = await receive()
+        if message['type'] == 'http.request':
+            data = message.get('body', b'')
+            if not data:
+                return message
+            size += len(data)
+            if size <= 1024 * 1024:
+                chunks.append(data)
+            else:
+                chunks.clear()
+        return message
+
+    async def write(message):
+        nonlocal success
+        await send(message)
+        if message['type'] == 'http.response.start':
+            success = message['status'] == 200
+            return
+        if message['type'] != 'http.response.body' or not success or not chunks:
+            return
+        # json_response=True sends each JSON-RPC reply as one ASGI body.
+        data = message.get('body', b'')
+        if message.get('more_body') or b'"serverInfo"' not in data or b'"protocolVersion"' not in data:
+            return
+        try:
+            reply = json.loads(data)
+            request = json.loads(b''.join(chunks))
+            if (not isinstance(request, dict) or request.get('method') != 'initialize'
+                    or request.get('id') is None or not isinstance(reply, dict)
+                    or request['id'] != reply.get('id') or 'error' in reply):
+                return
+            result = reply.get('result')
+            if (isinstance(result, dict) and isinstance(result.get('protocolVersion'), str)
+                    and isinstance(result.get('serverInfo'), dict) and isinstance(result.get('capabilities'), dict)):
+                await asyncio.to_thread(gateway.authenticate, token, initialized=True)
+        except (Denied, ValueError, RecursionError):
+            pass  # A grant can close before the response finishes.
+
+    await app(scope, read, write)
+
+
 class AuthBoundary:
     def __init__(self,app,gateway): self.app,self.gateway=app,gateway
     async def __call__(self,scope,receive,send):
@@ -146,7 +202,10 @@ class AuthBoundary:
         except Exception:
             return await JSONResponse({'error':'Agent authorization required.'},status_code=401,headers={'WWW-Authenticate':'Bearer realm="private-ai"','Cache-Control':'no-store'})(scope,receive,send)
         marker=credential.set(token)
-        try: await self.app(scope,receive,send)
+        try:
+            if scope['method'] == 'POST' and scope['path'] == '/mcp':
+                return await observe_mcp_post(self.app, self.gateway, token, scope, receive, send)
+            return await self.app(scope,receive,send)
         finally: credential.reset(marker)
 
 
@@ -344,7 +403,10 @@ def owner_app(gateway, owner_token, port=8791):
                 result=await asyncio.to_thread(gateway.sources.discover_gmail,body['query'])
                 protected=gateway.sources.protected()
                 result['items']=[{**x,'suggested':suggest_redaction(x.get('date','')+'\n'+x['text'],protected)} for x in result['items']]
-            elif action=='create': result=await asyncio.to_thread(gateway.create,**body)
+            elif action=='create':
+                if 'cloud_client' in body:
+                    raise Denied('Choose a cloud connection from Connect agent.')
+                result=await asyncio.to_thread(gateway.create,**body)
             elif action=='automatic': result=await asyncio.to_thread(gateway.set_automatic,**body)
             elif action=='install-claude': result=configure_claude(gateway,body['token'])
             elif action=='install-dot': result=await asyncio.to_thread(configure_dot,gateway,**body)
@@ -381,8 +443,52 @@ def owner_app(gateway, owner_token, port=8791):
     return app
 
 
+class LocalListener(uvicorn.Server):
+    # Both listeners share one process. One signal must stop both of them.
+    def capture_signals(self):
+        return nullcontext()
+
+
+def session_endpoint(owner, token, port):
+    from .launcher import session_proof
+
+    async def app(scope, receive, send):
+        if scope['type'] != 'http' or scope['path'] != '/_airlock/session':
+            return await owner(scope, receive, send)
+        request = Request(scope)
+        challenge = request.headers.get('x-airlock-challenge', '')
+        host = request.headers.get('host')
+        if (request.method != 'GET' or host != f'127.0.0.1:{port}'
+                or request.headers.get('origin') or len(challenge) != 36):
+            response = Response(status_code=403)
+        else:
+            try:
+                valid = str(uuid.UUID(challenge)) == challenge
+            except ValueError:
+                valid = False
+            response = Response(session_proof(token, challenge) if valid else '',
+                                status_code=200 if valid else 400,
+                                headers={'Cache-Control':'no-store'})
+        return await response(scope, receive, send)
+    return app
+
+
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--state',type=Path,default=ROOT/'.private');parser.add_argument('--owner-port',type=int,default=8791);parser.add_argument('--mcp-port',type=int,default=8792);parser.add_argument('--safe-start',action='store_true');args=parser.parse_args()
+    # The shipping app requests port 0. Keep both OS-assigned sockets until exit.
+    args.state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (args.state/'service.lock').open('a') as lock, socket.socket() as owner_socket, socket.socket() as mcp_socket:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for sock, port in ((owner_socket, args.owner_port), (mcp_socket, args.mcp_port)):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('127.0.0.1', port))
+            sock.listen()
+        args.owner_port = owner_socket.getsockname()[1]
+        args.mcp_port = mcp_socket.getsockname()[1]
+        run_service(args, owner_socket, mcp_socket)
+
+
+def run_service(args, owner_socket, mcp_socket):
     logging.getLogger('httpx').setLevel(logging.CRITICAL)
     owner_token=secrets.token_urlsafe(32)
     if args.safe_start:
@@ -400,12 +506,42 @@ def main():
     release=json.loads((ROOT/'release.json').read_text()) if (ROOT/'release.json').exists() else {}
     args.state.mkdir(parents=True,exist_ok=True,mode=0o700)
     start_path = '/workspace' if args.safe_start else '/workspace/personal'
-    fd=os.open(args.state/'launch.json',os.O_CREAT|os.O_TRUNC|os.O_WRONLY,0o600)
-    with os.fdopen(fd,'w') as f: json.dump({'url':f'http://127.0.0.1:{args.owner_port}{start_path}#'+owner_token,'owner_token':owner_token,'mcp_url':f'http://127.0.0.1:{args.mcp_port}/mcp','pid':os.getpid(),'version':release.get('version','source'),'mode':'safe-test' if args.safe_start else 'personal'},f)
+    record = {
+        'url': f'http://127.0.0.1:{args.owner_port}{start_path}#' + owner_token,
+        'owner_token': owner_token, 'mcp_url': f'http://127.0.0.1:{args.mcp_port}/mcp',
+        'pid': os.getpid(), 'version': release.get('version', 'source'),
+        'mode': 'safe-test' if args.safe_start else 'personal', 'session_check': 1,
+    }
+
     async def serve():
-        app,_=mcp_app(gateway,args.mcp_port)
-        configs=[uvicorn.Config(owner,host='127.0.0.1',port=args.owner_port,log_level='error',access_log=False),uvicorn.Config(app,host='127.0.0.1',port=args.mcp_port,log_level='error',access_log=False)]
-        await asyncio.gather(*(uvicorn.Server(c).serve() for c in configs))
+        from .updater import atomic_json
+        apps = (session_endpoint(owner, owner_token, args.owner_port), mcp_app(gateway, args.mcp_port)[0])
+        servers = [LocalListener(uvicorn.Config(app, host='127.0.0.1', port=port,
+                                                log_level='error', access_log=False))
+                   for app, port in zip(apps, (args.owner_port, args.mcp_port))]
+        loop = asyncio.get_running_loop()
+
+        def stop():
+            for server in servers:
+                server.should_exit = True
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop)
+        tasks = [asyncio.create_task(server.serve(sockets=[sock]))
+                 for server, sock in zip(servers, (owner_socket, mcp_socket))]
+        try:
+            while not all(server.started for server in servers):
+                if any(task.done() for task in tasks):
+                    return
+                await asyncio.sleep(.025)
+            atomic_json(args.state/'mcp-endpoint.json', {'mcp_url':record['mcp_url']})
+            atomic_json(args.state/'launch.json', record)
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop()
+            await asyncio.gather(*tasks)
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
     from .remote_clients import set_active_gateway
     set_active_gateway((lambda: controller.personal) if args.safe_start else (lambda: gateway))
     try:

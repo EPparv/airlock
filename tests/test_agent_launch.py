@@ -36,7 +36,11 @@ def test_vendor_draft_is_targeted_and_contains_only_fixed_request(mac, agent, bu
     (chosen, raw), = mac
     parsed = urlparse(raw)
     assert chosen == bundle and raw.split('?')[0] == route
-    assert parse_qs(parsed.query) == {key:[launcher.STATUS_PROMPT]}
+    query = parse_qs(parsed.query)
+    if agent == 'codex':
+        workspace = launcher._work_folder('codex')
+        assert query.pop('path') == [str(workspace)] and list(workspace.iterdir()) == []
+    assert query == {key:[launcher.STATUS_PROMPT]}
     assert not parsed.fragment and 'privacy_status' in launcher.STATUS_PROMPT
 
 
@@ -81,7 +85,7 @@ def test_vscode_selects_prompt_and_only_installs_scoped_entry_in_dedicated_works
     saved = clients.config_path('vscode')
     saved.parent.mkdir(parents=True)
     token = clients.ROOT/'.private/clients/vscode-test.token'
-    entry = {'type':'stdio', **clients.server_entry(token)}
+    entry = {'type':'stdio', 'tools':['*'], **clients.server_entry(token)}
     saved.write_text(json.dumps({'mcpServers':{'airlock':entry,'private-other':{'token':'sensitive'}}}))
     assert launcher.open_agent('vscode')['drafted']
     bundle, root, prompt = mac[0]
@@ -89,7 +93,7 @@ def test_vscode_selects_prompt_and_only_installs_scoped_entry_in_dedicated_works
     assert prompt.is_relative_to(root)
     assert launcher.STATUS_PROMPT in prompt.read_text() and "tools: ['airlock/privacy_status']" in prompt.read_text()
     target = root/'.vscode/mcp.json'
-    assert json.loads(target.read_text()) == {'servers':{'airlock':entry}}
+    assert json.loads(target.read_text()) == {'servers':{'airlock':{'type':'stdio', **clients.server_entry(token)}}}
     assert 'sensitive' not in target.read_text() and root.stat().st_mode & 0o777 == 0o700
     assert launcher.open_agent('vscode')['opened'] and mac[1] == mac[0]
     tampered = dict(entry,command='/bin/echo')
@@ -123,3 +127,30 @@ def test_official_help_only_opens_fixed_https_url(mac,monkeypatch):
     for key, url in launcher.SETUP_URLS.items():
         assert launcher.open_setup_help(key)['opened']
         assert calls[-1] == ['/usr/bin/open',url] and url.startswith('https://')
+
+
+def test_finder_finds_nvm_cli_and_terminal_keeps_owner_profile(mac, monkeypatch, tmp_path):
+    home = Path.home()
+    profile = home/'Gemini account'
+    monkeypatch.setenv('GEMINI_CLI_HOME', str(profile))
+    monkeypatch.setenv('PATH', '/usr/bin:/bin')
+    install = home/'.nvm/versions/node/v24.1.0/bin'
+    install.mkdir(parents=True)
+    binary = install/'gemini'
+    output = tmp_path/'calls.jsonl'
+    binary.write_text('#!' + launcher.sys.executable + '\nimport os,sys,json\n'
+                      f'with open({str(output)!r}, "a") as f: f.write(json.dumps([sys.argv[1:], os.getcwd(), os.environ.get("GEMINI_CLI_HOME")])+"\\n")\n'
+                      'if len(sys.argv)>1: print("MCP servers are configured but disabled because this folder is untrusted.", file=sys.stderr)\n')
+    binary.chmod(0o700)
+    def open_terminal(bundle, script):
+        assert bundle == 'com.apple.Terminal'
+        # LaunchServices does not guarantee Terminal inherited the owner's environment.
+        env = {**os.environ, 'GEMINI_CLI_HOME':'wrong-profile'}
+        subprocess.run([str(script)], cwd='/', env=env, capture_output=True, check=True)
+        return True
+    monkeypatch.setattr(launcher,'_open',open_terminal)
+    assert next(c for c in clients.catalog(home) if c['id']=='gemini-cli')['app_present']
+    assert launcher.open_agent('gemini-cli')['opened']
+    rows = [json.loads(line) for line in output.read_text().splitlines()]
+    assert rows == [[['mcp','list'],str(launcher._work_folder('gemini-cli')),str(profile)],
+                    [[],str(launcher._work_folder('gemini-cli')),str(profile)]]

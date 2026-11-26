@@ -78,7 +78,7 @@ class QuickConnections:
 
     def _handoff(self, agent, identifier):
         grants = self.gateway.list_grants()
-        current = [g for g in grants if g['agent'] == agent and not g['revoked']
+        current = [g for g in grants if g['agent'] == agent and not g.get('cloud_client') and not g['revoked']
                    and g['remaining'] > 0 and g['expires'] > self.gateway.clock()]
         if identifier is not None:
             current = [g for g in current if g['id'] == identifier]
@@ -88,7 +88,7 @@ class QuickConnections:
         result = {'agent':agent, 'id':grant['id'] if grant else '', 'installed':False, 'needsReview':True,
                   'opened':False, 'drafted':False, 'method':'review',
                   'previousStatus':{k:grant.get(k) if grant else None
-                                    for k in ('last_call','last_discovery','last_context_read')}}
+                                    for k in ('last_initialized','last_call','last_discovery','last_context_read')}}
         expected_install = agent != 'mcp'
         if current and (grant is None or grant['scope'] is None or grant['configured'] is not expected_install):
             return dict(result, message='Review the existing connection to continue.')
@@ -106,18 +106,18 @@ class QuickConnections:
         elif agent == 'dot':
             # The saved tunnel can point at a different grant after an older setup.
             try:
-                token = (setup.ROOT/'.private/dot.token').read_text().strip()
+                token = setup.dot_credential_path(self.gateway).read_text().strip()
                 if self.gateway.authenticate(token)['id'] != grant['id']:
                     raise Denied('Unexpected Dot connection.')
             except (OSError, Denied):
                 return dict(result, message='Review the grant used by your saved Dot tunnel.')
-            if identifier is None:
-                setup.restore_dot(self.gateway)
+            setup.restore_dot(self.gateway)
             saved = {'installed':True}
-        elif identifier is None:
-            saved = clients.manual_connection_details(self.gateway, grant['id'], reinstall=True, home=home)
         else:
-            saved = {'installed':True}
+            # One vendor profile can point at only one named Airlock server.
+            # A different grant, a reset profile or a previous release may have
+            # replaced this registration since the owner last used it.
+            saved = clients.manual_connection_details(self.gateway, grant['id'], reinstall=True, home=home)
 
         if agent == 'mcp':
             return dict(result, needsReview=False, method='manual', message='Add Airlock to the MCP settings in your app.')

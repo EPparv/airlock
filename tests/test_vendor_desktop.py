@@ -44,7 +44,7 @@ def workspace_url(gateway):
 def test_vendor_mac_launch_and_mcp_discovery(bundle, serving, tmp_path, monkeypatch):
     assert sys.platform == 'darwin' and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted'
     agent = os.environ['AIRLOCK_VENDOR_AGENT']
-    assert agent in ('codex', 'cursor')
+    assert agent in ('codex', 'cursor', 'claude-desktop')
     config = Path.home() / clients.RELATIVE_CONFIGS[agent]
     assert not config.exists(), 'A preexisting user config is outside this disposable test.'
     root = tmp_path/'Airlock'

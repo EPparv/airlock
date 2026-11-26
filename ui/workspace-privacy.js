@@ -462,7 +462,7 @@ addPage('settings', 'App settings', 'privacy', async host => {
   const native = window.webkit?.messageHandlers?.airlockSettings;
   const isOpen = preview ? false : testToken() ? (await testAPI('test-state')).personal_open : personal;
   host.append(facts([
-    ['Version', '0.11.4'],
+    ['Version', '0.11.5'],
     ['Workspace', preview ? 'Preview' : isOpen ? 'Unlocked' : 'Locked']
   ]));
   if (isOpen && testToken()) host.append(button('Lock workspace', lockWorkspace));

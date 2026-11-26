@@ -14,19 +14,19 @@
 
 Open **Connect agent** and choose the app. Supported desktop clients open with an Airlock privacy check ready. The native Mac window and the local browser workspace use the same handoff. A new connection starts with zero shared records. Returning connections keep their existing permissions. Manage sharing under **Privacy & connections → Connected agents**.
 
-Airlock shows when the agent discovers its tools, makes a tool call or reads shared context. The `privacy_status` check works with zero shared records. Send the prepared request if the agent opens a draft. Grant access to records separately in Airlock.
+Airlock records when the agent completes its MCP handshake, discovers tools, makes a tool call or reads shared context. The `privacy_status` check works with zero shared records. Send the prepared request if the agent opens a draft. Grant access to records separately in Airlock.
 
 To set up a new local agent in a custom profile, unlock the personal workspace, then open **Connect agent → Advanced setup**. Choose the app and select **Configure access or profile**. Under **More settings → Client settings**, turn off **Save to the default profile on this Mac**. Connect and choose **Copy configuration**. Paste it in the agent’s custom profile. The configuration references an expiring credential stored on your Mac.
 
 | Client | What Connect opens | Your next action |
 | --- | --- | --- |
-| Codex | A new Codex draft with the status request. If only the CLI is available, Terminal checks the Airlock registration. | Send the desktop draft. The CLI check runs automatically. |
+| Codex | A new local Codex draft in Airlock’s dedicated workspace. The current Mac app is named ChatGPT. If only the CLI is available, Terminal checks the Airlock registration. | Send the desktop draft. If you switch chats yourself, select **Codex → This computer** to use the Mac server. The CLI registration check runs automatically. |
 | Cursor | A new Cursor draft with the status request. | Send the draft. Enable Airlock if Cursor asks. |
 | Claude Desktop | A new Claude chat with the status request filled in. | Send the draft. Allow the tool if Claude asks. |
 | Claude Code | A Claude Code draft in the Claude Mac app. If only the CLI is available, Terminal checks the Airlock registration. | Send the desktop draft. The CLI check runs automatically. |
 | VS Code with GitHub Copilot | A private workspace with the Airlock status prompt selected. | Choose **Run in Chat**. Review any workspace or tool trust prompt from VS Code. |
 | Muse Code | Terminal displays the exact status request. | Press **Return** to send it to Muse Code. |
-| Gemini CLI | Terminal runs `gemini mcp list` and shows the registered servers and their status. | Read the Airlock entry. The check runs automatically. |
+| Gemini CLI | Terminal runs `gemini mcp list`. Gemini connects and pings the server. When its folder trust setting blocks the check, Airlock opens Gemini in the same folder for review. | Read the Airlock entry. If Gemini asks, review the dedicated Airlock folder in its trust dialog. |
 | OpenClaw | Terminal runs `openclaw mcp doctor airlock --probe` against the local gateway. | Read the probe result. The check runs automatically. |
 
 If Airlock asks you to review a profile it couldn’t update, choose **Review connection → Connection help → Show configuration**. Copy the entry into the client’s settings.

@@ -1,3 +1,7 @@
+# Airlock 0.11.5
+
+Airlock can reopen its local workspace when a saved connection points to a stopped service. Connection errors now distinguish a locked workspace, an unreachable Mac, and provider setup that needs attention. Codex opens the privacy check in a dedicated local workspace. Terminal agents use the same profile Airlock configured. ChatGPT tunnel setup shows when its client is waiting for credentials, running, or stopped.
+
 # Airlock 0.11.4
 
 Choose an agent in Connect agent. On a Mac, the native window and the local browser workspace can open a supported client with an Airlock privacy check prepared. Airlock displays discovery or tool activity when the agent actually connects. Provider sign-in and tool approvals stay with the agent.

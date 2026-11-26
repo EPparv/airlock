@@ -56,11 +56,12 @@ RELATIVE_CONFIGS = {
 PROFILES = {
     'muse-code': (('mcp_servers',), {'transport':'stdio','mode':'optional'}),
     'gemini-cli': (('mcpServers',), {}),
-    'vscode': (('mcpServers',), {'type':'stdio'}),
+    'vscode': (('mcpServers',), {'type':'stdio', 'tools':['*']}),
     'openclaw': (('mcp','servers'), {'transport':'stdio'}),
 }
 SETUP_HINTS = {
     'codex':'Open the active Codex config.toml in Settings, add the exported TOML entry, and restart Codex.',
+    'claude-code':'Add the exported entry to your active Claude Code user configuration.',
     'muse-code':'Merge the entry into your Muse Code user settings, then restart Muse Code and check /mcp.',
     'gemini-cli':'Merge the entry into your Gemini CLI user settings, then start a new session and check /mcp list.',
     'vscode':'Merge the entry into Copilot Global on this Mac, then start a local Copilot session in VS Code.',
@@ -72,13 +73,26 @@ class ManualSetup(Denied):
     """The client has custom settings that should be edited in its own UI."""
 
 
+def executable_path(home):
+    """Finder and Terminal can start the same user with different search paths."""
+    home = Path(home)
+    paths = [p for p in os.get_exec_path() if os.path.isabs(p)]
+    paths += ['/opt/homebrew/bin', '/usr/local/bin', str(home/'.local/bin'), str(home/'.bun/bin'),
+              str(home/'.npm-global/bin'), str(home/'.local/share/mise/shims'), str(home/'.volta/bin'),
+              str(home/'.asdf/shims'), str(home/'Library/pnpm')]
+    # NVM creates a version-specific bin directory, not a global executable.
+    nvm = home/'.nvm/versions/node'
+    versions = [(tuple(map(int, p.parent.name[1:].split('.'))), str(p)) for p in nvm.glob('*/bin')
+                if re.fullmatch(r'v\d+\.\d+\.\d+', p.parent.name)]
+    paths.extend(p for _,p in sorted(versions, reverse=True))
+    return os.pathsep.join(dict.fromkeys(paths))
+
+
 def catalog(home=None):
     home=Path(home or Path.home())
     apps={'codex':('ChatGPT.app','ChatGPT 2.app','Codex.app'), 'claude-desktop':('Claude.app',), 'cursor':('Cursor.app',), 'vscode':('Visual Studio Code.app',)}
     commands = {'muse-code':'muse','gemini-cli':'gemini','openclaw':'openclaw','codex':'codex','claude-code':'claude'}
-    # Apps launched from Finder do not inherit the user's interactive shell PATH.
-    cli_path=os.pathsep.join([os.environ.get('PATH',os.defpath),'/opt/homebrew/bin','/usr/local/bin',
-                              str(home/'.local/bin'),str(home/'.bun/bin'),str(home/'.npm-global/bin')])
+    cli_path = executable_path(home)
     result=[]
     for agent,details in CLIENTS.items():
         installed=any((p/name).exists() for name in apps.get(agent,()) for p in (Path('/Applications'),home/'Applications'))
@@ -89,7 +103,12 @@ def catalog(home=None):
 
 def server_entry(token_path):
     args=[str(ROOT/'privacy_layer/stdio.py'),'--token-file',str(token_path)]
-    if (ROOT/'release.json').exists():args+=['--session-file',str(ROOT/'.private/launch.json')]
+    endpoint = ROOT/'.private/mcp-endpoint.json'
+    if endpoint.is_file():
+        args+=['--session-file',str(endpoint)]
+    elif (ROOT/'release.json').exists():
+        # Older live services publish this descriptor until they're upgraded.
+        args+=['--session-file',str(ROOT/'.private/launch.json')]
     return {'command':str(ROOT/'.venv/bin/python'), 'args':args}
 
 def owned(entry):
@@ -108,7 +127,8 @@ def owned(entry):
     try:token=Path(args[2]).relative_to(root/'.private')
     except ValueError:return False
     if '..' in token.parts or token.suffix!='.token':return False
-    return len(args)==3 or args[3:]==['--session-file',str(root/'.private/launch.json')]
+    return len(args)==3 or (args[3]=='--session-file' and args[4] in
+                            (str(root/'.private/launch.json'), str(root/'.private/mcp-endpoint.json')))
 
 def unique_keys(pairs):
     values = {}
@@ -150,6 +170,10 @@ def json_config(original, entry, server_name=SERVER, agent='mcp'):
 
     if server_name in servers:
         previous = servers[server_name]
+        if agent == 'vscode' and isinstance(previous, dict) and 'tools' not in previous:
+            # 0.11.4 omitted the Copilot CLI's required tools list. Preserve
+            # explicit user filters; migrate only our exact legacy registration.
+            previous = {**previous, 'tools':['*']}
         matches_options = isinstance(previous, dict) and all(previous.get(k) == v for k,v in options.items())
         previous_bridge = {k:v for k,v in previous.items() if k not in options} if matches_options else None
         if not owned(previous_bridge):
@@ -219,8 +243,10 @@ def config_path(agent, home=None):
                 raise ManualSetup('The active Codex profile is outside this home folder. Add Airlock in that profile.')
             path=profile/'config.toml'
     profiles = {
+        'claude-code': ('CLAUDE_CONFIG_DIR', '.claude.json'),
         'vscode': ('COPILOT_HOME', 'mcp-config.json'),
         'muse-code': ('XDG_CONFIG_HOME', 'muse/settings.json'),
+        'gemini-cli': ('GEMINI_CLI_HOME', '.gemini/settings.json'),
         'openclaw': ('OPENCLAW_STATE_DIR', 'openclaw.json'),
     }
     env_name, filename = profiles.get(agent, ('', ''))
@@ -253,6 +279,8 @@ def install_config(agent,entry,home=None,server_name=SERVER):
             format_name='TOML' if agent=='codex' else 'JSON'
             raise Denied(f'{CLIENTS[agent]["name"]} settings contain invalid {format_name}. Airlock left the file unchanged. Repair that settings file before reconnecting.') from None
         if (path.read_text() if path.exists() else '')!=original:raise Denied('Settings changed during setup. Try again.')
+        if existed and candidate == original:
+            return str(path)
         if existed:private_write(ROOT/f'.private/clients/backups/{agent}-{time.time_ns()}.txt',original)
         tmp=path.with_name(path.name+'.private-ai-'+secrets.token_hex(6))
         try:
@@ -293,7 +321,7 @@ def connection_status(gateway, identifier):
     if not grant:raise Denied('This connection no longer exists. Connect your AI again.')
     status=('revoked' if grant['revoked'] else 'expired' if grant['expires']<=gateway.clock() or grant['remaining']<=0
             else 'verified' if grant.get('last_context_read') else 'waiting')
-    return {'status':status,'last_call':grant['last_call'],'last_discovery':grant['last_discovery'],'last_context_read':grant.get('last_context_read'),
+    return {'status':status,'last_initialized':grant.get('last_initialized'),'last_call':grant['last_call'],'last_discovery':grant['last_discovery'],'last_context_read':grant.get('last_context_read'),
             'shared_records':len((grant.get('scope') or {}).get('records',[]))}
 
 
@@ -415,8 +443,7 @@ def refresh_codex(config, home):
                    for name in ('ChatGPT.app','ChatGPT 2.app','Codex.app'))
         binary = next(filter(None, map(codex_bundle_binary, bundles)), None)
         if binary is None:
-            candidates = (Path('/opt/homebrew/bin/codex'), Path('/usr/local/bin/codex'))
-            binary = next((p for p in candidates if p.is_file() and os.access(p,os.X_OK)), None)
+            binary = shutil.which('codex', path=executable_path(home or Path.home()))
         return bool(binary and _refresh_codex_proxy([str(binary),'app-server','proxy','--sock',str(sock)]))
     except (OSError, ValueError):
         return False
@@ -436,7 +463,7 @@ def finish_client_install(result, home):
 def manual_connection_details(gateway, identifier, *, reinstall=False, home=None):
     """Export or reinstall the same active local credential without renewing its grant."""
     grant = next((g for g in gateway.list_grants() if g['id'] == identifier), None)
-    if (not grant or grant['agent'] not in (*RELATIVE_CONFIGS, 'mcp') or grant['configured'] is None
+    if (not grant or grant.get('cloud_client') or grant['agent'] not in (*RELATIVE_CONFIGS, 'mcp') or grant['configured'] is None
             or grant['revoked'] or grant['expires'] <= gateway.clock() or grant['remaining'] <= 0):
         raise Denied('Manual setup is unavailable for this connection.')
     agent = grant['agent']
@@ -500,7 +527,7 @@ def connect(gateway, *, agent, approved=False, lifetime=86400, max_calls=100, in
                 try:
                     result['path'] = install_config(agent,entry,home)
                 except ManualSetup as error:
-                    if agent not in PROFILES and agent!='codex':
+                    if agent not in SETUP_HINTS:
                         raise
                     result['message'] = f'{error} {SETUP_HINTS[agent]}'
                 else:

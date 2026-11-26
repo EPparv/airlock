@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const node=document.createElement(tag); if(text!==undefined)node.textContent=text; if(cls)node.className=cls; return node; };
-let owner=location.hash.slice(1)||sessionStorage.getItem('private-ai-owner');
+let owner=localSessionToken('private-ai-owner');
 if(owner)sessionStorage.setItem('private-ai-owner',owner);
 history.replaceState(null,'',location.pathname);
 let dashboard=null, selectedAgent='codex', exportConfig='', library=null, libraryKind='memories';
@@ -10,12 +10,7 @@ const names={dot:'Dot',codex:'Codex','claude-desktop':'Claude Desktop','claude-c
 const marks={dot:'D',codex:'⌘','claude-desktop':'✳','claude-code':'C',cursor:'↗',mcp:'+'};
 const prompt='Use Airlock privacy_status and get_private_context for my selected preferences and relevant facts. Cite returned records. If context is compute-only or sensitive, request_private_task with records [] and route local, then tell me to review it in Airlock. Never infer or reconstruct withheld details.';
 function notice(text,error=false){$('notice').textContent=text;$('notice').hidden=!text;$('notice').classList.toggle('error',error);}
-async function api(action,body={}){
- const response=await fetch('/api/'+action,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+owner},body:JSON.stringify(body),cache:'no-store'});
- let result;try{result=await response.json();}catch{throw Error('Open the Airlock app to reconnect.');}
- if(!response.ok)throw Error(result.error||'Connection unavailable. Open the Airlock app to reconnect.');
- return result;
-}
+function api(action,body={}){return workspaceRequest(action,body,owner);}
 function guard(fn){return async function(event){if(event?.type==='submit')event.preventDefault();const button=event?.currentTarget?.tagName==='BUTTON'?event.currentTarget:null;const disabled=button?.disabled;try{notice('');if(button)button.disabled=true;await fn(event);}catch(error){notice(error.message,true);const dialog=document.querySelector('dialog[open]');if(dialog){let msg=dialog.querySelector('.dialog-error');if(!msg){msg=el('p',undefined,'dialog-error');msg.setAttribute('role','alert');dialog.append(msg);}msg.textContent=error.message;msg.hidden=false;}}finally{if(button?.isConnected)button.disabled=disabled||(button.id==='create'&&(!$('consent').checked||!chosen.size));}};}
 function switchPage(page){for(const node of document.querySelectorAll('.page'))node.hidden=node.id!=='page-'+page;for(const node of document.querySelectorAll('[data-page]')){node.classList.toggle('active',node.dataset.page===page);if(node.dataset.page===page)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');}$('pageTitle').textContent=page==='agents'?'Connections':page==='workbench'?'Skills & actions':page[0].toUpperCase()+page.slice(1);window.scrollTo({top:0,behavior:'instant'});if(page==='workbench'&&typeof loadWorkbench==='function')guard(loadWorkbench)();}
 for(const button of document.querySelectorAll('[data-page],[data-go]'))button.onclick=()=>switchPage(button.dataset.page||button.dataset.go);
