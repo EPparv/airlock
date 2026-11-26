@@ -18,7 +18,7 @@ import urllib.error
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 TAG = "ironclaw-v1.4.1"
 PLATFORM = "ironclaw-x86_64-unknown-linux-gnu"
@@ -245,6 +245,36 @@ def main(args, stages):
         thread = api("open_thread", "threads", {"client_action_id": str(uuid.uuid4())})["thread"]["thread_id"]
         response = api("submit_status_request", "channels/" + session["session_channel_extension_id"] + "/messages", {
             "client_action_id": str(uuid.uuid4()), "thread_id": thread, "content": "Call the Airlock privacy_status tool once."})
+        run_id = response["run_id"]
+        def consent_to_status():
+            # The synthetic owner allows one status call from this thread only.
+            # Never approve other tools, credential prompts, or standing grants.
+            request = urllib.request.Request(base + "/api/webchat/v2/threads/" + thread + "/events",
+                headers={"Authorization": "Bearer " + token, "Origin": base, "Accept": "text/event-stream"})
+            try:
+                with opener.open(request, timeout=30) as stream:
+                    for raw in stream:
+                        if not raw.startswith(b"data:"):
+                            continue
+                        try:
+                            data = json.loads(raw[5:].strip())
+                        except ValueError:
+                            continue
+                        for row in nested(data):
+                            gate = row.get("gate_ref")
+                            if not isinstance(gate, str) or (row.get("run_id") or row.get("turn_run_id")) != run_id:
+                                continue
+                            context = row.get("approval_context") or {}
+                            if ("native_status_selected" not in stages or row.get("gate_kind") not in (None, "approval")
+                                    or not TOOL.fullmatch(str(context.get("tool_name", "")))):
+                                continue
+                            api("approved_single_status", "threads/" + thread + "/runs/" + run_id + "/gates/"
+                                + quote(gate, safe="") + "/resolve", {"client_action_id": str(uuid.uuid4()),
+                                "resolution": "approved", "always": False})
+                            return
+            except (OSError, Failure):
+                return
+        threading.Thread(target=consent_to_status, daemon=True).start()
         for _ in range(240):
             if args.observed_file.exists():
                 return

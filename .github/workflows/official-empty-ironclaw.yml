@@ -61,6 +61,33 @@ jobs:
       with:
         name: airlock-route-proof-${{ github.run_attempt }}
         path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_7_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_2
+      if: steps.download_7_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_7_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_3
+      if: steps.download_7_2.outcome == 'failure'
     - name: Deliver the public challenge response to the Mac owner
       run: mv "$RUNNER_TEMP/airlock-proof/proof.json" "$RUNNER_TEMP/airlock-route/proof.json"
     - name: Wait for the grant sealed for the external runner
@@ -130,6 +157,33 @@ jobs:
       with:
         name: airlock-route-offer-${{ github.run_attempt }}
         path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_5_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_2
+      if: steps.download_5_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_5_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_3
+      if: steps.download_5_2.outcome == 'failure'
     - name: Read the disposable challenge over public HTTPS
       run: python3 scripts/smoke_quick_link.py witness "$RUNNER_TEMP/airlock-route"
     - uses: actions/upload-artifact@v4
@@ -148,6 +202,33 @@ jobs:
       with:
         name: sealed-vendor-session-${{ github.run_attempt }}
         path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_13_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_13_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: sealed-vendor-session-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_13_2
+      if: steps.download_13_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_13_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: sealed-vendor-session-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_13_3
+      if: steps.download_13_2.outcome == 'failure'
     - name: Deliver the temporary credential privately to the official agent
       run: "set -eu\numask 077\nbase=\"$RUNNER_TEMP/ironclaw\"\nroute=\"$RUNNER_TEMP/airlock-route\"\
         \npython3 scripts/vendor_unseal.py \"$route/sealed.json\" \"$route/witness.private\"\
@@ -165,6 +246,33 @@ jobs:
       with:
         name: vendor-receipt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/ironclaw/receipt
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_20_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_20_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: vendor-receipt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ironclaw/receipt
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_20_2
+      if: steps.download_20_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_20_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: vendor-receipt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ironclaw/receipt
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_20_3
+      if: steps.download_20_2.outcome == 'failure'
     - name: Match official tool return value to Airlock receipt
       run: python3 scripts/vendor_verdict.py verify "$RUNNER_TEMP/ironclaw"
     - if: always()
