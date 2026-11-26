@@ -28,7 +28,7 @@ static id javascript(WKWebView *view, NSString *source) {
 static void choose(WKWebView *view, NSString *selector, NSString *name) {
     NSString *button = [NSString stringWithFormat:@"Array.from(document.querySelectorAll('%@')).find(b=>(b.getAttribute('aria-label')||b.textContent.trim())==='%@' && !b.disabled && b.getClientRects().length)",selector,name];
     if (!waitUntil(^BOOL{ return [javascript(view,[NSString stringWithFormat:@"Boolean(%@)",button]) boolValue]; },25)) {
-        NSString *page=javascript(view,@"JSON.stringify({path:location.pathname,ready:document.readyState,view:history.state?.view,heading:document.querySelector('#app h1')?.textContent,buttons:document.querySelectorAll('#app button').length})");
+        NSString *page=javascript(view,@"JSON.stringify({path:location.pathname,ready:document.readyState,view:history.state?.view,heading:document.querySelector('#app h1')?.textContent,recovery:document.querySelector('.workspace-recovery h2')?.textContent,rendering:!!document.querySelector('#app [aria-busy=true]'),buttons:document.querySelectorAll('#app button').length})");
         require(NO,[NSString stringWithFormat:@"Missing action %@ on %@.",name,page ?: @"unavailable page"]);
     }
     require([javascript(view,[NSString stringWithFormat:@"(%@).click();true",button]) boolValue],@"Could not activate the picker action.");

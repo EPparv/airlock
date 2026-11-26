@@ -28,6 +28,7 @@ test('both supported owner origins send only same-origin requests', async () => 
     const {url, options} = requests[0];
     assert.equal(url, '/api/workspace-launch-options');
     assert.equal(options.mode, 'same-origin');
+    assert.equal(options.referrerPolicy, 'origin');
     assert.equal(options.redirect, 'error');
     assert.equal(options.headers.Authorization, 'Bearer test-key');
     assert.equal(options.credentials, 'omit');

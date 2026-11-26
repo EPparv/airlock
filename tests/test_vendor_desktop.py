@@ -19,13 +19,32 @@ from privacy_layer.device_apps import NativeApps
 from test_mcp import serving
 
 
+def observe_picker_request(application, port):
+    async def observed(scope, receive, send):
+        if scope.get('path') != '/api/workspace-launch-options':
+            return await application(scope, receive, send)
+        headers = dict(scope.get('headers', []))
+        expected_origin = f'http://127.0.0.1:{port}'.encode('ascii')
+        origin = headers.get(b'origin')
+        origin_kind = {None:'absent', b'null':'null', expected_origin:'same-origin'}.get(origin, 'other')
+
+        async def record(message):
+            if message['type'] == 'http.response.start':
+                print('WebKit picker POST:', message['status'], 'origin classification:', origin_kind,
+                      'bearer present:', headers.get(b'authorization', b'').startswith(b'Bearer '), flush=True)
+            await send(message)
+
+        return await application(scope, receive, record)
+    return observed
+
+
 @contextmanager
 def workspace_url(gateway):
     owner = secrets.token_urlsafe(32)
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
-        application = owner_app(gateway, owner, port)
+        application = observe_picker_request(owner_app(gateway, owner, port), port)
         server = uvicorn.Server(uvicorn.Config(application, log_level='critical', access_log=False))
         thread = threading.Thread(target=server.run, kwargs={'sockets': [listener]}, daemon=True)
         thread.start()

@@ -60,8 +60,11 @@ async function workspaceRequest(action, body, token) {
   const timer = ['workspace-launch-options','client-status'].includes(action) ? setTimeout(() => controller.abort(), 10000) : null;
   let response, data;
   try {
+    // WebKit can send Origin: null on same-origin POSTs under the page's no-referrer policy.
+    // Send the loopback origin only to this service. Resolving another origin or following a redirect is forbidden.
     response = await fetch('/api/' + action, {
       method:'POST', mode:'same-origin', credentials:'omit', redirect:'error', cache:'no-store',
+      referrerPolicy:'origin',
       headers:{Authorization:'Bearer ' + token, 'Content-Type':'application/json'},
       body:JSON.stringify(body), signal:controller.signal
     });
