@@ -8,10 +8,11 @@ static void require(BOOL condition, NSString *message) {
 
 static BOOL waitUntil(BOOL (^check)(void), NSTimeInterval seconds) {
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:seconds];
-    while (!check() && deadline.timeIntervalSinceNow > 0) {
+    do {
+        if (check()) return YES;
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
-    }
-    return check();
+    } while (deadline.timeIntervalSinceNow > 0);
+    return NO;
 }
 
 static id javascript(WKWebView *view, NSString *source) {
@@ -24,17 +25,20 @@ static id javascript(WKWebView *view, NSString *source) {
     return waitUntil(^BOOL{ return done; }, 5) ? result : nil;
 }
 
-static void choose(WKWebView *view, NSString *name) {
-    NSString *button = [NSString stringWithFormat:@"Array.from(document.querySelectorAll('#app button')).find(b=>(b.getAttribute('aria-label')||b.textContent.trim())==='%@' && !b.disabled && b.getClientRects().length)",name];
-    require(waitUntil(^BOOL{ return [javascript(view,[NSString stringWithFormat:@"Boolean(%@)",button]) boolValue]; },25),[NSString stringWithFormat:@"Missing action: %@",name]);
+static void choose(WKWebView *view, NSString *selector, NSString *name) {
+    NSString *button = [NSString stringWithFormat:@"Array.from(document.querySelectorAll('%@')).find(b=>(b.getAttribute('aria-label')||b.textContent.trim())==='%@' && !b.disabled && b.getClientRects().length)",selector,name];
+    if (!waitUntil(^BOOL{ return [javascript(view,[NSString stringWithFormat:@"Boolean(%@)",button]) boolValue]; },25)) {
+        NSString *page=javascript(view,@"JSON.stringify({path:location.pathname,ready:document.readyState,view:history.state?.view,heading:document.querySelector('#app h1')?.textContent,buttons:document.querySelectorAll('#app button').length})");
+        require(NO,[NSString stringWithFormat:@"Missing action %@ on %@.",name,page ?: @"unavailable page"]);
+    }
     require([javascript(view,[NSString stringWithFormat:@"(%@).click();true",button]) boolValue],@"Could not activate the picker action.");
 }
 
 static void connectInBrowser(WKWebView *view, NSURL *entry, NSString *name) {
     [view loadRequest:[NSURLRequest requestWithURL:entry]];
-    choose(view, @"Connect agent");
+    choose(view, @"#app.home nav button", @"Connect agent");
     require(![javascript(view,@"!!window.webkit?.messageHandlers?.airlockSettings") boolValue],@"This must be an ordinary browser session with no native bridge.");
-    choose(view, name);
+    choose(view, @"#app .agent-option", name);
     require(waitUntil(^BOOL{ return [javascript(view,@"!!Array.from(document.querySelectorAll('#app button')).find(b=>b.textContent==='Manage access' && b.getClientRects().length)") boolValue]; },45),@"The browser did not reach the launch receipt.");
     require([javascript(view,@"history.state?.options?.method==='draft' && history.state?.options?.opened===true") boolValue],@"Airlock did not hand the status draft to the selected app.");
     require([javascript(view,@"!document.querySelector('dialog[open]') && !document.getElementById('app').innerText.includes('Copy test request')") boolValue],@"The browser displayed a manual handoff instead of launching.");
@@ -62,6 +66,7 @@ int main(int argc,const char *argv[]) {
         NSArray *(^instances)(void)=^{return [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier];};
         require(instances().count==0,@"Expected the signed vendor app to be closed.");
         connectInBrowser(view,entry,name);
+        puts("The first browser handoff reached the receipt.");
         require(waitUntil(^BOOL{return instances().count==1;},60),@"No unique vendor process appeared.");
         NSRunningApplication *first=instances().firstObject;
         require([first.bundleURL.URLByResolvingSymlinksInPath.path isEqual:installed.bundleURL.URLByResolvingSymlinksInPath.path],@"Unexpected running vendor app path.");

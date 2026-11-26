@@ -5,9 +5,11 @@
 
 static BOOL waitFor(BOOL (^condition)(void), NSTimeInterval timeout) {
     NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:timeout];
-    while (!condition() && deadline.timeIntervalSinceNow>0)
+    do {
+        if (condition()) return YES;
         [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.04]];
-    return condition();
+    } while (deadline.timeIntervalSinceNow>0);
+    return NO;
 }
 static id javascript(WKWebView *view, NSString *source) {
     __block BOOL done=NO; __block id result=nil; __block NSError *error=nil;
@@ -73,6 +75,7 @@ static void checkClientLaunch(PrivacyLauncher *launcher, NSBundle *fixture, NSSt
     pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Save access' && b.getClientRects().length)");
     require([[NSFileManager defaultManager] removeItemAtURL:fixtureURLReceipt(fixture) error:NULL],@"clear the first draft receipt");
     [view loadRequest:[NSURLRequest requestWithURL:launcher.url]];
+    pageHas(view,@"document.querySelectorAll('#app.home nav button').length===3");
     click(view,@"Connect agent");click(view,name);
     pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
     require(waitFor(receivedPrompt,12),@"the running app received the second status draft");
