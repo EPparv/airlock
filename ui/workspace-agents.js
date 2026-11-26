@@ -3,6 +3,7 @@ const localAgents = ['codex', 'cursor', 'claude-desktop', 'claude-code', 'vscode
 const cloudAgents = ['chatgpt', 'muse', 'manus', 'ironclaw', 'custom'];
 const knownAgent = agent => localAgents.includes(agent) || cloudAgents.includes(agent) || agent === 'dot' || agent === 'mcp';
 const labelForAgent = agent => names[agent] || cloudClients[agent];
+const pickerAction = agent => agent === 'mcp' || agent === 'custom' ? 'Set up' : 'Connect';
 let launchableAgents;
 
 async function launchOptions() {
@@ -39,7 +40,7 @@ async function drawAgentPicker(host) {
       const row = button('', () => selectAgent(agent), 'agent-option');
       row.setAttribute('aria-label', name);
       row.dataset.agent = agent;
-      row.append(el('span', name), el('span', preview ? 'Try' : 'Connect', 'agent-option-action'));
+      row.append(el('span', name), el('span', preview ? 'Try' : pickerAction(agent), 'agent-option-action'));
       list.append(row);
       return row;
     });
@@ -159,7 +160,7 @@ async function startAgentConnection(agent) {
   connectingAgent = true;
   const row = document.querySelector('.agent-option[data-agent="' + agent + '"]');
   if (row) {
-    row.querySelector('.agent-option-action').textContent = 'Opening…';
+    row.querySelector('.agent-option-action').textContent = pickerAction(agent) === 'Set up' ? 'Preparing…' : 'Opening…';
     row.setAttribute('aria-busy', 'true');
   }
   try {
@@ -174,7 +175,7 @@ async function startAgentConnection(agent) {
   } finally {
     connectingAgent = false;
     if (row?.isConnected) {
-      row.querySelector('.agent-option-action').textContent = 'Connect';
+      row.querySelector('.agent-option-action').textContent = pickerAction(agent);
       row.removeAttribute('aria-busy');
     }
   }
@@ -183,27 +184,65 @@ async function startAgentConnection(agent) {
 function watchHandoff(host, opt, headline, detail) {
   let calls = 0;
   const before = opt.previousStatus || {};
+  const name = labelForAgent(opt.agent);
+  const waitingTitle = headline.textContent;
+  const started = Date.now();
+  let recovery, discovered = false;
+  function clearRecovery() {
+    recovery?.remove();
+    recovery = null;
+  }
+  function showRecovery() {
+    if (recovery) return;
+    const guidance = {
+      cursor:'If Cursor asks, enable Airlock in MCP settings, then send the prepared request.',
+      codex:'In Codex settings, check that the Airlock MCP server is enabled, then send the prepared request.',
+      'claude-desktop':'If Airlock is missing from Claude’s developer settings, quit Claude Desktop with ⌘Q, then reopen it here.',
+      vscode:'In VS Code, start Airlock in the MCP server list, then choose Run in Chat in the open prompt file.',
+      'muse-code':'If Terminal is waiting, press Return to send the prepared status request.',
+      dot:'Open the Dot that uses your Airlock tunnel and allow its status request.'
+    };
+    const hint = opt.method === 'check' ? 'Review the connection check in Terminal. Start a session in ' + name + ' to use Airlock.' : guidance[opt.agent];
+    if (!hint) return;
+    recovery = el('div');
+    note(recovery, hint);
+    if (opt.agent === 'claude-desktop') {
+      recovery.append(button('Open Claude Desktop again', () => openSavedAgent(opt.agent, opt.id), 'plain'));
+    }
+    detail.parentElement.after(recovery);
+  }
   async function poll() {
     if (!host.isConnected) return;
     try {
       const status = await api('client-status', {id:opt.id});
       if (!host.isConnected) return;
       if (['expired','revoked'].includes(status.status)) {
+        clearRecovery();
         headline.textContent = 'Access ended';
         detail.textContent = linkStatus(status);
         return;
       }
       if (status.last_call != null && status.last_call !== before.last_call) {
+        clearRecovery();
         headline.textContent = 'Connected';
-        detail.textContent = labelForAgent(opt.agent) + ' called an Airlock tool.';
+        detail.textContent = name + ' called an Airlock tool.';
         return;
       }
       if (status.last_discovery != null && status.last_discovery !== before.last_discovery) {
+        clearRecovery();
+        discovered = true;
         headline.textContent = 'Connected';
-        detail.textContent = labelForAgent(opt.agent) + ' found Airlock’s tools.';
+        detail.textContent = name + ' found Airlock’s tools.';
+      } else if (!discovered) {
+        const quiet = opt.opened && Date.now() - started >= 20000;
+        headline.textContent = quiet ? 'No response yet' : waitingTitle;
+        if (quiet) showRecovery();
       }
     } catch {
-      if (host.isConnected) detail.textContent = 'Airlock couldn’t refresh the connection status.';
+      if (host.isConnected && !discovered) {
+        clearRecovery();
+        headline.textContent = 'Connection status unavailable';
+      }
     }
     calls++;
     if (host.isConnected) setTimeout(poll, calls < 8 ? 1000 : calls < 25 ? 5000 : 15000);
