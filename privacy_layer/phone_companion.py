@@ -123,14 +123,16 @@ class PhoneCompanion:
             g = self.g._grant(d, entry['token'])
             if g.get('cloud_origin') != origin or g.get('cloud_client') != 'iphone' or g.get('scope') is None:
                 raise Denied('This phone connection has closed.')
+            scope = g['scope']
+            count = len(scope.get('disclose_records', scope['records'])) if scope.get('disclose') else 0
             if pair:
                 session = secrets.token_urlsafe(32)
                 del self.sessions[key]
                 self.sessions[fingerprint(session)] = {**entry, 'session':True}
                 self.g.audit(d, g, 'iphone', 'paired')
-                return {'session':session, 'expires':g['expires']}
+                return {'session':session, 'expires':g['expires'], 'count':count}
             return {**entry, 'expires':g['expires'], 'remaining':g['remaining'],
-                    'count':len(g['scope'].get('disclose_records', g['scope']['records'])) if g['scope'].get('disclose') else 0}
+                    'count':count}
 
     def operate(self, path, body, secret, origin):
         entry = self.access(secret, origin)
@@ -158,12 +160,12 @@ async def phone_response(active, req):
         return Response(status_code=400, headers=HEADERS)
     gateway = active()
     if gateway is None:
-        return Response(status_code=503, headers=HEADERS)
+        return JSONResponse({'closed':True}, status_code=503, headers=HEADERS)
     with gateway.store.transaction() as d:
         config = dict(d.get('remote_bridge', {}))
     origin = config.get('origin','')
     if not bridge_ready(config):
-        return Response(status_code=503, headers=HEADERS)
+        return JSONResponse({'closed':True}, status_code=503, headers=HEADERS)
     if req.headers.get('host') != urlsplit(origin).netloc or req.headers.get('origin') not in (None,origin):
         return Response(status_code=403, headers=HEADERS)
     if path in ASSETS:

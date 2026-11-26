@@ -31,23 +31,51 @@ PROVIDER_SITES = {
     'dot': 'https://chatgpt.com/dots',
     'muse': 'https://muse.ai/',
     'manus': 'https://manus.im/app',
-    'ironclaw': 'https://agent.near.ai/',
 }
 STATUS_REQUEST = 'Call the Airlock privacy_status tool once and tell me whether it responds. Do not read any records.'
 MUSE_SETUP_REQUEST = ('Create a private Airlock connector. Ask me for its OpenAPI URL and use your secure '
                       'credential prompt for the bearer token. Then call privacy_status once without reading records.')
 
 
-def open_provider(vendor, setup=False):
+def ironclaw_origin(value):
+    """Open only an owner-specified web origin. Credentials, paths and query strings are excluded."""
+    if not isinstance(value, str) or not value.isascii() or len(value) > 300 or re.search(r'[\s\\?#@]',value):
+        raise Denied('Enter only your IronClaw web address, without a login token or path.')
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname or ''
+        if parts.path not in ('','/') or parts.username or parts.password or parts.port == 0:
+            raise ValueError()
+        if parts.scheme == 'http' and host in ('127.0.0.1','localhost','::1') and parts.port:
+            return parts.scheme + '://' + parts.netloc.lower()
+        if parts.scheme != 'https' or not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?', host):
+            raise ValueError()
+        if host == 'agent.near.ai' or host.endswith('.agents.near.ai'):
+            raise Denied('NEAR retired this hosted service. Enter the address of your self-hosted IronClaw.')
+        return 'https://' + host + (f':{parts.port}' if parts.port and parts.port != 443 else '')
+    except Denied:
+        raise
+    except ValueError:
+        raise Denied('Enter your IronClaw HTTPS address or the local address printed by ironclaw serve.') from None
+
+
+def open_provider(vendor, setup=False, *, ironclaw_host=None):
     """Launch only known provider surfaces. Credentials, endpoints and personal data never enter the URL or prompt."""
-    if not isinstance(vendor, str) or vendor not in (*PROVIDER_SITES, 'custom') or type(setup) is not bool:
+    if not isinstance(vendor, str) or vendor not in (*PROVIDER_SITES, 'custom', 'ironclaw') or type(setup) is not bool:
         raise Denied('Choose a supported agent.')
     result = {'opened':False, 'drafted':False, 'prepared':False, 'method':'manual'}
-    url = 'https://chatgpt.com/plugins' if vendor == 'chatgpt' and setup else PROVIDER_SITES.get(vendor)
+    setup_pages = {'chatgpt':'https://chatgpt.com/plugins', 'manus':'https://www.manus.im/app?openConnectors=true'}
+    url = setup_pages.get(vendor, PROVIDER_SITES.get(vendor)) if setup else PROVIDER_SITES.get(vendor)
+    if vendor == 'ironclaw':
+        if not ironclaw_host:
+            return {**result, 'choose_host':True, 'message':'Connect your own IronClaw instance.'}
+        origin = ironclaw_origin(ironclaw_host)
+        url = origin + ('/extensions/registry' if setup else '/')
+        result['host'] = origin
     if not url:
         return {**result, 'message':'Open the app that will use this MCP connection.'}
     result['url'] = url
-    name = VENDORS.get(vendor, 'Dot') if vendor != 'ironclaw' else 'IronClaw Agent Hub'
+    name = VENDORS.get(vendor, 'Dot')
     result['message'] = 'Open ' + name + ' to continue.'
     if not setup or vendor == 'muse':
         result['request'] = MUSE_SETUP_REQUEST if setup else STATUS_REQUEST
@@ -151,6 +179,32 @@ def openapi(origin):
             'security': [{'agent': []}]}
 
 
+def schema_response(req, origin):
+    """Permit anonymous browser imports of the public API contract on its configured host."""
+    cors = {}
+    browser = 'origin' in req.headers
+    if browser:
+        if (req.headers.get('host') != urlsplit(origin).netloc or
+                any(key in req.headers for key in ('authorization','cookie','proxy-authorization','access-control-request-private-network'))):
+            return Response(status_code=403)
+        cors = {'Access-Control-Allow-Origin':'*'}
+    if req.method == 'OPTIONS':
+        if not browser or req.headers.get('access-control-request-method') not in ('GET','HEAD'):
+            return Response(status_code=405)
+        requested = {name.strip().lower() for value in req.headers.getlist('access-control-request-headers')
+                     for name in value.split(',') if name.strip()}
+        if requested - {'accept','content-type'}:
+            return Response(status_code=403)
+        return Response(status_code=204, headers={**cors, 'Access-Control-Allow-Methods':'GET, HEAD',
+                                                  'Access-Control-Allow-Headers':'Accept, Content-Type'})
+    if req.method not in ('GET','HEAD'):
+        return Response(status_code=405)
+    reply = JSONResponse(openapi(origin), headers=cors)
+    if req.method == 'HEAD':
+        return Response(headers=dict(reply.headers))
+    return reply
+
+
 class LinkCheck:
     def __init__(self, clock):
         self.clock = clock
@@ -209,8 +263,8 @@ class CloudGateway:
                 raise Denied('Access is closed.')
         return gateway
 
-    def authenticate(self, token, *, discovered=False):
-        return self.authorize(token, 'mcp').authenticate(token, discovered=discovered)
+    def authenticate(self, token, *, discovered=False, initialized=False):
+        return self.authorize(token, 'mcp').authenticate(token, discovered=discovered, initialized=initialized)
 
     def dispatch(self, token, tool, args, vendor):
         gateway = self.authorize(token, vendor)
@@ -266,7 +320,7 @@ class BridgeApp:
             return await phone_response(self.gateway.active, req)
         if path not in ('/openapi.json', '/mcp') and path not in {'/v1/' + tool for tool in REST_TOOLS}:
             return Response(status_code=404)
-        if req.headers.get('origin') is not None or req.scope.get('query_string'):
+        if req.scope.get('query_string') or (path != '/openapi.json' and 'origin' in req.headers):
             return Response(status_code=403)
         gateway = self.gateway.active()
         if gateway is None:
@@ -275,11 +329,13 @@ class BridgeApp:
             config = data.get('remote_bridge', {})
         if not config.get('enabled'):
             return Response(status_code=503)
+        if config.get('mode') == 'temporary' and not config.get('verified'):
+            return Response(status_code=404)
         host = req.headers.get('host', '')
         if host not in (urlsplit(config['origin']).netloc, f'127.0.0.1:{self.port}', f'localhost:{self.port}'):
             return Response(status_code=403)
         if path == '/openapi.json':
-            return JSONResponse(openapi(config['origin'])) if req.method == 'GET' else Response(status_code=405)
+            return schema_response(req, config['origin'])
         if req.method != 'POST':
             return Response(status_code=405)
         auth = req.headers.get('authorization', '')
@@ -386,7 +442,7 @@ class RemoteClients:
             calls = {event['agent']: event['at'] for event in data['audit'] if event['status'] == 'released'}
             grants = [{'id': g['id'], 'vendor': g['cloud_client'], 'expires': g['expires'],
                        'remaining': g['remaining'], 'last_call': calls.get(g['id']), 'confirmed': g.get('provider_confirmed'),
-                       'last_discovery': g.get('last_discovery'),
+                       'last_discovery':g.get('last_discovery'), 'last_initialized':g.get('last_initialized'),
                        'revoked': g['revoked'], 'last_read': g.get('last_context_read'),
                        'active': not g['revoked'] and g['expires'] > self.g.clock() and g['remaining'] > 0}
                       for g in data['grants'].values() if g.get('cloud_client') in VENDORS]
@@ -599,19 +655,26 @@ class RemoteClients:
                 grant = grants[0]
                 result = {'state':'existing', 'id':grant['id'],
                           'previous':{'last_call':grant['last_call'],'last_discovery':grant['last_discovery'],
+                                      'last_initialized':grant['last_initialized'],
                                       'last_context_read':grant['last_read']}}
-                setup = not (grant['last_call'] or grant['last_discovery'] or grant['confirmed'])
+                setup = not (grant['last_call'] or grant['last_discovery'] or grant['last_initialized'] or grant['confirmed'])
             else:
-                result = {'state':'created', **self._create(vendor, 86400, 100)}
+                result = {'state':'created','previous':{'last_initialized':None,'last_discovery':None,'last_call':None,
+                                                       'last_context_read':None}, **self._create(vendor, 86400, 100)}
                 setup = True
-        handoff = open_provider(vendor, setup)
-        if vendor == 'chatgpt' and result['state'] == 'created' and sys.platform == 'darwin':
-            result['tunnel_opened'] = self.open_tunnel_setup(result['id'])['opened']
+        handoff = self.open_client(vendor, setup)
+        if vendor == 'chatgpt':
+            from .remote_tunnel import local_status
+            token_file = self.g.store.path.parent / 'clients' / ('chatgpt-' + result['id'] + '.token')
+            result['tunnel_status'] = local_status(token_file)
+            result['helper_installed'] = self.tunnel_helper(False)['installed']
+            if sys.platform == 'darwin' and result['helper_installed'] and (result['state'] == 'created' or result['tunnel_status']['phase'] == 'stopped'):
+                result['tunnel_opened'] = self.open_tunnel_setup(result['id'])['opened']
         return {**result, 'setup':setup, 'handoff':handoff}
 
     def open_tunnel_setup(self, id):
         """Start only the interactive setup belonging to an active, dedicated ChatGPT grant."""
-        from .remote_tunnel import launch_command
+        from .remote_tunnel import launch_command, local_status
         with self.lock:
             if self.closed or not isinstance(id, str) or not re.fullmatch(r'[a-f0-9]{32}', id):
                 raise Denied('Choose an active ChatGPT connection.')
@@ -620,6 +683,9 @@ class RemoteClients:
             token = folder / 'clients' / ('chatgpt-' + id + '.token')
             if not grant or grant['vendor'] != 'chatgpt' or not grant['active'] or not token.is_file():
                 raise Denied('Choose an active ChatGPT connection with a dedicated credential.')
+            status = local_status(token)
+            if status['active']:
+                return {'opened':True, 'already_open':True, 'message':status['message']}
             command = launch_command(token, folder / 'launch.json')
             if sys.platform != 'darwin':
                 return {'opened':False, 'command':command}
@@ -641,6 +707,78 @@ class RemoteClients:
                         pass
                 return {'opened':False, 'command':command}
 
+    def open_client(self, vendor, setup):
+        if vendor == 'ironclaw':
+            with self.g.store.transaction() as data:
+                origin = data.get('ironclaw_host')
+            return open_provider(vendor, setup, ironclaw_host=origin)
+        return open_provider(vendor, setup)
+
+    def open_ironclaw(self, origin, setup):
+        if type(setup) is not bool or self.closed:
+            raise Denied('Unlock Airlock and choose your IronClaw host.')
+        origin = ironclaw_origin(origin)
+        with self.g.store.transaction() as data:
+            data['ironclaw_host'] = origin
+        return open_provider('ironclaw', setup, ironclaw_host=origin)
+
+    def tunnel_helper(self, open_download):
+        from .remote_tunnel import tunnel_binary
+        if type(open_download) is not bool:
+            raise Denied('Choose a tunnel setup action.')
+        url = 'https://github.com/openai/tunnel-client/releases/latest'
+        opened = False
+        if open_download and sys.platform == 'darwin':
+            try:
+                subprocess.run(['/usr/bin/open', url], check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                opened = True
+            except (OSError, subprocess.SubprocessError):
+                pass
+        from .setup import ROOT
+        return {'installed':bool(tunnel_binary(ROOT)), 'url':url, 'opened':opened}
+
+    def connect_dot(self, tunnel_id, runtime_key, approved):
+        from . import setup
+        if approved is not True:
+            raise Denied('Approve this dedicated Dot connection.')
+        with self.lock:
+            if self.closed:
+                raise Denied('Unlock Airlock to connect.')
+            grants = [g for g in self.g.list_grants() if g['agent'] == 'dot' and not g['revoked']
+                      and g['remaining'] > 0 and g['expires'] > self.g.clock()]
+            token = None
+            selected = None
+            if grants:
+                try:
+                    token = setup.dot_credential_path(self.g).read_text().strip()
+                    identity = self.g.authenticate(token)
+                    selected = next((g for g in grants if g['id'] == identity['id']), None)
+                except (OSError, Denied):
+                    pass
+                if not selected:
+                    raise Denied('An active Dot grant already exists. Review it in Connected agents before replacing the tunnel.')
+            else:
+                if not setup.tunnel_binary(setup.ROOT):
+                    raise Denied(setup.TUNNEL_PHASE['missing'])
+                selected = self.g.create(agent='dot',purpose='Private connection for Dot',views=[],mode='automatic',approved=True)
+                token = selected['token']
+            try:
+                if not grants:
+                    AgentMemory(self.g).configure(selected['id'], [], disclose=False, compute=False, proposals=False)
+                setup.configure_dot(self.g, token, tunnel_id, runtime_key)
+                with self.g.store.transaction() as data:
+                    data['grants'][selected['id']]['client_setup'] = {'installed':True,'at':self.g.clock()}
+            except Exception:
+                if not grants:
+                    self.g.revoke(selected['id'])
+                raise
+        handoff = open_provider('dot')
+        if not grants:
+            handoff['message'] = (('Opened Dot. ' if handoff['opened'] else '') +
+                                  'Install the private tunnel plugin in the matching ChatGPT workspace and enable it for this Dot.')
+        return {'id':selected['id'], 'previousStatus':{k:selected.get(k) for k in ('last_call','last_discovery','last_initialized','last_context_read')},
+                **handoff}
+
     def _create(self, vendor, lifetime, max_calls):
         if vendor not in VENDORS:
             raise Denied('Choose a supported cloud client.')
@@ -650,13 +788,12 @@ class RemoteClients:
                 raise Denied('Verify the temporary link before creating a connection.')
             if not (state['enabled'] and state['listening']):
                 raise Denied('Set up the HTTPS bridge first.')
-        result = self.g.create(agent='mcp', purpose='Private connection for ' + VENDORS[vendor],
+        result = self.g.create(agent='mcp', cloud_client=vendor, purpose='Private connection for ' + VENDORS[vendor],
                                views=[], mode='automatic', approved=True, lifetime=lifetime, max_calls=max_calls)
         identifier = result['id']
         try:
             AgentMemory(self.g).configure(identifier, [], disclose=False, compute=False, proposals=False)
             with self.g.store.transaction() as data:
-                data['grants'][identifier].update(cloud_client=vendor, display_name=VENDORS[vendor])
                 if vendor != 'chatgpt':
                     if data.get('remote_bridge', {}).get('origin') != state['origin'] or not data['remote_bridge']['enabled']:
                         raise Denied('The HTTPS bridge changed. Reload and retry.')
@@ -682,7 +819,7 @@ class RemoteClients:
                   'remote-create': ('vendor', 'lifetime', 'max_calls')}
         schema.update({'remote-quick-confirm':('code',), 'remote-quick-retry':(),
                        'remote-connect':('vendor','approved'), 'remote-open-provider':('vendor','setup'),
-                       'remote-open-tunnel':('id',)})
+                       'remote-ironclaw-host':('origin','setup'), 'remote-tunnel-helper':('open_download',), 'remote-open-tunnel':('id',), 'remote-connect-dot':('tunnel_id','runtime_key','approved')})
         if action == 'remote-connect' and isinstance(body, dict) and 'id' in body:
             schema[action] = ('vendor','approved','id')
         if action == 'remote-quick-start' and isinstance(body, dict) and 'verification_method' in body:
@@ -693,10 +830,16 @@ class RemoteClients:
             return self.state()
         if action == 'remote-connect':
             return self.connect(**body)
+        if action == 'remote-ironclaw-host':
+            return self.open_ironclaw(**body)
+        if action == 'remote-tunnel-helper':
+            return self.tunnel_helper(**body)
+        if action == 'remote-connect-dot':
+            return self.connect_dot(**body)
         if action == 'remote-open-tunnel':
             return self.open_tunnel_setup(body['id'])
         if action == 'remote-open-provider':
-            return open_provider(**body)
+            return self.open_client(**body)
         if action == 'remote-quick-start':
             return self.start_temporary(**body)
         if action == 'remote-quick-confirm':

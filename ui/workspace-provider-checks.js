@@ -60,6 +60,8 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
   form.append(button('Choose permissions', () => go('agent', {agent:'mcp', id})));
   const help = details(host, 'Connection help');
   if (status.vendor === 'chatgpt') {
+    if (status.tunnel_status) note(help, status.tunnel_status.message);
+    if (status.tunnel_command) help.append(button('Reopen local tunnel', () => openCloudTunnel(help, id)));
     note(help, 'Open the personal workspace and keep the tunnel command running. Select the same tunnel in your ChatGPT workspace. Enable the privacy_status tool and invoke your installed plugin in the chat.');
     note(help, 'If ChatGPT shows HTTP 429, check its error details. For a rate limit, wait for Retry-After when supplied before trying once more. For a quota or organization limit, resolve it with the workspace admin. A new Airlock credential does not clear a provider limit.');
     if (status.tunnel_command) {

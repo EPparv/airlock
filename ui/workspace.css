@@ -863,6 +863,16 @@ dialog::backdrop {
   overflow-wrap: anywhere;
 }
 
+.workspace-recovery {
+  margin-block: 16px;
+  padding-block: 16px;
+  border-block: 1px solid var(--line);
+}
+
+.workspace-recovery .buttons {
+  margin-top: 14px;
+}
+
 .handoff-manage {
   display: block;
   padding-left: 0;

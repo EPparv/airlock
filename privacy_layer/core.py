@@ -126,14 +126,16 @@ class Gateway:
             raise Denied('Connection unavailable. Ask the owner to review its access.')
         return grant
 
-    def authenticate(self, token, *, discovered=False):
+    def authenticate(self, token, *, discovered=False, initialized=False):
         with self.store.transaction() as data:
             grant = self._grant(data, token)
+            if initialized and grant['remaining'] > 0:
+                grant['last_initialized'] = self.clock()
             if discovered and grant['remaining'] > 0:
                 grant['last_discovery'] = self.clock()
             return {'id':grant['id'], 'agent':grant['agent']}
 
-    def create(self, *, agent, purpose, views, approved=False, lifetime=86400, max_calls=100, mode='reviewed'):
+    def create(self, *, agent, purpose, views, approved=False, lifetime=86400, max_calls=100, mode='reviewed', cloud_client=None):
         if approved is not True:
             raise Denied('Review the exact released excerpts before enabling an agent.')
         if agent not in AGENTS:
@@ -167,6 +169,11 @@ class Gateway:
         grant = {'id':secrets.token_hex(16), 'agent':agent, 'purpose':purpose, 'views':items,
                  'expires':self.clock()+lifetime, 'remaining':max_calls, 'revoked':False,
                  'token_hash':hashlib.sha256(token.encode()).hexdigest(), 'created':self.clock()}
+        if cloud_client is not None:
+            from .remote_clients import VENDORS
+            if agent != 'mcp' or cloud_client not in VENDORS:
+                raise Denied('Choose a supported cloud client.')
+            grant.update(cloud_client=cloud_client, display_name=VENDORS[cloud_client])
         if mode=='automatic':
             from .automatic import POLICY
             grant.update(mode='automatic',policy=POLICY,policy_revision=1,reviewed_purpose=purpose)
@@ -214,9 +221,9 @@ class Gateway:
         with self.store.transaction() as data:
             # These receipts also cover connections created by older versions.
             calls = {r['agent']:r['at'] for r in data['audit'] if r['status']=='released'}
-            return [{'id':g['id'],'agent':g['agent'],'display_name':g.get('display_name'),'purpose':g['purpose'],'expires':g['expires'],
+            return [{'id':g['id'],'agent':g['agent'],'display_name':g.get('display_name'),'cloud_client':g.get('cloud_client'),'purpose':g['purpose'],'expires':g['expires'],
                      'remaining':g['remaining'],'revoked':g['revoked'],'mode':g.get('mode','reviewed'),'configured':g.get('client_setup',{}).get('installed'),
-                     'last_call':calls.get(g['id']), 'last_discovery':g.get('last_discovery'), 'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
+                     'last_call':calls.get(g['id']), 'last_initialized':g.get('last_initialized'), 'last_discovery':g.get('last_discovery'), 'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
 
     def call(self, token, tool, args, *, connection_route='local'):

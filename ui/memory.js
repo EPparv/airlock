@@ -1,12 +1,12 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
-const owner=location.hash.slice(1)||sessionStorage.getItem('private-ai-owner');
+const owner=localSessionToken('private-ai-owner');
 if(owner)sessionStorage.setItem('private-ai-owner',owner);
 history.replaceState(null,'',location.pathname);
 let state;
 function notice(text,error=false){$('notice').textContent=text;$('notice').hidden=false;$('notice').classList.toggle('error',error);}
-async function api(action,body={}){const r=await fetch('/api/'+action,{method:'POST',headers:{'Authorization':'Bearer '+owner,'Content-Type':'application/json'},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw Error(v.error||'Request blocked.');return v;}
+function api(action,body={}){return workspaceRequest(action,body,owner);}
 function guard(fn){return async event=>{const b=event?.currentTarget;if(b?.tagName==='BUTTON')b.disabled=true;try{await fn();}catch(e){notice(e.message,true);}finally{if(b?.tagName==='BUTTON')b.disabled=false;}};}
 function button(text,fn,primary=false){const b=node('button',text,primary?'primary':'');b.onclick=guard(fn);return b;}
 function check(text,checked=false){const l=node('label'),c=node('input');c.type='checkbox';c.checked=checked;l.append(c,document.createTextNode(text));return [l,c];}

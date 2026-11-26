@@ -154,7 +154,7 @@ def verify_route(origin, cancelled, check, *, transport=None, seconds=12):
     if not QUICK_ORIGIN.fullmatch(origin):
         raise Denied('Cloudflare returned an invalid temporary hostname.')
     reason = probe_link(origin, check, cancelled, local=False, seconds=seconds, transport=transport)
-    if reason == 'DNS unavailable':
+    if reason in ('DNS unavailable','network timeout','connection unavailable','HTTP transport failed') or (reason and reason.endswith('browser challenge')):
         return False
     if reason:
         raise Denied('Public Cloudflare verification failed (' + reason + '). Try another network or a named HTTPS bridge.')

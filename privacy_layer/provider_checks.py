@@ -48,7 +48,8 @@ class ProviderChecks:
                 path = self.g.store.path.parent / 'clients' / ('chatgpt-' + grant['id'] + '.token')
                 ready = path.is_file()
                 if ready and live:
-                    from .remote_tunnel import launch_command
+                    from .remote_tunnel import launch_command, local_status
+                    setup['tunnel_status'] = local_status(path)
                     setup['tunnel_command'] = launch_command(path, self.g.store.path.parent / 'launch.json')
                 local = 'Dedicated credential available' if ready else 'Dedicated credential file missing'
             else:

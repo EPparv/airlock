@@ -337,14 +337,14 @@ def test_selection_failures_create_no_connection(bundle,tmp_path,monkeypatch,sel
 
 @pytest.fixture(autouse=True)
 def isolated_profile_environment(monkeypatch):
-    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE'):
+    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE','GEMINI_CLI_HOME','CLAUDE_CONFIG_DIR'):
         monkeypatch.delenv(key,raising=False)
 
 
 PROFILE_FIXTURES = [
     ('muse-code', '.config/muse/settings.json', ('mcp_servers',), {'transport':'stdio','mode':'optional'}),
     ('gemini-cli', '.gemini/settings.json', ('mcpServers',), {}),
-    ('vscode', '.copilot/mcp-config.json', ('mcpServers',), {'type':'stdio'}),
+    ('vscode', '.copilot/mcp-config.json', ('mcpServers',), {'type':'stdio','tools':['*']}),
     ('openclaw', '.openclaw/openclaw.json', ('mcp','servers'), {'transport':'stdio'}),
 ]
 
@@ -443,6 +443,8 @@ def test_custom_copilot_home_uses_export_without_writing_to_default(bundle,tmp_p
 
 
 @pytest.mark.parametrize('agent,variable,suffix', [
+    ('gemini-cli', 'GEMINI_CLI_HOME', '.gemini/settings.json'),
+    ('claude-code', 'CLAUDE_CONFIG_DIR', '.claude.json'),
     ('vscode', 'COPILOT_HOME', 'mcp-config.json'),
     ('muse-code', 'XDG_CONFIG_HOME', 'muse/settings.json'),
     ('openclaw', 'OPENCLAW_STATE_DIR', 'openclaw.json'),
@@ -460,6 +462,33 @@ def test_connect_uses_active_in_home_configuration(bundle, tmp_path, monkeypatch
     assert result['installed'] and result['path'] == str(path)
     assert json.loads(path.read_text())['theme'] == 'keep'
     assert not (home/clients.RELATIVE_CONFIGS[agent]).exists()
+
+
+def test_copilot_repairs_0114_entry_and_preserves_explicit_tool_filter(tmp_path, monkeypatch):
+    monkeypatch.setattr(clients, 'ROOT', tmp_path/'Airlock')
+    entry = clients.server_entry(clients.ROOT/'.private/clients/vscode-example.token')
+    profile = {'mcpServers':{'airlock':{'type':'stdio', **entry}}}
+    migrated = json.loads(clients.json_config(json.dumps(profile), entry, agent='vscode'))
+    assert migrated['mcpServers']['airlock'] == {'type':'stdio', 'tools':['*'], **entry}
+    profile['mcpServers']['airlock']['tools'] = ['privacy_status']
+    with pytest.raises(Denied):
+        clients.json_config(json.dumps(profile), entry, agent='vscode')
+
+
+def test_registration_uses_gateway_only_descriptor_as_soon_as_published(tmp_path, monkeypatch):
+    monkeypatch.setattr(clients, 'ROOT', tmp_path)
+    (tmp_path/'release.json').write_text('{}')
+    credential = tmp_path/'.private/clients/codex-grant.token'
+    old = clients.server_entry(credential)
+    assert old['args'][-1] == str(tmp_path/'.private/launch.json')
+    endpoint = tmp_path/'.private/mcp-endpoint.json'
+    endpoint.parent.mkdir()
+    endpoint.write_text('{"mcp_url":"http://127.0.0.1:12345/mcp"}')
+    expected = clients.server_entry(credential)
+    assert expected['args'][-1] == str(endpoint)
+    assert clients.owned(old) and clients.owned(expected)
+    doc = clients.codex_config(clients.codex_config('', old), expected)
+    assert tomllib.loads(doc)['mcp_servers']['airlock'] == expected
 
 
 def test_workspace_can_export_configuration_for_a_custom_profile(bundle,tmp_path,monkeypatch):

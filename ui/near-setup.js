@@ -1,9 +1,10 @@
 'use strict';
 const $=id=>document.getElementById(id);
-const token=location.hash.slice(1)||sessionStorage.getItem('private-ai-owner')||'';
-if(location.hash){sessionStorage.setItem('private-ai-owner',token);history.replaceState(null,'',location.pathname);}
+const token=localSessionToken('private-ai-owner');
+if(token && location.hash)sessionStorage.setItem('private-ai-owner',token);
+if(location.hash)history.replaceState(null,'',location.pathname);
 let state=null,busy=false;
-async function api(action,body={}){const r=await fetch('/api/near-setup-'+action,{method:'POST',headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});const data=await r.json();if(!r.ok||data.error)throw Error(data.error||'NEAR setup request failed.');return data;}
+async function api(action,body={}){const data=await workspaceRequest('near-setup-'+action,body,token);if(data.error)throw Error(data.error);return data;}
 function notice(text){$('notice').hidden=!text;$('notice').textContent=text;}
 function buttons(){for(const b of document.querySelectorAll('button'))b.disabled=busy;$('clear').disabled=false;$('discover').disabled=busy||!state?.key_present||!state?.sdk.ready;$('probe').disabled=busy||!state?.ready;$('approve').disabled=busy||!state?.deployment_review||!$('consent').checked;}
 function render(s){state=s;$('status').textContent=s.key_present?'A key is present for this session.':'Add a NEAR key to continue.';$('model').textContent=s.model;$('sdk').textContent=s.sdk.message;$('install').hidden=s.sdk.ready;$('prompt').textContent=s.probe_prompt;$('approved').textContent=s.deployment_approved?'Deployment configurations approved. Every inference call still runs the required verification checks.':'No deployments approved yet.';$('review').hidden=!s.deployment_review;$('deployments').replaceChildren();$('consent').checked=false;

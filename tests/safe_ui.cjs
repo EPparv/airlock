@@ -2,20 +2,45 @@
 // node tests/safe_ui.cjs /path/to/python /path/to/chrome [screenshot-directory]
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),net=require('node:net'),{spawn}=require('node:child_process'),assert=require('node:assert/strict');
 const root=path.resolve(__dirname,'..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'airlock-safe-ui-'));
+const pickerTests=require('./agent_picker_browser.cjs');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-let service,chrome,n=0,buffer='',session,browserError='';const pending=new Map(),errors=[];
+let service,chrome,n=0,buffer='',session,browserError='',interceptedReply;const pending=new Map(),errors=[];
 function send(method,params={},sessionId){return new Promise((resolve,reject)=>{const id=++n;const timer=setTimeout(()=>{pending.delete(id);reject(Error('Timed out: '+method+' '+browserError));},sessionId?15000:45000);pending.set(id,{resolve,reject,timer});chrome.stdio[3].write(JSON.stringify({id,method,params,...(sessionId?{sessionId}: {})})+'\0');});}
 const evaluate=async expression=>{const r=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true},session);if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};
-async function until(expression){for(let i=0;i<80;i++){if(await evaluate(expression))return;await pause(100);}throw Error('UI did not reach: '+expression);}
+async function until(expression){
+ for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}
+ const where=await evaluate("JSON.stringify({path:location.pathname,view:history.state?.view,h1:document.querySelector('#app h1')?.textContent,status:document.querySelector('.handoff-status')?.textContent})");
+ throw Error('UI did not reach: '+expression+' on '+where);
+}
 async function click(id){await evaluate(`document.getElementById(${JSON.stringify(id)}).click()`);}
 (async()=>{
- const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));const port=listener.address().port;await new Promise(r=>listener.close(r));
+ async function freePort(){
+   const listener=net.createServer();await new Promise(r=>listener.listen(0,'127.0.0.1',r));
+   const port=listener.address().port;await new Promise(r=>listener.close(r));return port;
+ }
+ const port=await freePort();
  const env={...process.env,PYTHONPATH:root};
- service=spawn(process.argv[2]||'python3',[path.join(__dirname,'safe_ui_fixture.py'),tmp,String(port)],{cwd:root,env,stdio:['ignore','ignore','pipe']});let serverError='';service.stderr.on('data',d=>serverError+=d);
- for(let i=0;i<60;i++){try{if((await fetch(`http://127.0.0.1:${port}/`)).ok)break;}catch{}if(i===59)throw Error(serverError||'Fixture did not start');await pause(100);}
+ async function startService(owner) {
+   service=spawn(process.argv[2]||'python3',[path.join(__dirname,'safe_ui_fixture.py'),tmp,String(port),owner],
+     {cwd:root,env,stdio:['ignore','ignore','pipe']});
+   let serverError='';service.stderr.on('data',d=>serverError+=d);
+   for(let i=0;i<80;i++){
+     try{if((await fetch(`http://127.0.0.1:${port}/`)).ok)return;}catch{}
+     if(service.exitCode!==null)break;
+     await pause(100);
+   }
+   throw Error(serverError||'Fixture did not start');
+ }
+ await startService('fictional-browser-owner');
  chrome=spawn(process.argv[3]||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--remote-debugging-pipe','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-background-networking','--disable-dev-shm-usage','--disable-gpu','--user-data-dir='+path.join(tmp,'chrome'),'about:blank'],{stdio:['ignore','ignore','pipe','pipe','pipe']});
  chrome.stderr.on('data',chunk=>{browserError=(browserError+chunk.toString()).slice(-1500);});
- chrome.stdio[4].on('data',data=>{buffer+=data.toString();let at;while((at=buffer.indexOf('\0'))>=0){const raw=buffer.slice(0,at);buffer=buffer.slice(at+1);if(!raw)continue;const message=JSON.parse(raw),p=pending.get(message.id);if(p){pending.delete(message.id);clearTimeout(p.timer);message.error?p.reject(Error(JSON.stringify(message.error))):p.resolve(message.result);}else if(message.method==='Runtime.exceptionThrown')errors.push(message.params.exceptionDetails.text);}});
+ chrome.stdio[4].on('data',data=>{buffer+=data.toString();let at;while((at=buffer.indexOf('\0'))>=0){const raw=buffer.slice(0,at);buffer=buffer.slice(at+1);if(!raw)continue;const message=JSON.parse(raw),p=pending.get(message.id);if(p){pending.delete(message.id);clearTimeout(p.timer);message.error?p.reject(Error(JSON.stringify(message.error))):p.resolve(message.result);}else if(message.method==='Fetch.requestPaused'){
+    const requestId=message.params.requestId;
+    const action=interceptedReply
+      ? send('Fetch.fulfillRequest',{requestId,...interceptedReply},session)
+      : send('Fetch.failRequest',{requestId,errorReason:'ConnectionReset'},session);
+    action.catch(e=>errors.push(e.message));
+  }else if(message.method==='Runtime.exceptionThrown')errors.push(message.params.exceptionDetails.text);}});
  chrome.on('exit',(code,signal)=>{for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Chrome exited: '+(signal||code)));}pending.clear();});
  let tab;
  for(let i=0;i<100&&!tab;i++){
@@ -37,11 +62,10 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  const btn=label=>byText('#app button',label), sheet=label=>byText('dialog[open] button',label);
  const contains=text=>until('document.getElementById("app")?.innerText.includes('+JSON.stringify(text)+')');
  const titled=title=>until('document.querySelector("#app h1")?.textContent==='+JSON.stringify(title));
- const pickerChoices = ['Codex','Cursor','Claude Desktop','Claude Code','ChatGPT','Meta Muse','Manus','IronClaw','Dot','OpenClaw',
-   'VS Code · GitHub Copilot','Gemini CLI','Muse Code','Custom MCP client','Other remote MCP client'];
+ const pickerChoices=pickerTests.choices;
  const visibleActions = () => evaluate("Array.from(document.querySelectorAll('#app button:not(.back), #app a[href], #app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
  async function matchesPicker() {
-   await until("document.querySelector('#app [aria-busy]')===null");
+   await until("document.querySelectorAll('#app .agent-option').length===15 && !document.querySelector('#app [aria-busy]')");
    const labels=await visibleActions();
    assert.equal(labels.includes('Other agents'),false);
    for(const name of pickerChoices) assert.ok(labels.includes(name),'Missing agent: '+name);
@@ -239,8 +263,54 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await visit(['Privacy & connections','Privacy checks','Test agent connection'],'Connect fictional workspace');
  await visit(['Privacy & connections','Privacy checks','Private inference walkthrough'],'Run a private task');
  await visit(['Privacy & connections','Connected agents'],'Cursor');
+ await pickerTests.ownerChoices({home,btn,titled,contains,evaluate,until,launched,type,byText,freePort});
+ // Drop the response after the server has completed the write. Recovery can read
+ // state, but only a separate deliberate click may launch the existing connection.
+ await home();await btn('Connect agent');
+ const priorLaunches=launched().length;
+ const commandUrl=`http://127.0.0.1:${port}/api/workspace-quick-connect`;
+ await send('Fetch.enable',{patterns:[{urlPattern:commandUrl,requestStage:'Response'}]},session);
+ await btn('Cursor');await contains('Airlock is offline');
+ await send('Fetch.disable',{},session);
+ assert.equal(launched().length,priorLaunches+1);
+ await btn('Check connection');await matchesPicker();
+ assert.equal(launched().length,priorLaunches+1);
+ await btn('Cursor');await noManualHandoff();
+ assert.equal(launched().length,priorLaunches+2);
+ const oldOwner=await evaluate("sessionStorage.getItem('private-ai-owner')");
+ const exited=new Promise(r=>service.once('exit',r));service.kill();await exited;
+ // The real service process has gone away. Wait for a read on the live receipt.
+ await contains('Airlock is offline');
+ await startService('fictional-restarted-owner');
+ await btn('Check connection');await contains('Open Airlock again');
+ const stale=await fetch(`http://127.0.0.1:${port}/api/workspace-state`,
+   {method:'POST',headers:{authorization:'Bearer '+oldOwner,'content-type':'application/json'},body:'{}'});
+ assert.ok([401,403].includes(stale.status));
+ await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace#fictional-restarted-owner`},session);
+ await until("document.querySelectorAll('#app.home nav button').length===3");
+ assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
+ assert.equal(launched().length,priorLaunches+2);
+ await btn('Connect agent');await btn('Cursor');await noManualHandoff();
+ const restored=await evaluate("api('workspace-state').then(s=>s.agents.filter(g=>g.name==='cursor'&&g.status==='configured'))");
+ assert.equal(restored.length,1);assert.equal(restored[0].id,firstCursor.id);assert.deepEqual(restored[0].scope,savedCursor.scope);
+
  await home();await btn('Privacy & connections');await btn('App settings');await btn('Lock workspace');await sheet('Lock workspace');
  await until("location.pathname==='/workspace' && document.querySelectorAll('nav button').length===3");assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
+ // Treat stale or malformed service responses as an explicit recovery state.
+ const handshake=`http://127.0.0.1:${port}/api/workspace-launch-options`;
+ for(const [code,body,contentType,heading] of [
+   [404,'{}','application/json','Update Airlock'],
+   [200,'<html>Old proxy</html>','text/html','Unexpected workspace response'],
+   [200,'{}','application/json','Unexpected workspace response']
+ ]) {
+   await send('Page.navigate',{url:`http://127.0.0.1:${port}/workspace#fictional-restarted-owner`},session);
+   await until("document.querySelectorAll('#app.home nav button').length===3");
+   interceptedReply={responseCode:code,body:Buffer.from(body).toString('base64'),responseHeaders:[{name:'Content-Type',value:contentType}]};
+   await send('Fetch.enable',{patterns:[{urlPattern:handshake,requestStage:'Request'}]},session);
+   await btn('Connect agent');await contains(heading);
+   assert.equal(await evaluate("document.querySelectorAll('#app .agent-option').length"),0);
+   await send('Fetch.disable',{},session);interceptedReply=null;
+ }
  if(process.argv[4]){
    const file=path.resolve(process.argv[4],'Airlock-Preview.html');assert.ok(fs.existsSync(file));
    await send('Page.navigate',{url:require('node:url').pathToFileURL(file).href},session);
@@ -250,6 +320,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
    assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://try-airlock.parv223885.chatgpt.site/#connect');
    assert.equal((await visibleActions()).some(label=>pickerChoices.includes(label)),false);
    await btn('Try sample agents');await matchesPicker();await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
+   await pickerTests.offlineChoices({home,btn,titled,contains,evaluate,until});
    await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Preview code','#app');await btn('Save phrases');await byText('summary','Test redaction');await type('Sample','Preview code at sample@example.org','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.includes('[withheld]')");assert.ok(!(await evaluate("document.querySelector('#app pre').textContent.includes('sample@example.org')")));
    await home();await btn('Privacy & connections');await btn('Approvals & activity');await btn('Device actions');await contains('Investor follow-up');
    await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Investor follow-up')).click()");await sheet('Approve example');await contains('Simulated');

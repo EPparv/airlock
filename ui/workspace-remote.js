@@ -38,10 +38,22 @@ function cloudValue(host, label, value, type = 'text') {
   }));
 }
 
+function addTunnelDownload(host) {
+  host.append(button('Get tunnel-client', async () => {
+    const help = await api('remote-tunnel-helper', {open_download:true});
+    if (help.opened || host.querySelector('.tunnel-download')) return;
+    const link = el('a', 'Open the official download', 'tunnel-download');
+    link.href = help.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    host.append(link);
+  }));
+}
+
 async function openCloudTunnel(host, id) {
   const result = await api('remote-open-tunnel', {id});
   if (result.opened) {
-    flash('Terminal opened. Enter your dedicated tunnel ID and restricted runtime key there.');
+    flash(result.already_open ? result.message : 'Terminal opened. Enter your dedicated tunnel ID and restricted runtime key there.');
   } else {
     if (host.querySelector('.tunnel-command')) return;
     const fallback = el('div', null, 'tunnel-command');
@@ -49,6 +61,24 @@ async function openCloudTunnel(host, id) {
     cloudValue(fallback, 'Terminal command', result.command, 'multiline');
     note(fallback, 'Run this command in Terminal on your Mac.');
   }
+}
+
+function ironclawHostForm(parent, setup, saved = '') {
+  const address = field(parent, 'Your IronClaw address', input('url', saved));
+  address.placeholder = 'https://ironclaw.example.com';
+  note(parent, 'Use the address of your own instance. A local installation usually runs at http://127.0.0.1:3000.');
+  formAction(parent, 'Open my IronClaw', async () => {
+    const result = await api('remote-ironclaw-host', {origin:address.value.trim(),setup});
+    if (result.opened) flash(result.message);
+    else {
+      parent.querySelector('.ironclaw-link')?.remove();
+      const link = el('a', 'Continue to IronClaw', 'ironclaw-link');
+      link.href = result.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      parent.append(link);
+    }
+  });
 }
 
 addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => {
@@ -64,6 +94,7 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
   surface.setAttribute('role', 'status');
   surface.append(headline, detail);
   host.append(surface);
+  if (handoff?.choose_host) ironclawHostForm(host, !!setup);
   if (handoff?.retry_native) {
     host.append(button('Open ' + name, async () => {
       const next = await api('remote-open-provider', {vendor:opt.vendor, setup:!!setup});
@@ -83,27 +114,47 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
   if (setup && opt.vendor === 'chatgpt') {
     note(host, 'Install OpenAI’s tunnel-client on your Mac. Use a dedicated tunnel for this connection. In ChatGPT Plugins, add and install that tunnel as a custom MCP server.');
     if (receipt.tunnel_opened) note(host, 'Terminal opened for your tunnel ID and restricted runtime key. Keep the tunnel running while using ChatGPT.');
-    else host.append(button('Open tunnel setup', () => openCloudTunnel(host, opt.id), 'primary'));
+    else {
+      if (receipt.helper_installed === false) addTunnelDownload(host);
+      host.append(button('Open tunnel setup', () => openCloudTunnel(host, opt.id), 'primary'));
+    }
   } else if (setup) {
     const next = {
       manus:'In Manus, choose Connectors → Create → Add MCP by URL. Enter the server URL and save the bearer token in its authentication settings.',
       muse:'Enter your schema URL in the custom connector setup. Save the bearer token in Muse’s secure credential prompt.',
-      ironclaw:'In your IronClaw host, install the extension manifest and save the token as airlock_scoped_token in secret settings.',
+      ironclaw:'In Extensions → Registry, choose Add MCP server. Enter the Server URL and select Bearer token. Install Airlock and save its token in IronClaw’s setup form.',
       custom:'Add a Streamable HTTP MCP server in your app. Save the token in its bearer authentication settings.'
     };
     note(host, next[opt.vendor]);
-    if (receipt.manifest) cloudValue(host, 'Extension manifest', receipt.manifest, 'multiline');
+    if (receipt.manifest) cloudValue(details(host, 'Extension manifest'), 'Manifest', receipt.manifest, 'multiline');
     if (receipt.url) cloudValue(host, opt.vendor === 'muse' ? 'Schema URL' : 'Server URL', receipt.url, 'url');
     if (receipt.credential) cloudValue(host, 'Bearer token · shown once', receipt.credential, 'password');
   }
   if (receipt) {
-    watchHandoff(host, {agent:opt.vendor, id:opt.id, previousStatus:receipt.previous}, headline, detail);
+    const recovery = {
+      chatgpt:'Select the installed Airlock plugin in the correct ChatGPT workspace. Under Connection details you can check the local tunnel and reopen it.',
+      muse:'Check that the custom connector has the current schema URL and that Muse saved the bearer token in its credential store.',
+      manus:'In Manus Connectors, open your Airlock server and check its URL and bearer authentication.',
+      ironclaw:'In your IronClaw instance, check that the Airlock extension is installed and its bearer token is configured.',
+      custom:'Check the server URL and bearer authentication settings in your MCP app.'
+    };
+    watchHandoff(host, {agent:opt.vendor, id:opt.id, opened:!!handoff.opened && !setup,
+      recovery:recovery[opt.vendor], previousStatus:receipt.previous}, headline, detail);
   } else {
     const status = await api('client-status', {id:opt.id});
     watchConnection(host, opt.id, status);
     host.append(button('Open ' + name, () => connectRemoteNow(opt.vendor, opt.from, opt.id), 'primary'));
   }
   const help = details(host, 'Connection details');
+  if (opt.vendor === 'ironclaw' && !handoff?.choose_host) ironclawHostForm(help, !!setup, handoff?.host || '');
+  if (opt.vendor === 'chatgpt') {
+    if (receipt?.tunnel_status && !receipt.tunnel_opened) note(help, receipt.tunnel_status.message);
+    help.append(button('Check local tunnel', async () => {
+      const check = await api('provider-check-state', {id:opt.id});
+      flash(check.tunnel_status?.message || check.local);
+    }), button('Reopen tunnel', () => openCloudTunnel(help, opt.id)));
+    note(help, 'If ChatGPT shows HTTP 429 before a tool responds, follow its Retry-After time and check the workspace quota. Reuse this connection when retrying.');
+  }
   help.append(button('Manage access', () => go('agent', {agent:'mcp', id:opt.id})),
     button('Test or recover connection', () => go('provider-check', {id:opt.id})));
   if (setup && receipt?.state === 'existing' && opt.vendor !== 'chatgpt') {
@@ -186,7 +237,7 @@ function temporaryLinkVerification(host, state, after) {
   host.append(button('Retry on this Mac', async () => {
     const updated = await api('remote-quick-retry');
     await after();
-    if (!updated.verified) flash('This Mac still cannot resolve the link. Use the code from another device.');
+    if (!updated.verified) flash('This Mac could not verify the public link. Use the code from another device.');
   }), button('Stop temporary link', async () => {await api('remote-quick-stop'); await after();}));
 }
 
@@ -250,12 +301,42 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       temporaryLinkVerification(host, state, resume);
     } else if (opt.vendor !== 'chatgpt' && !(state.enabled && state.listening)) {
       note(host, name + ' needs an HTTPS link to reach your Mac.');
-      if (!state.enabled) {
-        note(host, 'Cloudflare handles traffic through this temporary link and can see credentials and shared data. Keep your Mac awake. Locking Airlock ends access.');
-        host.append(button('Start temporary link', async () => {
-          await api('remote-quick-start', {approved:true, verification_method:'auto'});
+      if (state.origin && state.mode !== 'temporary') {
+        host.append(button('Resume saved bridge', async () => {
+          await api('remote-configure', {origin:state.origin, port:state.port, enabled:true});
           await resume();
         }, 'primary'));
+      } else if (!state.enabled) {
+        note(host, 'Cloudflare handles traffic through this temporary link and can see credentials and shared data. Keep your Mac awake. Locking Airlock ends access.');
+        const progress = el('p', '', 'hint');
+        progress.setAttribute('role', 'status');
+        const stop = button('Cancel', async () => {
+          await api('remote-quick-stop');
+          if (host.isConnected) await refresh();
+        });
+        stop.hidden = !state.starting;
+        const start = button('Start temporary link', async () => {
+          start.textContent = 'Starting link…';
+          progress.textContent = 'Preparing the helper and checking the public link.';
+          stop.hidden = false;
+          try {
+            await api('remote-quick-start', {approved:true, verification_method:'auto'});
+            if (host.isConnected) await resume();
+          } catch (error) {
+            if (host.isConnected) throw error;
+          } finally {
+            if (host.isConnected) {
+              start.textContent = 'Start temporary link';
+              stop.hidden = true;
+              progress.textContent = '';
+            }
+          }
+        }, 'primary');
+        if (state.starting) {
+          progress.textContent = 'A link is starting on this Mac.';
+          host.append(button('Check link', resume, 'primary'));
+        } else host.append(start);
+        host.append(progress, stop);
       }
       host.append(button(state.enabled ? 'Restore bridge' : 'Use my own domain', () => go('remote-bridge', {resume:opt.vendor})));
     } else if (existing.length > 1) {
@@ -305,7 +386,7 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       note(f, opt.vendor === 'muse' ?
         'Paste the setup request into Muse. When Muse opens its secure credential prompt, enter the token there.' :
         opt.vendor === 'manus' ? 'In Manus, choose Connectors → Create → Add MCP by URL. Save the token in its authentication settings.' :
-        opt.vendor === 'ironclaw' ? 'Review the manifest and install it in IronClaw. Save the token under airlock_scoped_token in its secret settings.' :
+        opt.vendor === 'ironclaw' ? 'In your IronClaw instance, open Extensions → Registry → Add MCP server. Choose bearer authentication, install the extension, then enter the token in its setup form.' :
         'Add this URL as a Streamable HTTP MCP server. Set Authorization to Bearer followed by the token in the client’s secret settings.');
       if (result.manifest) {
         const file = field(f, 'IronClaw extension manifest', el('textarea'));

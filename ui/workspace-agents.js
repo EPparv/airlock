@@ -91,6 +91,7 @@ function linkStatus(status) {
   if (status.last_context_read != null) return 'Context requested ' + when(status.last_context_read) + '.';
   if (status.last_call != null) return 'Airlock answered this connection’s tool call ' + when(status.last_call) + '.';
   if (status.last_discovery != null) return 'Agent found Airlock’s tools. Waiting for its first tool call.';
+  if (status.last_initialized != null) return 'The agent established a connection to Airlock ' + when(status.last_initialized) + '.';
   return 'Waiting for the agent’s first tool call.';
 }
 
@@ -110,8 +111,10 @@ function watchConnection(host, id, initial) {
     if (!visible()) return;
     try {
       if (await update() && visible() && ++attempts < 24) setTimeout(poll, 5000);
-    } catch {
-      if (visible()) result.textContent = 'Could not check this connection. Open Airlock to try again.';
+    } catch (error) {
+      if (!visible()) return;
+      result.textContent = 'Connection status unavailable.';
+      if (error instanceof WorkspaceConnectionError) renderWorkspaceRecovery(host, error);
     }
   }
   if (!initial.last_call && !initial.last_context_read && !['expired','revoked'].includes(initial.status)) {
@@ -171,6 +174,7 @@ async function startAgentConnection(agent) {
     const result = await api('workspace-quick-connect', {agent, approved:true});
     return await showHandoff(agent, result);
   } catch (error) {
+    if (error instanceof WorkspaceConnectionError) throw error;
     return await showHandoff(agent, {method:'retry', message:error.message || 'The app could not open.'});
   } finally {
     connectingAgent = false;
@@ -187,7 +191,7 @@ function watchHandoff(host, opt, headline, detail) {
   const name = labelForAgent(opt.agent);
   const waitingTitle = headline.textContent;
   const started = Date.now();
-  let recovery, discovered = false;
+  let recovery, serviceError, received = false;
   function clearRecovery() {
     recovery?.remove();
     recovery = null;
@@ -202,7 +206,7 @@ function watchHandoff(host, opt, headline, detail) {
       'muse-code':'If Terminal is waiting, press Return to send the prepared status request.',
       dot:'Open the Dot that uses your Airlock tunnel and allow its status request.'
     };
-    const hint = opt.method === 'check' ? 'Review the connection check in Terminal. Start a session in ' + name + ' to use Airlock.' : guidance[opt.agent];
+    const hint = opt.recovery || (opt.method === 'check' ? 'Review the connection check in Terminal. Start a session in ' + name + ' to use Airlock.' : guidance[opt.agent]);
     if (!hint) return;
     recovery = el('div');
     note(recovery, hint);
@@ -216,32 +220,45 @@ function watchHandoff(host, opt, headline, detail) {
     try {
       const status = await api('client-status', {id:opt.id});
       if (!host.isConnected) return;
+      if (serviceError) {
+        serviceError.remove();
+        serviceError = null;
+      }
       if (['expired','revoked'].includes(status.status)) {
         clearRecovery();
         headline.textContent = 'Access ended';
         detail.textContent = linkStatus(status);
         return;
       }
-      if (status.last_call != null && status.last_call !== before.last_call) {
+      const fresh = field => before[field] !== undefined && status[field] != null && status[field] !== before[field];
+      if (fresh('last_call')) {
         clearRecovery();
         headline.textContent = 'Connected';
         detail.textContent = name + ' called an Airlock tool.';
         return;
       }
-      if (status.last_discovery != null && status.last_discovery !== before.last_discovery) {
+      const discovered = fresh('last_discovery');
+      if (discovered || fresh('last_initialized')) {
         clearRecovery();
-        discovered = true;
+        received = true;
         headline.textContent = 'Connected';
-        detail.textContent = name + ' found Airlock’s tools.';
-      } else if (!discovered) {
+        detail.textContent = name + (discovered ? ' found Airlock’s tools.' : ' established a connection to Airlock.');
+      } else if (!received) {
         const quiet = opt.opened && Date.now() - started >= 20000;
         headline.textContent = quiet ? 'No response yet' : waitingTitle;
         if (quiet) showRecovery();
       }
-    } catch {
-      if (host.isConnected && !discovered) {
+    } catch (error) {
+      if (host.isConnected) {
         clearRecovery();
         headline.textContent = 'Connection status unavailable';
+        if (error instanceof WorkspaceConnectionError && serviceError?.dataset.kind !== error.kind) {
+          serviceError?.remove();
+          serviceError = el('div');
+          serviceError.dataset.kind = error.kind;
+          detail.parentElement.after(serviceError);
+          renderWorkspaceRecovery(serviceError, error);
+        }
       }
     }
     calls++;
@@ -293,7 +310,7 @@ addPage('connections', 'Connected agents', 'privacy', async (host, options, bar)
   host.append(list);
   if (!current.length) empty(list, 'No agents connected.');
   for (const a of current) item(list, connectionName(a), a.scope ? (a.scope.records.length +
-      ' selected · ' + (a.last_read ? 'Last read ' + when(a.last_read) : a.last_call != null ? 'Tool call received' : a.last_discovery != null ? 'Tools discovered' : 'Awaiting first call')) :
+      ' selected · ' + (a.last_read ? 'Last read ' + when(a.last_read) : a.last_call != null ? 'Tool call received' : a.last_discovery != null ? 'Tools discovered' : a.last_initialized != null ? 'Agent connected' : 'Awaiting first call')) :
     'Existing ' + a.mode + ' connection', () => go('agent', {
       id: a.id,
       agent: a.name
@@ -506,35 +523,24 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
 });
 
 addPage('dot', 'Dot tunnel', 'connect', async host => {
-  const status = await api('saved-dot');
-  note(host, status.configured ? 'A tunnel configuration is saved on this Mac.' :
-    'Use the tunnel ID and runtime key from your private Dot connection.');
-  const f = el('div', null, 'form');
-  host.append(f);
-  const id = field(f, 'Tunnel ID', input()),
-    key = field(f, 'Runtime key', input('password')),
-    token = field(f, 'Agent credential', input('password'));
-  key.autocomplete = token.autocomplete = 'off';
-  formAction(f, 'Save tunnel configuration', async () => {
-    if (preview) return nativeOnly('Dot tunnel');
-    await api('install-dot', {
-      token: token.value,
-      tunnel_id: id.value,
-      runtime_key: key.value
-    });
-    await refresh();
-    flash('Tunnel saved.');
+  if (preview) return nativeOnly('Dot tunnel');
+  const [status, helper] = await Promise.all([api('saved-dot'), api('remote-tunnel-helper', {open_download:false})]);
+  if (!helper.installed) addTunnelDownload(host);
+  note(host, status.configured ? 'Reconnect using the dedicated tunnel saved on this Mac.' :
+    'Install OpenAI’s tunnel-client on your Mac and use a dedicated tunnel associated with your Dot workspace. New connections share zero records.');
+  if (status.configured) host.append(button('Reconnect Dot', () => selectAgent('dot'), 'primary'));
+  const f = status.configured ? details(host, 'Update tunnel credentials') : el('div', null, 'form');
+  if (!status.configured) host.append(f);
+  else note(f, 'Changing the tunnel ID gives the new tunnel access to this Dot connection’s approved records and permissions.');
+  const id = field(f, 'Tunnel ID', input());
+  const key = field(f, 'Restricted runtime key', input('password'));
+  id.spellcheck = false;
+  key.autocomplete = 'off';
+  formAction(f, status.configured ? 'Update and connect' : 'Connect Dot', async () => {
+    const result = await api('remote-connect-dot', {tunnel_id:id.value.trim(),runtime_key:key.value.trim(),approved:true});
+    key.value = '';
+    await showHandoff('dot', result);
   });
-  f.append(button('Check tunnel', async () => {
-    if (preview) return nativeOnly('Check tunnel');
-    const r = await api('dot-status');
-    note(f, r.message || r.status || 'Status checked.');
-  }));
-  if (status.configured) f.append(button('Reconnect saved setup', async () => {
-    if (preview) return nativeOnly('Reconnect Dot');
-    const r = await api('restore-dot');
-    flash(r.message || 'Reconnected.');
-  }));
 });
 
 addPage('excerpts', 'Reviewed excerpts', 'context', async host => {

@@ -39,7 +39,7 @@ def build(target):
     ui = ROOT/'ui'
     html = (ui/'workspace.html').read_text()
     sources = re.findall(r'<script defer src="/([\w.-]+)"></script>',html)
-    if not sources or sources[0]!='workspace.js':
+    if sources[:2] != ['workspace-transport.js', 'workspace.js']:
         raise ValueError('Workspace entry point missing.')
     policy = """<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src data:; base-uri 'none'; form-action 'none'">"""
     html = html.replace('<link rel="icon" href="/icon.svg">',policy)

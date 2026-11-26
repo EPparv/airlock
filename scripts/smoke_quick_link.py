@@ -1,5 +1,6 @@
 """CI-only, two-device acceptance for a disposable Mac with no personal sources."""
 import argparse
+import base64
 import json
 import logging
 import os
@@ -68,11 +69,17 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def public_fetch(url, payload=None):
-    # No caller-provided headers, credentials, proxies or HTTP redirects.
+def public_fetch(url, payload=None, *, witness_token=None):
+    # Never follow redirects or forward a credential outside the fixed test service.
     opener = build_opener(ProxyHandler({}), NoRedirect())
-    request = Request(url, data=payload, headers={'Accept':'application/json, text/html',
-                                                  'Cache-Control':'no-store', 'Content-Type':'application/json'})
+    headers={'Accept':'application/json, text/html', 'Cache-Control':'no-store', 'Content-Type':'application/json'}
+    if witness_token is not None:
+        parts=urlsplit(url)
+        require(parts.scheme=='https' and HOST.fullmatch(parts.netloc) and not parts.fragment and not parts.query
+                and parts.path in ('/mcp','/v1/privacy_status') and re.fullmatch(r'pal_[\w-]{43}', witness_token, re.ASCII),
+                'Invalid external status destination or credential')
+        headers.update(Authorization='Bearer '+witness_token, Accept='application/json, text/event-stream')
+    request = Request(url, data=payload, headers=headers)
     try:
         with opener.open(request, timeout=6) as r:
             body = r.read(262145)
@@ -106,7 +113,14 @@ def witness(directory, discovery=False):
             matched = CODE.search(body) if status == 200 else None
             return matched.group(1).decode('ascii') if matched else None
         value = poll_public(offer['url'], code, 225, 'External challenge')
-        write(directory, 'proof.json', {'nonce':offer['nonce'], 'code':value})
+        # Only this runner ever sees the private key. All uploaded artifacts are
+        # individual allowlisted files. The Mac receives the public half.
+        private_key=directory/'witness.private'
+        subprocess.run(['openssl','genpkey','-algorithm','RSA','-pkeyopt','rsa_keygen_bits:3072','-out',private_key],
+                       check=True,stderr=subprocess.DEVNULL)
+        private_key.chmod(0o600)
+        public_key=subprocess.check_output(['openssl','pkey','-in',private_key,'-pubout'],text=True)
+        write(directory, 'proof.json', {'nonce':offer['nonce'], 'code':value, 'public_key':public_key})
         print('Second device read the eight-digit challenge over public HTTPS.')
         return
     def valid_schema(status, body):
@@ -119,11 +133,45 @@ def witness(directory, discovery=False):
         except (TypeError, KeyError, ValueError, AttributeError):
             return False
     poll_public(origin + '/openapi.json', valid_schema, 180, 'External discovery')
+    # Browser-based connector importers must be able to inspect the public
+    # contract before they have a token. They receive no credentialed CORS access.
+    importer = build_opener(ProxyHandler({}), NoRedirect())
+    for method in ('OPTIONS','HEAD','GET'):
+        headers={'Origin':'https://importer.example.org'}
+        if method=='OPTIONS':
+            headers['Access-Control-Request-Method']='GET'
+        request=Request(origin+'/openapi.json',method=method,headers=headers)
+        with importer.open(request,timeout=8) as response:
+            require(response.status==(204 if method=='OPTIONS' else 200)
+                    and response.headers.get('Access-Control-Allow-Origin')=='*'
+                    and response.headers.get('Access-Control-Allow-Credentials') is None,
+                    'External anonymous schema import failed')
+            if method=='GET':
+                require(valid_schema(200,response.read(262145)), 'Cross-origin discovery returned the wrong schema')
     require(public_fetch(offer['url'])[0] == 404, 'A consumed verification link still responded')
     require(public_fetch(origin + '/api/workspace-state')[0] == 404, 'Owner route was visible')
     require(public_fetch(origin + '/v1/privacy_status', b'{}')[0] == 401, 'Missing credential was accepted')
-    write(directory, 'witness.json', {'nonce':offer['nonce'], 'public_discovery':True})
-    print('Second device confirmed public discovery, spent challenge, protected tools and private owner routes.')
+    sealed=read(directory,'sealed.json')
+    private_key=directory/'witness.private'
+    try:
+        clear=subprocess.check_output(['openssl','pkeyutl','-decrypt','-inkey',private_key,'-pkeyopt','rsa_padding_mode:oaep',
+                                      '-pkeyopt','rsa_oaep_md:sha256','-pkeyopt','rsa_mgf1_md:sha256'],
+                                     input=base64.b64decode(sealed['ciphertext'],validate=True),stderr=subprocess.DEVNULL)
+    finally:
+        private_key.unlink(missing_ok=True)
+    calls=json.loads(clear)
+    require(calls['nonce']==offer['nonce'], 'External status request did not match this run')
+    rpc={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'privacy_status','arguments':{}}}
+    for route,payload,token in [('/v1/privacy_status',{},calls['rest']),('/mcp',rpc,calls['mcp'])]:
+        status,body=public_fetch(origin+route,json.dumps(payload).encode(),witness_token=token)
+        require(status==200, 'External status call returned HTTP '+str(status))
+        result=json.loads(body)
+        if route=='/mcp':
+            result=json.loads(result['result']['content'][0]['text'])
+        require(result['execution']['status']=='success' and result['scope_selection']['records']==[],
+                'External status response was unsuccessful or had a nonempty scope')
+    write(directory, 'witness.json', {'nonce':offer['nonce'], 'authenticated_status':True})
+    print('Independent runner completed authenticated REST and MCP status calls over public HTTPS.')
 
 
 class EmptySources:
@@ -160,6 +208,15 @@ def host(directory):
             require(proof.get('nonce') == nonce and re.fullmatch('[0-9]{8}', str(proof.get('code'))), 'Invalid returned proof')
             require(remote.owner('remote-quick-confirm', {'code':proof['code']})['verified'], 'Device confirmation failed')
             print('Mac owner confirmed the code returned by the external device.')
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding, rsa
+            recipient=serialization.load_pem_public_key(proof['public_key'].encode('ascii'))
+            require(isinstance(recipient,rsa.RSAPublicKey) and recipient.key_size==3072, 'Invalid external witness key')
+            grants={name:remote.create(vendor,300,1) for name,vendor in [('rest','muse'),('mcp','custom')]}
+            witness_payload={'nonce':nonce, **{name:grant['credential'] for name,grant in grants.items()}}
+            ciphertext=recipient.encrypt(json.dumps(witness_payload).encode(),
+                padding.OAEP(mgf=padding.MGF1(hashes.SHA256()),algorithm=hashes.SHA256(),label=None))
+            write(directory,'sealed.json',{'ciphertext':base64.b64encode(ciphertext).decode('ascii')})
             # Some managed Mac runners cannot resolve freshly allocated names.
             # The independent witness must still verify the public endpoint in both cases.
             try:
@@ -173,18 +230,38 @@ def host(directory):
                 response = client.post('/v1/privacy_status', json={}, headers=auth)
                 require(response.status_code == 200 and response.json()['execution']['status'] == 'success'
                         and response.json()['scope_selection']['records'] == [], 'Synthetic REST grant failed')
-                mcp = remote.create('manus', 120, 2)
-                response = client.post('/mcp', headers={'Authorization':'Bearer ' + mcp['credential'],
-                                       'Accept':'application/json, text/event-stream'}, json={'jsonrpc':'2.0',
-                                       'id':1, 'method':'tools/call', 'params':{'name':'privacy_status','arguments':{}}})
-                require(response.status_code == 200 and response.headers.get('content-type','').startswith('application/json')
-                        and json.loads(response.json()['result']['content'][0]['text'])['execution']['status'] == 'success',
-                        'Synthetic MCP grant failed')
+                for vendor in ('manus', 'ironclaw', 'custom'):
+                    mcp = remote.create(vendor, 120, 2)
+                    response = client.post('/mcp', headers={'Authorization':'Bearer ' + mcp['credential'],
+                                           'Accept':'application/json, text/event-stream'}, json={'jsonrpc':'2.0',
+                                           'id':1, 'method':'tools/call', 'params':{'name':'privacy_status','arguments':{}}})
+                    require(response.status_code == 200 and response.headers.get('content-type','').startswith('application/json')
+                            and json.loads(response.json()['result']['content'][0]['text'])['execution']['status'] == 'success',
+                            'Synthetic MCP grant failed for ' + vendor)
+                from privacy_layer.phone_companion import PhoneCompanion
+                phone = PhoneCompanion(gateway).owner('phone-create', {'selection':{},'approved':True})
+                # When the Mac's own resolver cannot reach the new name, preserve the
+                # browser's public Host and Origin on our local request to its bridge.
+                headers = {'Host':urlsplit(origin).netloc, 'Origin':origin, 'Sec-Fetch-Site':'same-origin'}
+                code = urlsplit(phone['url']).fragment.removeprefix('pair=')
+                response = client.post('/phone/pair', json={'code':code}, headers=headers)
+                require(response.status_code == 200, 'Empty phone pairing failed')
+                headers['Authorization'] = 'Bearer ' + response.json()['session']
+                response = client.post('/phone/status', json={}, headers=headers)
+                require(response.status_code == 200 and response.json()['count'] == 0, 'Empty phone status failed')
+                require(client.post('/phone/status', json={}, headers={**headers,
+                        'Origin':'https://other.example.test','Sec-Fetch-Site':'cross-site'}).status_code == 403,
+                        'Cross-origin phone request was accepted')
+                require(client.post('/phone/disconnect',json={},headers=headers).status_code == 200,
+                        'Empty phone cleanup failed')
                 gateway.revoke(rest['id'])
                 require(client.post('/v1/privacy_status', json={}, headers=auth).status_code == 401, 'Revocation failed')
-            print('Scoped REST, MCP and revocation passed over ' + ('public HTTPS.' if use_public else 'Mac loopback.'))
+            print('Scoped REST, three MCP grants, phone pairing, cross-origin rejection and revocation passed over ' + ('public HTTPS.' if use_public else 'Mac loopback.'))
             acknowledgement = wait_for_file(directory, 'witness.json', 240)
-            require(acknowledgement == {'nonce':nonce,'public_discovery':True}, 'External discovery acknowledgement failed')
+            require(acknowledgement == {'nonce':nonce,'authenticated_status':True}, 'External status acknowledgement failed')
+            for grant in grants.values():
+                receipt=next(g for g in gateway.list_grants() if g['id']==grant['id'])
+                require(receipt['last_call'] is not None and receipt['remaining']==0,'Missing external tool call receipt')
         finally:
             set_active_gateway(lambda: None)
             remote.close()

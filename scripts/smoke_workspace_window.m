@@ -62,11 +62,21 @@ static void checkClientLaunch(PrivacyLauncher *launcher, NSBundle *fixture, NSSt
         NSString *raw=[NSString stringWithContentsOfURL:fixtureURLReceipt(fixture) encoding:NSUTF8StringEncoding error:NULL];
         if(!raw)return NO;
         NSURLComponents *components=[NSURLComponents componentsWithString:raw];
-        NSArray *query=components.queryItems;
+        NSArray<NSURLQueryItem *> *query=components.queryItems;
         components.query=nil;
-        return [components.string isEqual:expected] && query.count==1 &&
-            [((NSURLQueryItem *)query[0]).name isEqual:param] &&
-            [((NSURLQueryItem *)query[0]).value isEqual:@"Call only the Airlock privacy_status tool and report whether it responds."];
+        if (![components.string isEqual:expected]) return NO;
+        NSMutableDictionary *values=[NSMutableDictionary dictionary];
+        for (NSURLQueryItem *item in query) {
+            if (!item.value || values[item.name]) return NO;
+            values[item.name]=item.value;
+        }
+        if (![values[param] isEqual:@"Call only the Airlock privacy_status tool and report whether it responds."]) return NO;
+        if ([client isEqual:@"cursor"]) return query.count==1;
+        NSString *folder=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/Airlock Agent Checks/codex"];
+        if (query.count!=2 || ![values[@"path"] isEqual:folder]) return NO;
+        NSDictionary *attrs=[NSFileManager.defaultManager attributesOfItemAtPath:folder error:nil];
+        NSArray *contents=[NSFileManager.defaultManager contentsOfDirectoryAtPath:folder error:nil];
+        return [attrs[NSFileType] isEqual:NSFileTypeDirectory] && [attrs[NSFilePosixPermissions] unsignedIntegerValue]==0700 && contents && !contents.count;
     };
     require(waitFor(receivedPrompt,12),@"the app received its documented compose URL and only the fixed status prompt");
     pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
@@ -153,7 +163,21 @@ int main(int argc,const char *argv[]) {
         pageHas(view,@"Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Check for updates')");
         require([javascript(view,@"location.hash==='' && sessionStorage.getItem('private-ai-owner')===null") isEqual:@YES],@"owner session stays locked");
         [launcher.window orderOut:nil];[launcher openPanel:nil];
-        require(launcher.window.visible && launcher.panel.view==view,@"reopen preserves navigation");
+        require(waitFor(^BOOL{return !launcher.preparing;},10),@"Dock service check completed");
+        require(launcher.window.visible && launcher.panel.view==view,@"a healthy Dock reopen preserves navigation");
+        pageHas(view,@"document.querySelector('h1')?.textContent==='App settings'");
+        NSURLComponents *stale=[NSURLComponents componentsWithURL:launcher.url resolvingAgainstBaseURL:NO];
+        stale.query=@"view=connect";
+        stale.fragment=@"expired-fixture-owner";
+        [view loadRequest:[NSURLRequest requestWithURL:stale.URL]];
+        pageHas(view,@"document.querySelector('.workspace-recovery h2')?.textContent==='Open Airlock again'");
+        click(view,@"Reconnect Airlock");
+        require(waitFor(^BOOL{return launcher.panel && launcher.panel.view!=view;},20),@"reconnect replaced stale web view");
+        WKWebView *fresh=launcher.panel.view;
+        pageHas(fresh,@"document.querySelectorAll('#app.home nav button').length===3");
+        click(fresh,@"Connect agent");
+        pageHas(fresh,@"document.querySelectorAll('.agent-option').length===15 && !document.querySelector('.workspace-recovery')");
+        require([javascript(fresh,@"location.hash==='' && !sessionStorage.getItem('private-ai-owner')") isEqual:@YES],@"recovery authenticates the locked entry only");
         [launcher.panel detach];
         puts("Packaged native window, three navigation paths, unlock boundary, settings bridge and reopen passed.");
     }

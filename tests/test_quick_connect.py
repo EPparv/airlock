@@ -105,6 +105,26 @@ def test_quick_connect_declines_to_revive_expired_grant(owner):
     assert len(calls) == 2
 
 
+def test_opening_specific_grant_restores_its_own_current_registration(owner):
+    import json
+    from pathlib import Path
+    service, g, _, calls = owner
+    a = service.owner(CONNECT, CURSOR)['id']
+    b = clients.connect(g, agent='cursor', approved=True, home=g.sources.context_home,
+                        scope={'records':['skills:s1'], 'disclose':True})['id']
+    path = clients.config_path('cursor', g.sources.context_home)
+    def installed_id():
+        entry = json.loads(path.read_text())['mcpServers']['airlock']
+        return g.authenticate(Path(entry['args'][2]).read_text().strip())['id']
+    assert installed_id() == b
+    assert service.owner(OPEN, {**CURSOR, 'id':a})['opened']
+    assert installed_id() == a
+    path.unlink()
+    assert service.owner(OPEN, {**CURSOR, 'id':b})['opened']
+    assert installed_id() == b
+    assert len(calls) == 3 and all(grant['last_discovery'] is None for grant in g.list_grants())
+
+
 def test_two_workspace_instances_coordinate_new_grant(owner):
     first, g, _, _ = owner
     second = QuickConnections(g)
@@ -136,6 +156,20 @@ def test_unnamed_mcp_reuses_manual_grant_without_opening_an_app(owner):
     assert service.owner(CONNECT,req) == first
     assert service.owner(OPEN,{**req,'id':first['id']}) == first
     assert len(g.list_grants()) == 1 and not calls
+
+
+def test_local_mcp_never_selects_cloud_connector_grants(owner):
+    from privacy_layer.remote_clients import RemoteClients
+    service, g, _, _ = owner
+    cloud = RemoteClients(g).create('chatgpt', 3600, 8)['id']
+    req = {'agent':'mcp','approved':True}
+    local = service.owner(CONNECT,req)
+    assert local['id'] != cloud and local['method'] == 'manual'
+    assert service.owner(CONNECT,req)['id'] == local['id']
+    with pytest.raises(Denied):
+        service.owner(OPEN,{**req,'id':cloud})
+    with pytest.raises(Denied):
+        clients.manual_connection_details(g,cloud)
 
 
 def test_overlapping_clicks_share_one_app_handoff(owner, monkeypatch):

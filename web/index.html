@@ -3,37 +3,91 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101914">
-  <meta name="description" content="Airlock keeps your context local, lets you choose what each agent can access, and saves shared memories with your approval.">
+  <meta name="theme-color" content="#f8f9f6">
+  <meta name="description" content="Airlock keeps a library of notes on your Mac. Choose which records Claude, Codex and Cursor can read.">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
-  <title>Airlock | Your memory, across agents</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Airlock · Private context for AI agents</title>
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="illustration.css">
 </head>
 <body>
-  <div class="wrap">
-    <header><a class="brand" href="index.html"><img src="icon.svg" width="32" height="32" alt="">Airlock</a><nav aria-label="Main"><a href="#try">Get the Mac app</a><a href="#boundaries">What stays local</a></nav></header>
-    <main>
-      <section class="hero">
-        <p class="eyebrow">SHARED MEMORY. SELECTED ACCESS.</p>
-        <h1>Same you.<br><span>Any agent.</span></h1>
-        <p class="lead">Keep your context in one local library. Choose what each agent sees. Approve the memories worth keeping.</p>
-        <div class="actions"><a class="button" href="{{MAC_DOWNLOAD}}" download>Download for Mac <span aria-hidden="true">↓</span></a><a class="text-link" href="#try">How it works ↗</a></div>
-        <p class="caption">{{VERSION}} · macOS 12+ · Apple silicon + Intel · No Terminal or Ollama required</p>
-      </section>
-      <section class="flow" aria-label="Example of selected agent access">
-        <div><p class="eyebrow">YOUR LOCAL LIBRARY</p><h2>Context stays with you.</h2><ul><li>Project notes <span>Selected access</span></li><li>Writing preferences <span>Selected access</span></li><li>Financial record <span class="private">Never share</span></li></ul></div>
-        <div class="agent-views"><p class="eyebrow">EACH AGENT GETS ITS OWN VIEW</p><h3>Coding agent</h3><p>Engineering notes + your style.</p><h3>Writing agent</h3><p>Meeting notes + your style.</p><small>Illustrative example. You choose the sources each agent can access.</small></div>
-      </section>
-      <section class="section" id="try">
-        <div><p class="eyebrow">OPEN. IMPORT. CONNECT.</p><h2>Your context.<br>Ready for your AI.</h2><p>The Mac app handles installation for you. Use your existing AI account for answers, with selected context from Airlock.</p></div>
-        <ol class="steps"><li><h3>Double-click Airlock.</h3><p>Unzip the download and move Airlock.app to Applications. First launch installs the runtime and opens an Airlock window with three controls. Internet is needed for setup.</p></li><li><h3>Try it without personal data.</h3><p>Choose Privacy &amp; connections → Privacy checks to try recall, access limits, corrections, approvals and revocation. Your existing personal sources stay closed. Optionally connect your AI to the separate airlock-test library of fictional facts.</p></li><li><h3>Choose what your AI may know.</h3><p>Add records under Context &amp; memory. Choose Connect agent and select what it can use. Nothing is preselected. Airlock confirms when your AI first requests context; old managed connections migrate automatically. Keep Airlock open while using it; a restart closes personal access again.</p></li></ol>
-      </section>
-      <section class="boundary" id="boundaries"><p class="eyebrow">BUILT AROUND AN EXPLICIT BOUNDARY</p><h2>A live website.<br>A local vault.</h2><p>This page distributes the current Mac app and its source code. Your vault, credentials and agent gateway run on your computer. Visiting this page does not connect to anyone’s private data.</p><p>Your connected AI generates answers using its own model and account. No Ollama installation is needed for sharing context, memories or skills. Optional private task inference requires local Ollama or configured NEAR confidential inference with reviewed deployment hashes.</p><details><summary>Installation and verification limits</summary><p>{{MAC_SIGNING}} Native IronClaw integration and live NEAR inference remain unverified. Private-task setup is optional.</p></details></section>
-      <section class="closing"><h2>Install once.<br>Update inside Airlock.</h2><p>Airlock checks for new versions when it opens. Click Update and Restart, or use Airlock → Check for Updates in the Mac menu bar. Each update is verified before installation, and your library stays in place. Older builds need one manual replacement to add the updater. You can turn update checks off in the menu.</p><a class="button" href="{{MAC_DOWNLOAD}}" download>Get the Mac app ↓</a><p><a class="text-link" href="Airlock_Source_Latest.zip" download>Source code &amp; developer walkthrough</a> · <a class="text-link" href="https://github.com/EPparv/airlock">GitHub</a> · <a class="text-link" href="https://github.com/EPparv/airlock/releases">Version history</a></p></section>
-    </main>
-    <footer><span>Airlock · {{VERSION}} · {{REVISION}}</span><div><a href="release.json">Build details</a><a href="SHA256SUMS">SHA-256</a></div></footer>
-  </div>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="mast frame">
+    <a class="brand" href="#main" aria-label="Airlock home"><span class="mark" aria-hidden="true"><i></i></span>Airlock</a>
+    <nav aria-label="Main navigation">
+      <a href="#access">How it works</a>
+      <a href="https://github.com/EPparv/airlock">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero frame" aria-labelledby="intro">
+      <div class="hero-copy">
+        <h1 id="intro">Choose what<br>your AI sees.</h1>
+        <p class="intro">Keep your notes and preferences on your Mac. Choose which ones Claude, Codex or Cursor can read through Airlock.</p>
+        <a class="download" href="https://github.com/EPparv/airlock/releases/latest/download/Airlock_Mac_Latest.zip" download>Download for Mac</a>
+        <p class="platform">macOS 12 or later · Apple silicon and Intel</p>
+      </div>
+      <div class="hero-art" aria-hidden="true"></div>
+    </section>
+
+    <section class="access-section" id="access" aria-labelledby="access-title">
+      <div class="frame access-layout">
+        <div class="section-copy">
+          <h2 id="access-title">A different view<br>for each agent.</h2>
+          <p>Your writing assistant can use your style notes while your coding assistant reads the project brief. You can keep your journal out of both.</p>
+          <p class="instruction">Pick an agent to explore the example.</p>
+        </div>
+        <fieldset class="example">
+          <legend class="sr-only">Choose an agent to see its example permissions</legend>
+          <input class="choice" type="radio" name="agent" id="claude" checked>
+          <input class="choice" type="radio" name="agent" id="codex">
+          <input class="choice" type="radio" name="agent" id="cursor">
+          <div class="example-head">
+            <span class="example-title">Example library</span>
+            <div class="agent-picker">
+              <label for="claude">Claude</label><label for="codex">Codex</label><label for="cursor">Cursor</label>
+            </div>
+          </div>
+          <table>
+            <caption class="sr-only">Airlock records and access for the selected agent</caption>
+            <thead><tr><th scope="col">Record</th><th scope="col">Access</th></tr></thead>
+            <tbody>
+              <tr class="writing"><th scope="row">Writing style notes</th><td><span class="allowed">Allowed</span><span class="blocked">Blocked</span></td></tr>
+              <tr class="project"><th scope="row">Project brief</th><td><span class="allowed">Allowed</span><span class="blocked">Blocked</span></td></tr>
+              <tr class="code"><th scope="row">Code conventions</th><td><span class="allowed">Allowed</span><span class="blocked">Blocked</span></td></tr>
+              <tr><th scope="row">Personal journal</th><td><span class="blocked">Blocked</span></td></tr>
+            </tbody>
+          </table>
+        </fieldset>
+      </div>
+    </section>
+
+    <section class="setup frame" id="setup" aria-labelledby="setup-title">
+      <h2 id="setup-title">Getting started</h2>
+      <div class="setup-body">
+        <p>Unzip the download, move Airlock to Applications, and open it. First launch needs an internet connection. You can try the sample workspace before adding any personal notes.</p>
+        <details>
+          <summary>If macOS blocks the first launch</summary>
+          <p>This release is ad-hoc signed and hasn’t been notarized by Apple. If you trust the download, try opening Airlock once, then go to System Settings, Privacy &amp; Security, and choose Open Anyway.</p>
+        </details>
+        <details>
+          <summary>What happens when I share a note?</summary>
+          <p>Airlock can return an excerpt from an allowed record when the connected agent asks for it. That excerpt then reaches the agent. You can revoke access to stop future requests. The agent may retain what it already received.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="frame">
+    <span class="footer-brand">Airlock</span>
+    <nav aria-label="Release resources">
+      <a href="https://github.com/EPparv/airlock/releases">Release history</a>
+      <a href="https://github.com/EPparv/airlock/releases/latest/download/Airlock_Source_Latest.zip" download>Source code</a>
+      <a href="https://github.com/EPparv/airlock/releases/latest/download/SHA256SUMS">Checksums</a>
+    </nav>
+  </footer>
 </body>
 </html>
