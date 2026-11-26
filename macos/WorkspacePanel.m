@@ -31,64 +31,6 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
 
 @implementation AirlockPanel
 // Look up the installed desktop bundle by identity, including renamed or moved apps.
-- (NSBundle *)desktopBundle:(NSString *)identifier {
-    NSWorkspace *workspace=NSWorkspace.sharedWorkspace;
-    for (NSRunningApplication *running in [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier]) {
-        if (!running.bundleURL) continue;
-        NSBundle *bundle=[NSBundle bundleWithURL:running.bundleURL];
-        if ([bundle.bundleIdentifier isEqual:identifier]) return bundle;
-    }
-    NSURL *url=[workspace URLForApplicationWithBundleIdentifier:identifier];
-    if (!url.isFileURL) return nil;
-    NSBundle *bundle=[NSBundle bundleWithURL:url];
-    return [bundle.bundleIdentifier isEqual:identifier] ? bundle : nil;
-}
-- (void)openClient:(id)agent reply:(void (^)(id, NSString *))reply {
-    NSString *name, *identifier;
-    if ([agent isEqual:@"codex"]) {
-        name=@"Codex"; identifier=@"com.openai.codex";
-    } else if ([agent isEqual:@"cursor"]) {
-        name=@"Cursor"; identifier=@"com.todesktop.230313mzl4w4u92";
-    } else {
-        reply(nil,@"Choose Codex or Cursor."); return;
-    }
-    NSBundle *bundle=[self desktopBundle:identifier];
-    if (!bundle) {
-        reply(nil,[agent isEqual:@"codex"] ? @"Codex desktop was not found. Install the Mac app that includes Codex, then open it from Airlock." :
-                  @"Cursor desktop was not found. Install it in Applications, then open it from Airlock.");
-        return;
-    }
-    BOOL newChat=NO;
-    if ([agent isEqual:@"codex"]) {
-        for (NSDictionary *type in [bundle objectForInfoDictionaryKey:@"CFBundleURLTypes"]) {
-            if ([type[@"CFBundleURLSchemes"] containsObject:@"codex"]) { newChat=YES; break; }
-        }
-    }
-    BOOL wasRunning=[NSRunningApplication runningApplicationsWithBundleIdentifier:bundle.bundleIdentifier].count>0;
-    NSWorkspaceOpenConfiguration *configuration=NSWorkspaceOpenConfiguration.configuration;
-    configuration.activates=YES;
-    configuration.createsNewApplicationInstance=NO;
-    configuration.addsToRecentItems=NO;
-    void (^completed)(NSRunningApplication *,NSError *)=^(NSRunningApplication *app, NSError *error) {
-        dispatch_async(dispatch_get_main_queue(),^{
-            if (!app || error) {
-                reply(nil,[NSString stringWithFormat:@"macOS couldn’t open %@. Try opening it in Finder once, then return to Airlock.",name]);
-            } else {
-                NSMutableDictionary *result=[@{@"opened":@YES,@"wasRunning":@(wasRunning),@"newChatRequested":@(newChat)} mutableCopy];
-                if (newChat) result[@"message"]=@"Opened Codex and requested a new chat.";
-                reply(result,nil);
-            }
-        });
-    };
-    NSWorkspace *workspace=NSWorkspace.sharedWorkspace;
-    if (newChat) {
-        // Target the chosen desktop application explicitly, never the default URL handler.
-        [workspace openURLs:@[[NSURL URLWithString:@"codex://threads/new"]] withApplicationAtURL:bundle.bundleURL
-              configuration:configuration completionHandler:completed];
-    } else {
-        [workspace openApplicationAtURL:bundle.bundleURL configuration:configuration completionHandler:completed];
-    }
-}
 - (instancetype)initWithWindow:(NSWindow *)window entry:(NSURL *)entry {
     if (!(self=[super init])) return nil;
     self.window=window;
@@ -154,13 +96,7 @@ static NSData *AirlockPhonePairingPNG(NSString *url) {
     }
     NSDictionary *value=message.body;
     NSString *action=value[@"action"];
-    if ([action isEqual:@"open-client"]) {
-        if (value.count!=2 || ![value[@"agent"] isKindOfClass:NSString.class] ||
-            ![message.frameInfo.request.URL.path isEqual:@"/workspace/personal"] || ![self.view.URL.path isEqual:@"/workspace/personal"]) {
-            reply(nil,@"Open your personal workspace to launch an agent."); return;
-        }
-        [self openClient:value[@"agent"] reply:reply];
-    } else if ([action isEqual:@"status"]) {
+    if ([action isEqual:@"status"]) {
         reply(@{@"automatic":@([NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"])},nil);
     } else if ([action isEqual:@"automatic"] && [value[@"enabled"] isKindOfClass:NSNumber.class] && self.setAutomatic) {
         self.setAutomatic([value[@"enabled"] boolValue]);

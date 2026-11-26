@@ -22,19 +22,6 @@ static void pageHas(WKWebView *view,NSString *expression) {
     require(waitFor(^BOOL{return [javascript(view,expression) isEqual:@YES];},12), expression);
 }
 
-// Only this test executable substitutes the installed bundle. Launch and activation
-// still go through the shipping bridge and the real macOS Launch Services.
-@interface ClientLaunchProbePanel : AirlockPanel
-@property(nonatomic,strong) NSBundle *fixture;
-@property(nonatomic,copy) NSString *requestedID;
-@end
-@implementation ClientLaunchProbePanel
-- (NSBundle *)desktopBundle:(NSString *)identifier {
-    self.requestedID=identifier;
-    return self.fixture;
-}
-@end
-
 static NSURL *fixtureURLReceipt(NSBundle *bundle) {
     return [bundle.bundleURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"fixture-url.txt"];
 }
@@ -48,57 +35,57 @@ static NSURL *fixtureURLReceipt(NSBundle *bundle) {
 @end
 
 static void click(WKWebView *view, NSString *label) {
-    NSString *button=[NSString stringWithFormat:@"Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='%@' && !b.disabled && b.getClientRects().length)",label];
+    NSString *button=[NSString stringWithFormat:@"Array.from(document.querySelectorAll('button')).find(b=>(b.getAttribute('aria-label')||b.textContent.trim())==='%@' && !b.disabled && b.getClientRects().length)",label];
     pageHas(view,[NSString stringWithFormat:@"Boolean(%@)",button]);
     require([javascript(view,[NSString stringWithFormat:@"(%@).click();true",button]) isEqual:@YES],label);
 }
 
 static void checkClientLaunch(PrivacyLauncher *launcher, NSBundle *fixture, NSString *name) {
-    [launcher.panel detach];
-    ClientLaunchProbePanel *panel=[[ClientLaunchProbePanel alloc] initWithWindow:launcher.window entry:launcher.url];
-    panel.fixture=fixture;
-    launcher.panel=panel;
-    launcher.window.contentView=panel.view;
-    WKWebView *view=panel.view;
+    WKWebView *view=launcher.panel.view;
     NSString *client=[name lowercaseString];
     NSString *bundleID=[client isEqual:@"codex"] ? @"com.openai.codex" : @"com.todesktop.230313mzl4w4u92";
-    NSArray *(^instances)(void)=^{ return [NSRunningApplication runningApplicationsWithBundleIdentifier:fixture.bundleIdentifier]; };
+    require([fixture.bundleIdentifier isEqual:bundleID],@"expected fixture bundle ID");
+    NSArray *(^instances)(void)=^{return [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleID];};
     require(instances().count==0,@"fixture initially closed");
     pageHas(view,@"document.querySelectorAll('#app.home nav button').length===3");
-    // A message from the introductory page cannot open anything without approval.
-    javascript(view,@"webkit.messageHandlers.airlockSettings.postMessage({action:'open-client',agent:'cursor'}).then(()=>window.gate='opened',()=>window.gate='blocked');true");
-    pageHas(view,@"window.gate==='blocked'");
     click(view,@"Connect agent");
-    require(!panel.requestedID && instances().count==0,@"opening the picker does not open an app");
-    click(view,[@"Connect & open " stringByAppendingString:name]);
-    require(waitFor(^BOOL{return instances().count==1;},20),@"one approval launched the desktop fixture");
-    require([panel.requestedID isEqual:bundleID],@"resolved the requested desktop client identifier");
+    require(instances().count==0,@"opening the picker does not open an app");
+    click(view,name);
+    require(waitFor(^BOOL{return instances().count==1;},25),@"one approval launched the desktop fixture");
     NSRunningApplication *first=instances().firstObject;
     require([first.bundleURL.URLByResolvingSymlinksInPath.path isEqual:fixture.bundleURL.URLByResolvingSymlinksInPath.path],@"launched the intended fixture bundle");
-    if ([client isEqual:@"codex"]) {
-        require(waitFor(^BOOL{
-            NSString *value=[NSString stringWithContentsOfURL:fixtureURLReceipt(fixture) encoding:NSUTF8StringEncoding error:NULL];
-            return [value isEqual:@"codex://threads/new"];
-        },10),@"Codex received only its documented new-chat link");
-    }
+    NSString *expected=[client isEqual:@"codex"]?@"codex://threads/new":@"cursor://anysphere.cursor-deeplink/prompt";
+    NSString *param=[client isEqual:@"codex"]?@"prompt":@"text";
+    BOOL (^receivedPrompt)(void)=^BOOL{
+        NSString *raw=[NSString stringWithContentsOfURL:fixtureURLReceipt(fixture) encoding:NSUTF8StringEncoding error:NULL];
+        if(!raw)return NO;
+        NSURLComponents *components=[NSURLComponents componentsWithString:raw];
+        NSArray *query=components.queryItems;
+        components.query=nil;
+        return [components.string isEqual:expected] && query.count==1 &&
+            [((NSURLQueryItem *)query[0]).name isEqual:param] &&
+            [((NSURLQueryItem *)query[0]).value isEqual:@"Call only the Airlock privacy_status tool and report whether it responds."];
+    };
+    require(waitFor(receivedPrompt,12),@"the app received its documented compose URL and only the fixed status prompt");
     pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
-    require([javascript(view,@"![...document.querySelectorAll('#app button, #app summary')].some(b=>/^(Save access|Revoke connection|Shared records)/.test(b.textContent) && b.getClientRects().length)") isEqual:@YES],@"new connection receipt keeps editing controls out of view");
+    require([javascript(view,@"!document.querySelector('dialog[open]') && !document.querySelector('#app').innerText.includes('Copy test request')") isEqual:@YES],@"no manual settings dialog");
     click(view,@"Manage access");
     pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Save access' && b.getClientRects().length)");
-    NSString *again=[NSString stringWithFormat:@"webkit.messageHandlers.airlockSettings.postMessage({action:'open-client',agent:'%@'}).then(r=>window.reused=r.opened && r.wasRunning);true",client];
-    javascript(view,again); pageHas(view,@"window.reused===true");
-    require(instances().count==1 && ((NSRunningApplication *)instances().firstObject).processIdentifier==first.processIdentifier,@"second open reused the same PID");
-    javascript(view,@"webkit.messageHandlers.airlockSettings.postMessage({action:'open-client',agent:'other'}).then(()=>window.unknown='opened',()=>window.unknown='blocked');true");
-    pageHas(view,@"window.unknown==='blocked'");
+    require([[NSFileManager defaultManager] removeItemAtURL:fixtureURLReceipt(fixture) error:NULL],@"clear the first draft receipt");
+    [view loadRequest:[NSURLRequest requestWithURL:launcher.url]];
+    click(view,@"Connect agent");click(view,name);
+    pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
+    require(waitFor(receivedPrompt,12),@"the running app received the second status draft");
+    require(instances().count==1 && !first.terminated && ((NSRunningApplication *)instances().firstObject).processIdentifier==first.processIdentifier,@"second open reused the same PID");
     // Terminate only the unique disposable fixture that this test created.
     kill(first.processIdentifier,SIGTERM); require(waitFor(^BOOL{return instances().count==0;},8),@"fixture closed");
-    [panel detach];
+    [launcher.panel detach];
 }
 int main(int argc,const char *argv[]) {
     @autoreleasepool {
         umask(0077);
         NSApplication *app=NSApplication.sharedApplication;
-        if ([NSBundle.mainBundle.bundleIdentifier hasPrefix:@"com.airlock.fixture.desktop."]) {
+        if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"AirlockDisposableLaunchFixture"] boolValue]) {
             static DesktopFixtureDelegate *delegate;
             delegate=[DesktopFixtureDelegate new];
             app.delegate=delegate;
@@ -117,6 +104,14 @@ int main(int argc,const char *argv[]) {
         CIDetector *scanner=[CIDetector detectorOfType:CIDetectorTypeQRCode context:nil options:@{CIDetectorAccuracy:CIDetectorAccuracyHigh}];
         NSArray *codes=[scanner featuresInImage:[CIImage imageWithData:png]];
         require(codes.count==1 && [[(CIQRCodeFeature *)codes.firstObject messageString] isEqual:sample],@"camera-readable complete pairing URL");
+        NSArray *options=NSProcessInfo.processInfo.arguments;
+        NSUInteger lookup=[options indexOfObject:@"--find-installed-bundle"];
+        if (lookup!=NSNotFound) {
+            NSString *identifier=options[lookup+1];
+            NSURL *installed=[NSWorkspace.sharedWorkspace URLForApplicationWithBundleIdentifier:identifier];
+            if (installed) puts(installed.path.UTF8String);
+            return 0;
+        }
         PrivacyLauncher *launcher=[PrivacyLauncher new];
         [launcher applicationDidFinishLaunching:nil];
         require(waitFor(^BOOL{return launcher.panel!=nil;},25),@"authenticated native window");
@@ -124,7 +119,7 @@ int main(int argc,const char *argv[]) {
         NSUInteger fixtureIndex=[args indexOfObject:@"--test-client"];
         if (fixtureIndex!=NSNotFound) {
             NSBundle *fixture=[NSBundle bundleWithPath:args[fixtureIndex+1]];
-            require([fixture.bundleIdentifier hasPrefix:@"com.airlock.fixture.desktop."],@"isolated desktop fixture");
+            require([[fixture objectForInfoDictionaryKey:@"AirlockDisposableLaunchFixture"] boolValue],@"isolated desktop fixture");
             checkClientLaunch(launcher,fixture,args[fixtureIndex+2]);
             puts("One-click connection launched the expected desktop client and reused its running process.");
             return 0;
@@ -137,13 +132,9 @@ int main(int argc,const char *argv[]) {
         javascript(view,@"document.querySelectorAll('nav button')[0].click();true");
         pageHas(view,@"document.querySelector('h1')?.textContent==='Connect agent'");
         NSArray *picker=javascript(view,@"Array.from(document.querySelectorAll('#app button:not(.back),#app a[href],#app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
-        require([picker isEqual:@[@"Connect & open Codex",@"Connect & open Cursor",@"Other agents"]],@"only three actions in the Mac agent picker");
-        click(view,@"Other agents");
-        pageHas(view,@"document.querySelector('h1')?.textContent==='Other agents'");
-        pageHas(view,@"!document.querySelector('dialog').open && !sessionStorage.getItem('private-ai-owner')");
-        javascript(view,@"Array.from(document.querySelectorAll('#app summary')).find(s=>s.textContent==='Advanced setup').click();true");
-        pageHas(view,@"['Configure Codex','Configure Cursor'].every(label=>[...document.querySelectorAll('#app button')].some(b=>(b.getAttribute('aria-label')||b.textContent)===label && b.getClientRects().length))");
-        click(view,@"Connect agent");
+        for (NSString *label in @[@"Codex",@"Cursor",@"Claude Desktop",@"Claude Code",@"Meta Muse",@"OpenClaw",@"VS Code · GitHub Copilot",@"Gemini CLI",@"ChatGPT",@"Dot"])
+            require([picker containsObject:label],[NSString stringWithFormat:@"%@ is directly selectable",label]);
+        require(![picker containsObject:@"Other agents"],@"no extra directory click");
         require([javascript(view,@"!document.querySelector('dialog').open && location.pathname==='/workspace' && !sessionStorage.getItem('private-ai-owner')") isEqual:@YES],@"choosing Connect agent preserves the locked workspace");
         javascript(view,@"document.querySelector('.back').click();true");
         pageHas(view,@"document.querySelectorAll('nav button').length===3");

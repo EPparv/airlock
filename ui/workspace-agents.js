@@ -1,60 +1,87 @@
 'use strict';
-const desktopApps = ['codex', 'cursor'];
-const localAgents = [...desktopApps, 'claude-desktop', 'claude-code', 'muse-code', 'gemini-cli', 'vscode', 'openclaw'];
-const nativeLauncher = () => window.webkit?.messageHandlers?.airlockSettings;
-const canOpen = agent => !preview && desktopApps.includes(agent) && !!nativeLauncher();
-addPage('connect', 'Connect agent', 'home', host => {
-  note(host, 'New connections share no memories. Reconnecting keeps the access you approved.');
-  const list = el('div', null, 'menu');
-  host.append(list);
-  for (const agent of desktopApps) {
-    if (canOpen(agent)) row(list, 'Connect & open ' + names[agent], () => connectDesktopNow(agent));
-    else row(list, names[agent], () => go('agent', {agent}));
-  }
-  choose(list, 'Other agents', 'other-agents');
-}, false);
+const localAgents = ['codex', 'cursor', 'claude-desktop', 'claude-code', 'vscode', 'gemini-cli', 'muse-code', 'openclaw'];
+const cloudAgents = ['chatgpt', 'muse', 'manus', 'ironclaw', 'custom'];
+const knownAgent = agent => localAgents.includes(agent) || cloudAgents.includes(agent) || agent === 'dot' || agent === 'mcp';
+const labelForAgent = agent => names[agent] || cloudClients[agent];
+let launchableAgents;
 
-addPage('other-agents', 'Other agents', 'connect', host => {
-  const local = section(host, 'On this Mac');
-  const online = section(host, 'Online');
-  function entry(list, label, description, page, options) {
-    const button = item(list, label, description, () => go(page, {...options, from:'other-agents'}));
-    const subtitle = button.querySelector('.row-sub');
-    subtitle.id = 'about-' + (options.agent || options.vendor);
-    button.setAttribute('aria-label', label);
-    button.setAttribute('aria-describedby', subtitle.id);
+async function launchOptions() {
+  if (preview) return [];
+  if (!launchableAgents) {
+    const result = await (personal ? api : testAPI)('workspace-launch-options');
+    launchableAgents = result.agents;
   }
-  for (const [agent, description] of [
-    ['claude-desktop', 'Claude’s Mac app.'],
-    ['claude-code', 'Claude in your terminal.'],
-    ['gemini-cli', 'Gemini in your terminal.'],
-    ['muse-code', 'Meta’s coding agent in your terminal.'],
-    ['openclaw', 'An OpenClaw gateway running on this Mac.'],
-    ['vscode', 'Local Copilot sessions in VS Code.'],
-    ['mcp', 'Another app that accepts a local MCP command.']
-  ]) entry(local, names[agent], description, 'agent', {agent});
-  for (const [vendor, description] of [
-    ['chatgpt', 'Connect through your ChatGPT workspace’s private tunnel.'],
-    ['muse', 'Connect the Muse app using a custom connector.'],
-    ['manus', 'Add Airlock in Manus integrations.'],
-    ['ironclaw', 'Install Airlock as an HTTPS extension.'],
-    ['custom', 'Another service that accepts an MCP server URL.']
-  ]) {
-    if (vendor === 'ironclaw' && preview) entry(online, cloudClients[vendor], description, 'agent', {agent:vendor});
-    else entry(online, cloudClients[vendor], description, 'remote-create', {vendor});
+  return launchableAgents;
+}
+
+async function drawAgentPicker(host) {
+  const available = await launchOptions();
+  note(host, preview ? 'Try a sample connection with fictional data.' :
+    'Choose an agent to open it. New connections share no memories. Existing permissions carry over.');
+  const search = input('search');
+  search.className = 'search agent-search';
+  search.placeholder = 'Find an agent';
+  search.setAttribute('aria-label', 'Find an agent');
+  host.append(search);
+  const sections = [];
+  const groups = [
+    ['On this Mac', [...localAgents, 'mcp']],
+    ['Online', ['chatgpt', 'muse', 'manus', 'dot', 'ironclaw', 'custom']]
+  ];
+  for (const [label, agents] of groups) {
+    const section = el('section', null, 'agent-group');
+    section.append(el('h2', label, 'section'));
+    const list = el('div', null, 'agent-list');
+    section.append(list);
+    host.append(section);
+    const rows = agents.map(agent => {
+      const name = labelForAgent(agent);
+      const row = button('', () => selectAgent(agent), 'agent-option');
+      row.setAttribute('aria-label', name);
+      row.dataset.agent = agent;
+      row.append(el('span', name), el('span', preview ? 'Try' : 'Connect', 'agent-option-action'));
+      list.append(row);
+      return row;
+    });
+    sections.push({section,rows});
   }
-  entry(online, names.dot, 'Use your existing private Dot tunnel.', 'agent', {agent:'dot'});
-  if (canOpen('codex')) {
-    const more = details(host, 'Advanced setup');
-    note(more, 'Choose records or a custom profile before connecting.');
-    for (const agent of desktopApps) row(more, 'Configure ' + names[agent], () => go('agent', {agent, from:'other-agents'}));
+  const none = el('p', 'No matching agents.', 'empty');
+  none.hidden = true;
+  host.append(none);
+  search.oninput = () => {
+    const query = search.value.trim().toLowerCase();
+    let any = false;
+    for (const {section, rows} of sections) {
+      for (const row of rows) row.hidden = !row.getAttribute('aria-label').toLowerCase().includes(query);
+      section.hidden = rows.every(row => row.hidden);
+      any ||= !section.hidden;
+    }
+    none.hidden = any;
+  };
+  if (available.length) {
+    const setup = details(host, 'Advanced setup');
+    const profile = field(setup, 'Choose an app', select(localAgents.map(key => [key,names[key]])));
+    setup.append(button('Configure access or profile', () => go('agent', {agent:profile.value, from:'connect'})));
   }
-}, false);
+}
+addPage('connect', 'Connect agent', 'home', drawAgentPicker, false);
+// Older bookmarks still open the full directory.
+addPage('other-agents', 'Connect agent', 'home', drawAgentPicker, false);
 
 function useDirectoryBack(host, options) {
-  if (options.from === 'other-agents') {
-    host.closest('.page').querySelector('.back').replaceWith(button('Other agents', () => go('other-agents'), 'back'));
+  if (options.from === 'connect' || options.from === 'other-agents') {
+    host.closest('.page').querySelector('.back').replaceWith(button('Connect agent', () => go('connect'), 'back'));
   }
+}
+
+async function selectAgent(agent) {
+  if (!knownAgent(agent)) throw Error('Choose an agent in the list.');
+  if (preview) {
+    if (cloudAgents.includes(agent) && agent !== 'ironclaw') return go('remote-create', {vendor:agent, from:'connect'});
+    return go('agent', {agent, from:'connect'});
+  }
+  if (!personal) return enterPersonal('connect', {}, agent);
+  return startAgentConnection(agent);
 }
 
 function linkStatus(status) {
@@ -92,67 +119,131 @@ function watchConnection(host, id, initial) {
   return update;
 }
 
-const firstRequest = 'Call the Airlock privacy_status tool and tell me if it responds.';
-
 function configuration(host, response) {
   const value = response.client_config || response.config;
   if (!value) return;
-  const box = details(host, 'Connection configuration', null, response.installed === false);
+  const box = details(host, 'Manual configuration', null, true);
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
   put(box, el('pre', text), button('Copy configuration', () => copyText(text)));
 }
 
-async function openClient(agent) {
-  const reply = await nativeLauncher().postMessage({action: 'open-client', agent});
-  if (!reply?.opened) throw Error(reply?.message || 'Could not open ' + names[agent] + '. Open it from Applications, then start a new chat.');
-  return reply;
-}
-
 async function finishLocalConnection(agent, response) {
-  if (response.installed && canOpen(agent)) {
-    let message, failed = false;
-    try {
-      const reply = await openClient(agent);
-      message = reply.message || (reply.wasRunning ? names[agent] + ' is open.' :
-        names[agent] + ' opened.');
-    } catch (error) {
-      failed = true;
-      message = 'Settings saved. ' + error.message;
-    }
-    await go('agent', {agent, id:response.id, openHelp:failed, launchNotice:message});
+  if (preview) {
+    await go('connections');
+    const f = modal('Connection added to preview');
+    note(f, 'These permissions apply to this preview.');
+    f.append(button('Close', close, 'primary'));
     return;
   }
-  await go('connections');
-  const f = modal(preview ? 'Connection added to preview' : response.installed ? 'Settings saved' : 'Finish in your agent');
-  note(f, preview ? 'These permissions apply to this preview.' : response.message || 'Restart your agent and enable Airlock.');
-  if (!preview) {
-    configuration(f, response);
-    note(f, 'In a fresh chat, ask: ' + firstRequest);
-    const update = watchConnection(f, response.id, {status:'waiting'});
-    f.append(button('Copy test request', () => copyText(firstRequest)), button('Check connection', update));
+  if (response.installed && (await launchOptions()).includes(agent)) {
+    return openSavedAgent(agent, response.id);
   }
-  f.append(button('Close', close, 'primary'));
+  return showHandoff(agent, {id:response.id, method:'manual', message:response.message});
 }
 
-async function finishDefaultDesktopConnection(agent) {
-  if (!personal || !canOpen(agent)) throw Error('Open Airlock.app on this Mac to finish connecting.');
-  const ws = await api('workspace-state');
-  const current = ws.agents.filter(a => a.name === agent && active(a));
-  if (current.length) {
-    if (current.length !== 1 || !current[0].scope || current[0].installed !== true) {
-      await go('agent', {agent, openHelp:true});
-      flash('Review the existing setup for ' + names[agent] + '.');
-      return;
-    }
-    await finishLocalConnection(agent, await api('workspace-reconnect', {id:current[0].id}));
-    return;
-  }
-  const result = await api('workspace-connect', {
-    agent, identifier:'', selection:{}, excerpt_selection:[], compute:false, proposals:false,
-    mail:false, calendar:false, install:true
-  });
-  await finishLocalConnection(agent, result);
+async function showHandoff(agent, result) {
+  if (result.needsReview && agent === 'dot' && result.method === 'setup') return go('dot');
+  // History contains only display data and a grant id; credentials and configuration stay in the owner API.
+  return go('agent-handoff', {agent, id:result.id || '', opened:result.opened === true,
+    method:result.needsReview ? 'review' : result.method, message:result.message,
+    previousStatus:result.previousStatus || null});
 }
+
+async function openSavedAgent(agent, id) {
+  const result = await api('workspace-open-client', {agent, id, approved:true});
+  return showHandoff(agent, result);
+}
+
+async function startAgentConnection(agent) {
+  if (connectingAgent) return;
+  connectingAgent = true;
+  const row = document.querySelector('.agent-option[data-agent="' + agent + '"]');
+  if (row) {
+    row.querySelector('.agent-option-action').textContent = 'Opening…';
+    row.setAttribute('aria-busy', 'true');
+  }
+  try {
+    if (cloudAgents.includes(agent)) return await connectRemoteNow(agent);
+    if (!(await launchOptions()).includes(agent)) {
+      return await showHandoff(agent, {method:'mac', message:'Open Airlock on your Mac to connect ' + names[agent] + '.'});
+    }
+    const result = await api('workspace-quick-connect', {agent, approved:true});
+    return await showHandoff(agent, result);
+  } catch (error) {
+    return await showHandoff(agent, {method:'retry', message:error.message || 'The app could not open.'});
+  } finally {
+    connectingAgent = false;
+    if (row?.isConnected) {
+      row.querySelector('.agent-option-action').textContent = 'Connect';
+      row.removeAttribute('aria-busy');
+    }
+  }
+}
+
+function watchHandoff(host, opt, headline, detail) {
+  let calls = 0;
+  const before = opt.previousStatus || {};
+  async function poll() {
+    if (!host.isConnected) return;
+    try {
+      const status = await api('client-status', {id:opt.id});
+      if (!host.isConnected) return;
+      if (['expired','revoked'].includes(status.status)) {
+        headline.textContent = 'Access ended';
+        detail.textContent = linkStatus(status);
+        return;
+      }
+      if (status.last_call != null && status.last_call !== before.last_call) {
+        headline.textContent = 'Connected';
+        detail.textContent = labelForAgent(opt.agent) + ' called an Airlock tool.';
+        return;
+      }
+      if (status.last_discovery != null && status.last_discovery !== before.last_discovery) {
+        headline.textContent = 'Connected';
+        detail.textContent = labelForAgent(opt.agent) + ' found Airlock’s tools.';
+      }
+    } catch {
+      if (host.isConnected) detail.textContent = 'Airlock couldn’t refresh the connection status.';
+    }
+    calls++;
+    if (host.isConnected) setTimeout(poll, calls < 8 ? 1000 : calls < 25 ? 5000 : 15000);
+  }
+  poll();
+}
+
+addPage('agent-handoff', 'Connection', 'connect', async (host, opt, bar) => {
+  if (!knownAgent(opt.agent) || preview) return go('connect');
+  const name = labelForAgent(opt.agent);
+  bar.querySelector('h1').textContent = name;
+  const headline = el('h2', opt.opened ? 'Waiting for ' + name :
+    opt.method === 'manual' || opt.method === 'review' || opt.method === 'mac' ? 'Finish setup' : 'Couldn’t open ' + name, 'handoff-status');
+  const detail = el('p', opt.message || '', 'handoff-detail');
+  const surface = el('div', null, 'handoff-result');
+  surface.setAttribute('role', 'status');
+  surface.append(headline, detail);
+  host.append(surface);
+  if (opt.method === 'manual' && opt.id) {
+    const result = await api('workspace-manual-config', {id:opt.id});
+    configuration(host, result);
+  } else if (opt.method === 'review') {
+    host.append(button('Review connection', () => go('agent', {agent:opt.agent, id:opt.id, openHelp:true}), 'primary'));
+    return;
+  } else if (opt.method === 'mac') {
+    host.append(previewSetupLink());
+  } else if (!opt.opened) {
+    const actions = el('div', null, 'buttons');
+    actions.append(button('Try again', () => opt.id ? openSavedAgent(opt.agent, opt.id) : selectAgent(opt.agent), 'primary'));
+    if (opt.method === 'unavailable' && localAgents.includes(opt.agent)) {
+      actions.append(button('Setup help', async () => {
+        const result = await api('workspace-agent-help', {agent:opt.agent, approved:true});
+        if (!result.opened) throw Error(result.message || 'Setup help could not open.');
+      }));
+    }
+    host.append(actions);
+  }
+  if (opt.opened && opt.id) watchHandoff(host, opt, headline, detail);
+  if (opt.id) host.append(button('Manage access', () => go('agent', {agent:opt.agent,id:opt.id}), 'plain handoff-manage'));
+});
 
 addPage('connections', 'Connected agents', 'privacy', async (host, options, bar) => {
   bar.append(button('Connect agent', () => go('connect')));
@@ -212,7 +303,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
     return;
   }
   bar.querySelector('h1').textContent = names[agent];
-  const ws = await api('workspace-state');
+  const [ws, available] = await Promise.all([api('workspace-state'), launchOptions()]);
   const previous = ws.agents.filter(a => a.name === agent && active(a));
   let existing = opt.id && ws.agents.find(a => a.id === opt.id && a.name === agent);
   if (!opt.id && !opt.createNew && localAgents.includes(agent) && previous.length) {
@@ -230,39 +321,21 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
     bar.querySelector('h1').textContent = connectionName(existing);
     host.closest('.page').querySelector('.back').replaceWith(button('Connected agents', () => go(
       'connections'), 'back'));
-    if (opt.launchNotice) note(host, opt.launchNotice);
-    if (!preview && active(existing) && localAgents.includes(agent)) {
-      if (canOpen(agent) && existing.installed === true && (!opt.launchNotice || opt.openHelp)) host.append(button('Open ' + names[agent], async () => {
-        const reply = await openClient(agent);
-        flash(reply.message || names[agent] + ' opened.');
-      }, 'primary'));
-      const update = watchConnection(host, existing.id, {...existing, last_context_read:existing.last_read});
-      if (opt.launchNotice) {
-        const selected = existing.scope?.records?.length;
-        if (selected != null) note(host, selected === 0 ? 'No records shared.' :
-          selected + (selected === 1 ? ' record selected for this agent.' : ' records selected for this agent.'));
-        host.append(button('Manage access', () => go('agent', {id:existing.id, agent})));
+    if (!preview && active(existing) && (localAgents.includes(agent) || agent === 'mcp' || agent === 'dot')) {
+      if (available.includes(agent) && existing.installed === true) {
+        host.append(button('Open ' + names[agent], () => openSavedAgent(agent, existing.id), 'primary'));
       }
+      watchConnection(host, existing.id, {...existing, last_context_read:existing.last_read});
       const help = details(host, 'Connection help', null, !!opt.openHelp || existing.installed === false);
-      note(help, 'In a fresh chat, ask: ' + firstRequest);
-      help.append(button('Copy test request', () => copyText(firstRequest)), button('Check connection', update));
       if (existing.installed === false) help.append(button('Show configuration', async () => {
         const result = await api('workspace-manual-config', {id:existing.id});
-        const f = modal('Finish in ' + names[agent]); note(f, result.message);
-        configuration(f, {...result, installed:false});
+        configuration(help, result);
       }));
-      help.append(button('Repair setup', async () => {
+      if (localAgents.includes(agent)) help.append(button('Repair setup', async () => {
         const result = await api('workspace-reconnect', {id:existing.id});
-        if (!result.installed) {
-          const f = modal('Finish in ' + names[agent]); note(f, result.message); configuration(f, result);
-        } else if (canOpen(agent)) {
-          await finishLocalConnection(agent, result);
-        } else {
-          await refresh(); flash('Agent settings restored.');
-        }
+        await finishLocalConnection(agent, result);
       }));
     }
-    if (opt.launchNotice && active(existing)) return;
     const accessFacts = [
       ['Requests left', existing.remaining],
       ['Expires', when(existing.expires) || '—']
@@ -367,7 +440,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
       }));
     }
   }
-  const connectLabel = () => (canOpen(agent) && install?.checked ? 'Connect & open ' : 'Connect ') + names[agent];
+  const connectLabel = () => (available.includes(agent) && install?.checked ? 'Connect & open ' : 'Connect ') + names[agent];
   const submit = formAction(form, existing ? 'Save access' : connectLabel(), async () => {
     const selected = checks.filter(([, c]) => c.value !== 'off');
     const response = await api('workspace-connect', {
@@ -393,7 +466,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   if (existing) form.append(button('Revoke connection', () => revokeAgent(existing), 'danger'));
 });
 
-addPage('dot', 'Dot tunnel', 'other-agents', async host => {
+addPage('dot', 'Dot tunnel', 'connect', async host => {
   const status = await api('saved-dot');
   note(host, status.configured ? 'A tunnel configuration is saved on this Mac.' :
     'Use the tunnel ID and runtime key from your private Dot connection.');

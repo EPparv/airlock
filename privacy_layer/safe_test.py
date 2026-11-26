@@ -298,7 +298,7 @@ class SafeTest:
                 if len(raw)>4096:return Response(status_code=413)
             try:
                 body=json.loads(raw or '{}'); action=req.path_params['action']
-                expected={'state':set(),'test-state':set(),'test-check':{'step'},'test-reset':{'approved'},
+                expected={'workspace-launch-options':set(),'state':set(),'test-state':set(),'test-check':{'step'},'test-reset':{'approved'},
                           'test-connect':{'agent','approved'},'test-disconnect':set(),'open-personal':{'approved'},'close-personal':set()}
                 allowed_example = {'workspace-state', 'workspace-try', 'workspace-decide', 'workspace-sources'}
                 if action in allowed_example and isinstance(body, dict):
@@ -309,7 +309,11 @@ class SafeTest:
                     return JSONResponse(result, headers={'Cache-Control':'no-store'})
                 if not isinstance(body,dict) or action not in expected or set(body)!=expected[action]:
                     raise Denied('Only the guided fictional test is available here.')
-                if action in ('state','test-state'):result=self.status()
+                if action == 'workspace-launch-options':
+                    # This advertises static Mac capabilities without opening the owner vault.
+                    from .quick_connect import launch_options
+                    result = {'agents':launch_options()}
+                elif action in ('state','test-state'):result=self.status()
                 elif action=='test-check':result=self.check(body['step'])
                 elif action=='test-reset':
                     if body['approved'] is not True:raise Denied('Confirm resetting the fictional test.')

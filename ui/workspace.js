@@ -23,6 +23,7 @@ const names = {
 const pages = {};
 let usingExampleAgents = false;
 let openingWorkspace = false;
+let connectingAgent = false;
 let page = 'home',
   params = {},
   sequence = 0,
@@ -318,38 +319,18 @@ function addPage(key, title, parent, draw, requiresPersonal = true) {
   };
 }
 
-async function enterPersonal(target, options, desktopAgent) {
+async function enterPersonal(target, options, selectedAgent) {
   if (openingWorkspace) return;
   openingWorkspace = true;
   try {
     const result = await testAPI('open-personal', {approved: true});
     const intent = {target, options};
-    if (desktopAgent) intent.desktopApproval = {agent: desktopAgent, at: Date.now()};
+    if (selectedAgent) intent.agentApproval = {agent:selectedAgent, at:Date.now()};
     sessionStorage.setItem('airlock-next-view', JSON.stringify(intent));
     location.replace('/workspace/personal' + new URL(result.url).hash);
   } catch (error) {
     openingWorkspace = false;
     throw error;
-  }
-}
-
-async function connectDesktopNow(agent) {
-  if (!canOpen(agent)) throw Error('Open Airlock.app on this Mac to connect.');
-  if (!personal) return enterPersonal('connect', {}, agent);
-  return startDesktopConnection(agent);
-}
-
-let connectingDesktop = false;
-async function startDesktopConnection(agent) {
-  if (connectingDesktop) return;
-  connectingDesktop = true;
-  try {
-    await finishDefaultDesktopConnection(agent);
-  } catch (error) {
-    await go('agent', {agent, openHelp:true});
-    errorAt(error.message || 'Setup could not finish. Review the connection and try again.');
-  } finally {
-    connectingDesktop = false;
   }
 }
 
@@ -476,7 +457,7 @@ function lockWorkspace() {
 }
 document.addEventListener('DOMContentLoaded', async () => {
   let key = 'home',
-    data = {}, desktopAgent;
+    data = {}, chosenAgent;
   if (!preview) {
     const intent = personal && sessionStorage.getItem('airlock-next-view');
     if (intent) {
@@ -485,9 +466,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const v = JSON.parse(intent);
         key = v.target;
         data = v.options || {};
-        const approval = v.desktopApproval;
-        if (enteringPersonal && key === 'connect' && ['codex', 'cursor'].includes(approval?.agent) &&
-            Date.now() >= approval.at && Date.now() - approval.at < 120000) desktopAgent = approval.agent;
+        const approval = v.agentApproval;
+        if (enteringPersonal && key === 'connect' && knownAgent(approval?.agent) &&
+            Date.now() >= approval.at && Date.now() - approval.at < 120000) chosenAgent = approval.agent;
       } catch {}
     } else {
       key = new URLSearchParams(location.search).get('view') || 'home';
@@ -500,9 +481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, '', location.pathname + (key === 'home' ? '' : '?view=' + encodeURIComponent(key)));
   }
   await go(key, data, false);
-  if (desktopAgent) {
-    await startDesktopConnection(desktopAgent);
-  }
+  if (chosenAgent) await startAgentConnection(chosenAgent);
 });
 window.addEventListener('popstate', e => {
   go(e.state?.view || 'home', e.state?.options || {}, false);

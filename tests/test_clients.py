@@ -442,6 +442,26 @@ def test_custom_copilot_home_uses_export_without_writing_to_default(bundle,tmp_p
     assert 'custom client profile' in result['message']
 
 
+@pytest.mark.parametrize('agent,variable,suffix', [
+    ('vscode', 'COPILOT_HOME', 'mcp-config.json'),
+    ('muse-code', 'XDG_CONFIG_HOME', 'muse/settings.json'),
+    ('openclaw', 'OPENCLAW_STATE_DIR', 'openclaw.json'),
+    ('openclaw', 'OPENCLAW_CONFIG_PATH', ''),
+])
+def test_connect_uses_active_in_home_configuration(bundle, tmp_path, monkeypatch, agent, variable, suffix):
+    home = tmp_path/'owner'
+    location = home/'work profile' if suffix else home/'work profile'/'settings.json'
+    path = location/suffix if suffix else location
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'theme':'keep'}))
+    monkeypatch.setattr(clients, 'ROOT', tmp_path/'Airlock')
+    monkeypatch.setenv(variable, str(location))
+    result = clients.connect(bundle[0], agent=agent, approved=True, home=home)
+    assert result['installed'] and result['path'] == str(path)
+    assert json.loads(path.read_text())['theme'] == 'keep'
+    assert not (home/clients.RELATIVE_CONFIGS[agent]).exists()
+
+
 def test_workspace_can_export_configuration_for_a_custom_profile(bundle,tmp_path,monkeypatch):
     from privacy_layer.workspace import Workspace
     gateway,sources,*_=bundle

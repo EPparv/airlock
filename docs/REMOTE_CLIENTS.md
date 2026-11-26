@@ -1,16 +1,18 @@
 # Connect a cloud agent
 
-Open **Connect agent → Other agents** in the Mac app and choose the online agent you use. Create a separate connection for each agent. A new connection can check its status. It starts with zero shared records and no permission to propose changes, compute on records or request email/calendar follow-ups. Use **Choose permissions** to select records and permissions. Assign local actions or handoffs separately. The same record can be selected for multiple agents.
+In the Mac app, select **Connect agent** and choose a provider. Airlock opens its official site and watches the grant for authenticated tool discovery or a call. A new grant has zero shared records and expires after one day or 100 calls. Selecting the same provider reuses its active grant and its existing permissions. If you have several active grants for that provider, choose the one to use. Manage access under **Privacy & connections → Connected agents**. You can share the same record with several agents.
 
-| Client | Connection | Setup in the client |
+| Agent | On first use | After setup |
 | --- | --- | --- |
-| Meta Muse | HTTPS REST with an OpenAPI schema and a dedicated bearer token | Ask Muse to make a custom connector from the schema URL. Enter the token in its secure credential flow. |
-| Manus | Streamable HTTP MCP with a dedicated bearer token | Open Settings → Integrations → Custom MCP Servers, add the URL, select bearer authentication and test the connection. |
-| ChatGPT | OpenAI Secure MCP Tunnel with a dedicated local stdio grant | Use an existing dedicated tunnel associated with your ChatGPT workspace, then install its private plugin. |
-| IronClaw | HTTPS MCP extension and dedicated bearer token | Review the generated extension manifest with your actual bridge URL. Install it through your host’s extension process and set its secret handle. |
-| Other remote MCP clients | Streamable HTTP MCP with a dedicated bearer token | Enter the HTTPS MCP URL and store the bearer token in the client's secret settings. The client must support bearer authentication. |
+| Meta Muse | Airlock opens Muse and puts a setup request on the Mac clipboard. Paste it into Muse. Enter the schema URL in connector setup and the token in its secure credential prompt. | Opens Muse and prepares a status request to paste. |
+| Manus | Airlock opens Manus. In **Connectors → Create → Add MCP by URL**, enter the server URL and store the token in the authentication settings. | Opens Manus and prepares a status request to paste. |
+| ChatGPT | Airlock opens Plugins and starts local tunnel setup in Terminal. Associate your dedicated tunnel with the workspace, then install the private plugin. | Opens ChatGPT and prepares a status request to paste. Keep your tunnel running. |
+| IronClaw | Airlock opens the hosted Agent Hub. Install the supplied manifest in your IronClaw host and store the token as `airlock_scoped_token`. A self-hosted instance uses its own address. | Opens Agent Hub and prepares a status request to paste. |
+| Other remote MCP client | In the app you use, add the provided server URL and save the token under bearer authentication. | Open your app and use its Airlock connection. |
 
-Muse Code is a separate local CLI. Select **Muse Code** in the main agent list for its stdio setup. The cloud integrations here depend on the provider’s custom-connector access for your account.
+The website handoffs use fixed provider URLs. Only the public setup or status request goes on the clipboard automatically. Use the explicit copy buttons in Airlock for endpoints, manifests or the one-time token. Provider sign-in, account eligibility and first-time authorization happen with the provider. Airlock shows a connection response when the agent actually contacts it. **Privacy & connections → Cloud agents** provides additional grant, bridge and test settings.
+
+Muse Code is a separate local CLI. Select **Muse Code** in the main agent list for its local setup.
 
 ## HTTPS bridge for Muse, Manus, IronClaw and remote MCP clients
 
@@ -40,7 +42,7 @@ Muse can call REST tools from `/openapi.json`, including scoped memory reads and
 ## ChatGPT Secure MCP Tunnel
 
 1. Have an OpenAI Platform tunnel ID, a restricted runtime key for that tunnel and the official `tunnel-client` executable on your Mac's PATH. The tunnel must be dedicated to this connection, with access limited to trusted users. Linking a shared tunnel or publishing its plugin extends the same Airlock grant to anyone who can invoke it.
-2. In Airlock choose **ChatGPT → Create connection**. Run the displayed terminal command on your Mac. It prompts locally for the tunnel ID and runtime key and configures an independent stdio profile. The command contains only local paths. The profile uses one scoped token file, separate from any Dot or Codex grant.
+2. In Airlock choose **Connect agent → ChatGPT**. Terminal opens for the dedicated tunnel ID and restricted runtime key. If it could not open, select **Open tunnel setup** in Airlock. The manual fallback command contains only local paths. The profile uses one scoped token file, separate from any Dot or Codex grant.
 3. Keep that process running and the personal workspace open. In ChatGPT, choose **Plugins → Add custom MCP server → Tunnel**, select the same dedicated tunnel, and choose **No authentication** for the upstream OAuth option. The OpenAI tunnel authorizes access to the private transport and Airlock authenticates each call over stdio with the connection token.
 4. Privately install the plugin and request `privacy_status`. Check **Last tool call** in Airlock. Stop the process with Ctrl-C. Revoke the grant in Airlock to end access.
 
@@ -58,6 +60,7 @@ Protocol tests in this repository cover real loopback requests, MCP initializati
 
 - [Meta Muse custom connectors](https://www.meta.com/en-gb/help/superintelligence/1687253048996149/)
 - [Meta Muse catalog guidelines](https://platform.muse.ai/docs)
-- [Manus custom MCP servers](https://manus.im/docs/integrations/custom-mcp)
-- [ChatGPT custom MCP servers](https://developers.openai.com/api/docs/guides/custom-mcp-server)
+- [Manus connectors](https://www.manus.im/features/connectors)
+- [ChatGPT custom MCP servers](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt)
 - [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+- [IronClaw hosting and setup](https://github.com/nearai/ironclaw/blob/main/docs/quickstart.mdx)

@@ -207,7 +207,8 @@ def codex_config(original,entry,server_name=SERVER):
     if after!=expected:raise Denied('Could not preserve the existing Codex settings. Nothing was changed.')
     return candidate
 
-def install_config(agent,entry,home=None,server_name=SERVER):
+def config_path(agent, home=None):
+    """Use the same active user profile as the client without writing outside its home."""
     if agent not in RELATIVE_CONFIGS:raise Denied('Choose a local agent to install.')
     home=Path(home or Path.home());path=home/RELATIVE_CONFIGS[agent]
     if agent=='codex' and os.environ.get('CODEX_HOME'):
@@ -217,11 +218,28 @@ def install_config(agent,entry,home=None,server_name=SERVER):
             if not profile.is_absolute() or not profile.resolve().is_relative_to(home.resolve()):
                 raise ManualSetup('The active Codex profile is outside this home folder. Add Airlock in that profile.')
             path=profile/'config.toml'
+    profiles = {
+        'vscode': ('COPILOT_HOME', 'mcp-config.json'),
+        'muse-code': ('XDG_CONFIG_HOME', 'muse/settings.json'),
+        'openclaw': ('OPENCLAW_STATE_DIR', 'openclaw.json'),
+    }
+    env_name, filename = profiles.get(agent, ('', ''))
+    if agent == 'openclaw' and os.environ.get('OPENCLAW_CONFIG_PATH'):
+        env_name, filename = 'OPENCLAW_CONFIG_PATH', ''
+    elif agent == 'openclaw' and os.environ.get('OPENCLAW_PROFILE'):
+        raise ManualSetup('A named OpenClaw profile is active. Add Airlock in that profile’s settings.')
+    if env_name and os.environ.get(env_name):
+        selected = Path(os.environ[env_name]).expanduser()
+        if not selected.is_absolute() or not selected.resolve().is_relative_to(home.resolve()):
+            raise ManualSetup('A custom client profile is outside this home folder. Add Airlock in that profile.')
+        path = selected / filename if filename else selected
     if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
         raise ManualSetup('These settings are linked elsewhere. Use the exported setup.')
-    overrides = {'muse-code':('XDG_CONFIG_HOME',), 'vscode':('COPILOT_HOME',), 'openclaw':('OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE')}
-    if any(os.environ.get(key) for key in overrides.get(agent, ())):
-        raise ManualSetup('A custom client profile is active. Apply this entry in that profile’s settings.')
+    return path
+
+
+def install_config(agent,entry,home=None,server_name=SERVER):
+    path = config_path(agent, home)
     path.parent.mkdir(parents=True,exist_ok=True)
     # Serialize our writers and also verify that another app did not change the
     # file during preparation. Backups retain all pre-existing settings.
@@ -260,7 +278,7 @@ def selected_scope(gateway, selection, proposals=False):
     from .agent_memory import AgentMemory
     if not isinstance(selection,dict) or len(selection)>100 or any(not isinstance(k,str) or not isinstance(v,str) for k,v in selection.items()) or type(proposals) is not bool:
         raise Denied('Choose up to 100 records to share.')
-    memory=AgentMemory(gateway);rows=memory.snapshot()
+    memory=AgentMemory(gateway);rows=memory.snapshot() if selection else {}
     for ref,expected_hash in selection.items():
         if not memory.allowed(ref,rows):raise Denied('A selected record is no longer shareable. Refresh the selection.')
         if digest(rows[ref]['text'])!=expected_hash:raise Denied('A selected record changed. Refresh and review it before connecting.')

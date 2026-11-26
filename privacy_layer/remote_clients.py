@@ -3,9 +3,13 @@ import asyncio
 import hmac
 import secrets
 import json
+import os
 import re
 import socket
+import subprocess
+import sys
 import threading
+import tempfile
 from urllib.parse import urlsplit
 
 import uvicorn
@@ -21,6 +25,51 @@ VENDORS = {'muse': 'Meta Muse', 'manus': 'Manus', 'chatgpt': 'ChatGPT', 'ironcla
 MCP_VENDORS = {'manus', 'ironclaw', 'custom'}
 DEFAULT_PORT = 8794
 _get_active = lambda: None
+
+PROVIDER_SITES = {
+    'chatgpt': 'https://chatgpt.com/',
+    'dot': 'https://chatgpt.com/dots',
+    'muse': 'https://muse.ai/',
+    'manus': 'https://manus.im/app',
+    'ironclaw': 'https://agent.near.ai/',
+}
+STATUS_REQUEST = 'Call the Airlock privacy_status tool once and tell me whether it responds. Do not read any records.'
+MUSE_SETUP_REQUEST = ('Create a private Airlock connector. Ask me for its OpenAPI URL and use your secure '
+                      'credential prompt for the bearer token. Then call privacy_status once without reading records.')
+
+
+def open_provider(vendor, setup=False):
+    """Launch only known provider surfaces. Credentials, endpoints and personal data never enter the URL or prompt."""
+    if not isinstance(vendor, str) or vendor not in (*PROVIDER_SITES, 'custom') or type(setup) is not bool:
+        raise Denied('Choose a supported agent.')
+    result = {'opened':False, 'drafted':False, 'prepared':False, 'method':'manual'}
+    url = 'https://chatgpt.com/plugins' if vendor == 'chatgpt' and setup else PROVIDER_SITES.get(vendor)
+    if not url:
+        return {**result, 'message':'Open the app that will use this MCP connection.'}
+    result['url'] = url
+    name = VENDORS.get(vendor, 'Dot') if vendor != 'ironclaw' else 'IronClaw Agent Hub'
+    result['message'] = 'Open ' + name + ' to continue.'
+    if not setup or vendor == 'muse':
+        result['request'] = MUSE_SETUP_REQUEST if setup else STATUS_REQUEST
+    if sys.platform != 'darwin':
+        return result
+    try:
+        subprocess.run(['/usr/bin/open', url], check=True, timeout=5,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return {**result, 'retry_native':True}
+    result.update(opened=True, method='open', message='Opened ' + name + '.')
+    if setup and vendor != 'muse':
+        return result
+    prompt = result['request']
+    try:
+        subprocess.run(['/usr/bin/pbcopy'], input=prompt.encode(), check=True, timeout=2,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        result.update(prepared=True, method='clipboard',
+                      message='Opened ' + name + '. Paste the prepared ' + ('setup' if setup else 'status') + ' request.')
+    except (OSError, subprocess.SubprocessError):
+        result['message'] += ' Clipboard access was unavailable.'
+    return result
 
 # Public discovery publishes only the API contract, never owner settings or records.
 REST_TOOLS = {
@@ -337,6 +386,7 @@ class RemoteClients:
             calls = {event['agent']: event['at'] for event in data['audit'] if event['status'] == 'released'}
             grants = [{'id': g['id'], 'vendor': g['cloud_client'], 'expires': g['expires'],
                        'remaining': g['remaining'], 'last_call': calls.get(g['id']), 'confirmed': g.get('provider_confirmed'),
+                       'last_discovery': g.get('last_discovery'),
                        'revoked': g['revoked'], 'last_read': g.get('last_context_read'),
                        'active': not g['revoked'] and g['expires'] > self.g.clock() and g['remaining'] > 0}
                       for g in data['grants'].values() if g.get('cloud_client') in VENDORS]
@@ -528,6 +578,69 @@ class RemoteClients:
                 raise Denied('Unlock the workspace before creating a connection.')
             return self._create(vendor, lifetime, max_calls)
 
+    def connect(self, vendor, approved, id=None):
+        if not isinstance(vendor, str) or vendor not in VENDORS or approved is not True:
+            raise Denied('Choose the provider you want to connect.')
+        with self.lock:
+            if self.closed:
+                raise Denied('Unlock Airlock to connect.')
+            state = self.state()
+            grants = [g for g in state['connections'] if g['vendor'] == vendor and g['active']]
+            if id is not None:
+                grants = [g for g in grants if g['id'] == id]
+                if not grants:
+                    raise Denied('Choose an active connection for this provider.')
+            if len(grants) > 1:
+                return {'state':'choose'}
+            if vendor != 'chatgpt' and not (state['enabled'] and state['listening']
+                                            and (state['mode'] != 'temporary' or state['verified'])):
+                return {'state':'bridge'}
+            if grants:
+                grant = grants[0]
+                result = {'state':'existing', 'id':grant['id'],
+                          'previous':{'last_call':grant['last_call'],'last_discovery':grant['last_discovery'],
+                                      'last_context_read':grant['last_read']}}
+                setup = not (grant['last_call'] or grant['last_discovery'] or grant['confirmed'])
+            else:
+                result = {'state':'created', **self._create(vendor, 86400, 100)}
+                setup = True
+        handoff = open_provider(vendor, setup)
+        if vendor == 'chatgpt' and result['state'] == 'created' and sys.platform == 'darwin':
+            result['tunnel_opened'] = self.open_tunnel_setup(result['id'])['opened']
+        return {**result, 'setup':setup, 'handoff':handoff}
+
+    def open_tunnel_setup(self, id):
+        """Start only the interactive setup belonging to an active, dedicated ChatGPT grant."""
+        from .remote_tunnel import launch_command
+        with self.lock:
+            if self.closed or not isinstance(id, str) or not re.fullmatch(r'[a-f0-9]{32}', id):
+                raise Denied('Choose an active ChatGPT connection.')
+            grant = next((g for g in self.state()['connections'] if g['id'] == id), None)
+            folder = self.g.store.path.parent
+            token = folder / 'clients' / ('chatgpt-' + id + '.token')
+            if not grant or grant['vendor'] != 'chatgpt' or not grant['active'] or not token.is_file():
+                raise Denied('Choose an active ChatGPT connection with a dedicated credential.')
+            command = launch_command(token, folder / 'launch.json')
+            if sys.platform != 'darwin':
+                return {'opened':False, 'command':command}
+            path = None
+            try:
+                with tempfile.NamedTemporaryFile(mode='w', prefix='Airlock-tunnel-', suffix='.command',
+                                                 dir=token.parent, delete=False) as script:
+                    path = script.name
+                    script.write('#!/bin/sh\n/bin/rm -f "$0"\nexec ' + command + '\n')
+                    os.fchmod(script.fileno(), 0o700)
+                subprocess.run(['/usr/bin/open','-a','Terminal',path], check=True, timeout=5,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return {'opened':True}
+            except (OSError, subprocess.SubprocessError):
+                if path:
+                    try:
+                        os.unlink(path)
+                    except FileNotFoundError:
+                        pass
+                return {'opened':False, 'command':command}
+
     def _create(self, vendor, lifetime, max_calls):
         if vendor not in VENDORS:
             raise Denied('Choose a supported cloud client.')
@@ -567,13 +680,23 @@ class RemoteClients:
     def owner(self, action, body):
         schema = {'remote-state': (), 'remote-quick-start': ('approved',), 'remote-quick-stop': (), 'remote-configure': ('origin', 'port', 'enabled'),
                   'remote-create': ('vendor', 'lifetime', 'max_calls')}
-        schema.update({'remote-quick-confirm':('code',), 'remote-quick-retry':()})
+        schema.update({'remote-quick-confirm':('code',), 'remote-quick-retry':(),
+                       'remote-connect':('vendor','approved'), 'remote-open-provider':('vendor','setup'),
+                       'remote-open-tunnel':('id',)})
+        if action == 'remote-connect' and isinstance(body, dict) and 'id' in body:
+            schema[action] = ('vendor','approved','id')
         if action == 'remote-quick-start' and isinstance(body, dict) and 'verification_method' in body:
             schema[action] = ('approved','verification_method')
         if action not in schema or not isinstance(body, dict) or set(body) != set(schema[action]):
             raise Denied('Invalid cloud connection request.')
         if action == 'remote-state':
             return self.state()
+        if action == 'remote-connect':
+            return self.connect(**body)
+        if action == 'remote-open-tunnel':
+            return self.open_tunnel_setup(body['id'])
+        if action == 'remote-open-provider':
+            return open_provider(**body)
         if action == 'remote-quick-start':
             return self.start_temporary(**body)
         if action == 'remote-quick-confirm':

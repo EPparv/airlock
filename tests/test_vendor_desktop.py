@@ -1,15 +1,43 @@
 """Optional observations from real, signed-in-free apps on a disposable macOS VM."""
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import secrets
+import socket
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
+import uvicorn
 
 from privacy_layer import clients
+from privacy_layer.server import owner_app
+from privacy_layer.device_apps import NativeApps
 from test_mcp import serving
+
+
+@contextmanager
+def workspace_url(gateway):
+    owner = secrets.token_urlsafe(32)
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        application = owner_app(gateway, owner, port)
+        server = uvicorn.Server(uvicorn.Config(application, log_level='critical', access_log=False))
+        thread = threading.Thread(target=server.run, kwargs={'sockets': [listener]}, daemon=True)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not server.started and time.monotonic() < deadline:
+                time.sleep(.05)
+            assert server.started
+            yield f'http://127.0.0.1:{port}/workspace/personal#{owner}'
+        finally:
+            server.should_exit = True
+            thread.join(10)
 
 
 @pytest.mark.skipif(not os.environ.get('AIRLOCK_VENDOR_PROBE'), reason='Requires opt-in vendor app runner')
@@ -29,19 +57,27 @@ def test_vendor_mac_launch_and_mcp_discovery(bundle, serving, tmp_path, monkeypa
     monkeypatch.setattr(clients, 'ROOT', root)
 
     gateway = bundle[0]
-    connection = clients.connect(gateway, agent=agent, approved=True,
-                                 scope={'records': [], 'disclose': False, 'compute': False, 'proposals': False})
+    gateway.device_apps = NativeApps()
+    assert not gateway.list_grants()
     try:
-        assert connection['installed'] and Path(connection['path']) == config
-        assert not clients.connection_status(gateway, connection['id'])['last_discovery']
-        subprocess.run([os.environ['AIRLOCK_VENDOR_PROBE'], agent, os.environ['AIRLOCK_VENDOR_BUNDLE']], check=True, timeout=185)
-        until = time.monotonic() + 35
-        while time.monotonic() < until:
-            if clients.connection_status(gateway, connection['id'])['last_discovery']:
-                print('Vendor GUI performed authenticated MCP tools/list on the fresh Airlock grant.')
+        with workspace_url(gateway) as url:
+            subprocess.run([os.environ['AIRLOCK_VENDOR_PROBE'], agent, os.environ['AIRLOCK_VENDOR_BUNDLE']],
+                           check=True, timeout=240, env={**os.environ, 'AIRLOCK_VENDOR_WORKSPACE':url})
+        grants = gateway.list_grants()
+        assert len(grants) == 1, 'Reopening an active app should use its existing grant.'
+        grant = grants[0]
+        assert grant['agent'] == agent and grant['configured'] and grant['scope']['records'] == []
+        assert config.is_file()
+        deadline = time.monotonic() + 35
+        while time.monotonic() < deadline:
+            status = clients.connection_status(gateway, grant['id'])
+            if status['last_discovery'] or status['last_call']:
+                print('Vendor GUI authenticated to Airlock. Tool discovery:', bool(status['last_discovery']),
+                      'tool call:', bool(status['last_call']))
                 break
             time.sleep(1)
         else:
-            print('Vendor GUI launch verified. No MCP tool discovery observed before account sign-in or interactive approval.')
+            print('Vendor GUI launch verified. No authenticated discovery before sign-in or vendor approval.')
     finally:
-        gateway.revoke(connection['id'])
+        for grant in gateway.list_grants():
+            gateway.revoke(grant['id'])

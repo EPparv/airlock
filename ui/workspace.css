@@ -804,3 +804,84 @@ dialog::backdrop {
   image-rendering: pixelated;
   box-sizing: border-box;
 }
+
+.agent-search {
+  margin: 2px 0 0;
+  min-height: 40px;
+}
+
+.agent-group .section {
+  margin-top: 22px;
+}
+
+.agent-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 8px 3px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-option:hover:enabled,
+.agent-option:focus-visible {
+  background: var(--soft);
+}
+
+.agent-option-action {
+  flex: none;
+  font-size: var(--small);
+  color: var(--sub);
+}
+
+.agent-group + .details {
+  margin-top: 20px;
+}
+
+.handoff-result {
+  margin: 0 0 19px;
+  padding: 19px 0;
+  border-block: 1px solid var(--line);
+}
+
+.handoff-status {
+  font-size: 18px;
+}
+
+.handoff-detail {
+  margin-top: 7px;
+  color: var(--sub);
+  overflow-wrap: anywhere;
+}
+
+.handoff-manage {
+  display: block;
+  padding-left: 0;
+}
+
+@media(max-width: 500px) {
+  .agent-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-option-action {
+    opacity: 0;
+  }
+
+  .agent-option:hover .agent-option-action,
+  .agent-option:focus-visible .agent-option-action,
+  .agent-option[aria-busy="true"] .agent-option-action {
+    opacity: 1;
+  }
+}

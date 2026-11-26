@@ -1,6 +1,6 @@
 # Mac app: first-use acceptance
 
-Download the current app at https://epparv.github.io/airlock/. No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. The download page reports notarization for the current release. Pull-request test builds use an ad-hoc signature.
+[Download the current Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip). No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. The download page reports notarization for the current release. Pull-request test builds use an ad-hoc signature.
 
 ## Start with fictional data
 
@@ -12,9 +12,9 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 
 ## Connect a local agent
 
-Open **Connect agent**, then **Connect & open Codex** or **Connect & open Cursor**. Airlock opens the workspace, saves the local settings and opens the desktop app. A new connection starts with zero shared records. Returning connections keep their existing permissions. To select memories before connecting, open **Other agents → Advanced setup** and choose the app. To change access later, open **Privacy & connections → Connected agents**.
+Open **Connect agent** and choose the app. Supported desktop clients open with an Airlock privacy check ready. The native Mac window and the local browser workspace use the same handoff. A new connection starts with zero shared records. Returning connections keep their existing permissions. Manage sharing under **Privacy & connections → Connected agents**.
 
-Airlock shows when a client requests its tool list, makes a successful tool call, or reads context. For a manual check in your agent, ask it to call Airlock’s `privacy_status` tool. This check works with zero shared records. Return to the same agent in Airlock to open it again or use **Connection help → Repair setup**. The repair preserves the connection’s approved records, expiry and call budget.
+Airlock shows when the agent discovers its tools, makes a tool call or reads shared context. The `privacy_status` check works with zero shared records. Send the prepared request if the agent opens a draft. Grant access to records separately in Airlock.
 
 For a custom profile, use **More settings → Client settings** and turn off **Save to the default profile on this Mac**. The generated configuration references an expiring credential stored on your Mac.
 
@@ -31,7 +31,7 @@ For a custom profile, use **More settings → Client settings** and turn off **S
 
 For commented JSON, OpenClaw includes or a linked profile, use the client’s editor to merge the exported entry. Airlock offers that fallback automatically on the four new clients. Ask the agent to retrieve a selected record, then check **Privacy & connections → Connected agents** for the first context read. A listed server only confirms that its settings loaded.
 
-Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Connect agent → Other agents → Meta Muse**.
+Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Connect agent → Meta Muse**.
 
 ## Optional real AI experience
 

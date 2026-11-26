@@ -108,7 +108,7 @@
   }
   function showMacSetup() {
     const steps = node('ol', undefined, 'steps');
-    for (const text of ['Open Airlock on your Mac and choose Connect agent.', 'Choose Connect & open Codex, Connect & open Cursor, or Other agents.']) {
+    for (const text of ['Open Airlock on your Mac and choose Connect agent.', 'Choose the agent you want to connect.']) {
       steps.append(node('li', text));
     }
     root.append(steps);

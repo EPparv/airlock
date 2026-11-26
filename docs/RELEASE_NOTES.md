@@ -1,3 +1,7 @@
+# Airlock 0.11.4
+
+Choose an agent in Connect agent. On a Mac, the native window and the local browser workspace can open a supported client with an Airlock privacy check prepared. Airlock displays discovery or tool activity when the agent actually connects. Provider sign-in and tool approvals stay with the agent.
+
 # Airlock 0.11.3
 
 Connect agent now shows Codex, Cursor and Other agents. Choosing Codex or Cursor opens the app with its approved access. New connections start with no shared records. Other agents lists the remaining clients and their setup options.

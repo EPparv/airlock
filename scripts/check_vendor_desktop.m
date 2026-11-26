@@ -1,62 +1,74 @@
-// Exercise the shipping macOS launcher with a real app on a disposable GitHub runner.
-#import "../macos/WorkspacePanel.m"
+// Exercise the ordinary browser's loopback workspace with an installed vendor app.
+#import <Cocoa/Cocoa.h>
+#import <WebKit/WebKit.h>
 
 static void require(BOOL condition, NSString *message) {
-    if (!condition) {
-        fprintf(stderr, "%s\n", message.UTF8String);
-        exit(1);
-    }
+    if (!condition) { fprintf(stderr,"%s\n",message.UTF8String); exit(1); }
 }
 
-static BOOL waitUntil(BOOL (^check)(void)) {
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:60];
+static BOOL waitUntil(BOOL (^check)(void), NSTimeInterval seconds) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:seconds];
     while (!check() && deadline.timeIntervalSinceNow > 0) {
-        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
     }
     return check();
 }
 
-static void openDesktop(AirlockPanel *panel, NSString *agent, BOOL running) {
+static id javascript(WKWebView *view, NSString *source) {
     __block BOOL done = NO;
-    __block NSDictionary *reply = nil;
-    __block NSString *problem = nil;
-    [panel openClient:agent reply:^(id result, NSString *error) {
-        reply = result;
-        problem = error;
+    __block id result = nil;
+    [view evaluateJavaScript:source completionHandler:^(id value, NSError *error) {
+        result = error ? nil : value;
         done = YES;
     }];
-    require(waitUntil(^BOOL{ return done; }), @"Timed out waiting for the macOS launcher.");
-    require(!problem && [reply[@"opened"] boolValue], problem ?: @"The launcher did not open the app.");
-    require([reply[@"wasRunning"] boolValue] == running, @"Unexpected cold or running activation result.");
-    require([reply[@"newChatRequested"] boolValue] == [agent isEqual:@"codex"],
-            @"The installed app did not accept the expected new-chat or ordinary launch request.");
+    return waitUntil(^BOOL{ return done; }, 5) ? result : nil;
 }
 
-int main(int argc, const char *argv[]) {
+static void choose(WKWebView *view, NSString *name) {
+    NSString *button = [NSString stringWithFormat:@"Array.from(document.querySelectorAll('#app button')).find(b=>(b.getAttribute('aria-label')||b.textContent.trim())==='%@' && !b.disabled && b.getClientRects().length)",name];
+    require(waitUntil(^BOOL{ return [javascript(view,[NSString stringWithFormat:@"Boolean(%@)",button]) boolValue]; },25),[NSString stringWithFormat:@"Missing action: %@",name]);
+    require([javascript(view,[NSString stringWithFormat:@"(%@).click();true",button]) boolValue],@"Could not activate the picker action.");
+}
+
+static void connectInBrowser(WKWebView *view, NSURL *entry, NSString *name) {
+    [view loadRequest:[NSURLRequest requestWithURL:entry]];
+    choose(view, @"Connect agent");
+    require(![javascript(view,@"!!window.webkit?.messageHandlers?.airlockSettings") boolValue],@"This must be an ordinary browser session with no native bridge.");
+    choose(view, name);
+    require(waitUntil(^BOOL{ return [javascript(view,@"!!Array.from(document.querySelectorAll('#app button')).find(b=>b.textContent==='Manage access' && b.getClientRects().length)") boolValue]; },45),@"The browser did not reach the launch receipt.");
+    require([javascript(view,@"history.state?.options?.method==='draft' && history.state?.options?.opened===true") boolValue],@"Airlock did not hand the status draft to the selected app.");
+    require([javascript(view,@"!document.querySelector('dialog[open]') && !document.getElementById('app').innerText.includes('Copy test request')") boolValue],@"The browser displayed a manual handoff instead of launching.");
+}
+
+int main(int argc,const char *argv[]) {
     @autoreleasepool {
-        require(argc == 3, @"Usage: check-vendor-desktop codex|cursor /path/to/app");
-        NSString *agent = [NSString stringWithUTF8String:argv[1]];
-        require([agent isEqual:@"codex"] || [agent isEqual:@"cursor"], @"Unknown client.");
-        NSBundle *installed = [NSBundle bundleWithPath:[NSString stringWithUTF8String:argv[2]]];
-        NSString *identifier = [agent isEqual:@"codex"] ? @"com.openai.codex" : @"com.todesktop.230313mzl4w4u92";
-        require([installed.bundleIdentifier isEqual:identifier], @"Unexpected vendor bundle identifier.");
+        require(argc==3,@"Expected a vendor key and a bundle path.");
+        NSString *agent=[NSString stringWithUTF8String:argv[1]];
+        NSString *name=[agent isEqual:@"codex"]?@"Codex":@"Cursor";
+        NSString *identifier=[agent isEqual:@"codex"]?@"com.openai.codex":@"com.todesktop.230313mzl4w4u92";
+        require([agent isEqual:@"codex"] || [agent isEqual:@"cursor"],@"Unknown test agent.");
+        NSBundle *installed=[NSBundle bundleWithPath:[NSString stringWithUTF8String:argv[2]]];
+        require([installed.bundleIdentifier isEqual:identifier],@"Unexpected vendor bundle.");
+        NSURL *entry=[NSURL URLWithString:NSProcessInfo.processInfo.environment[@"AIRLOCK_VENDOR_WORKSPACE"]];
+        require([entry.host isEqual:@"127.0.0.1"] && [entry.path isEqual:@"/workspace/personal"],@"Expected the disposable authenticated loopback workspace.");
         [NSApplication.sharedApplication setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp finishLaunching];
-        AirlockPanel *panel = [AirlockPanel new];
-        NSArray *(^instances)(void) = ^{ return [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier]; };
-        require(instances().count == 0, @"Expected a fresh runner with the selected desktop app closed.");
-        openDesktop(panel, agent, NO);
-        require(waitUntil(^BOOL{ return instances().count == 1; }), @"No unique running vendor app was found.");
-        NSRunningApplication *first = instances().firstObject;
-        require([first.bundleURL.URLByResolvingSymlinksInPath.path isEqual:installed.bundleURL.URLByResolvingSymlinksInPath.path],
-                @"The running app came from an unexpected location.");
-        require(waitUntil(^BOOL{ return first.finishedLaunching && !first.terminated; }), @"The vendor app did not finish launching.");
-        openDesktop(panel, agent, YES);
-        NSRunningApplication *second = instances().firstObject;
-        require(instances().count == 1 && !first.terminated && second.processIdentifier == first.processIdentifier,
-                @"Reopening the app replaced its process.");
-        printf("%s version %s: cold launch and second activation used PID %d.\n", identifier.UTF8String,
-               [[installed objectForInfoDictionaryKey:@"CFBundleShortVersionString"] UTF8String], first.processIdentifier);
+        WKWebViewConfiguration *config=[WKWebViewConfiguration new];
+        config.websiteDataStore=WKWebsiteDataStore.nonPersistentDataStore;
+        WKWebView *view=[[WKWebView alloc] initWithFrame:NSMakeRect(0,0,800,700) configuration:config];
+        NSWindow *window=[[NSWindow alloc] initWithContentRect:view.frame styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+        window.contentView=view;
+        [window orderFront:nil];
+        NSArray *(^instances)(void)=^{return [NSRunningApplication runningApplicationsWithBundleIdentifier:identifier];};
+        require(instances().count==0,@"Expected the signed vendor app to be closed.");
+        connectInBrowser(view,entry,name);
+        require(waitUntil(^BOOL{return instances().count==1;},60),@"No unique vendor process appeared.");
+        NSRunningApplication *first=instances().firstObject;
+        require([first.bundleURL.URLByResolvingSymlinksInPath.path isEqual:installed.bundleURL.URLByResolvingSymlinksInPath.path],@"Unexpected running vendor app path.");
+        require(waitUntil(^BOOL{return first.finishedLaunching && !first.terminated;},60),@"Vendor app failed to open.");
+        connectInBrowser(view,entry,name);
+        require(instances().count==1 && !first.terminated && ((NSRunningApplication *)instances().firstObject).processIdentifier==first.processIdentifier,@"Second browser connection replaced the running app.");
+        printf("%s version %s: a real loopback browser connected in two clicks, both times using PID %d.\n", identifier.UTF8String,[[installed objectForInfoDictionaryKey:@"CFBundleShortVersionString"] UTF8String],first.processIdentifier);
     }
     return 0;
 }

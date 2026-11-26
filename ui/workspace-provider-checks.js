@@ -73,7 +73,7 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
     note(help, 'Ask Muse to use your personal custom connector. Verify the current HTTPS schema URL ends in /openapi.json and the Airlock credential was saved in the connector’s secure authentication settings.');
   } else {
     note(help, 'Check your current HTTPS address ends in /mcp. Use this connection’s bearer token in the client’s authentication settings and refresh its tools.');
-    if (status.vendor === 'manus') note(help, 'In Manus, open Settings → Integrations → Custom MCP Servers and test the server before requesting the code.');
+    if (status.vendor === 'manus') note(help, 'In Manus, open Connectors and check the Airlock server before requesting the code.');
   }
   if (status.url) {
     const url = field(help, 'Configured endpoint', input('url', status.url));

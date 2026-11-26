@@ -120,7 +120,7 @@ class AgentMemory:
             raise Denied('Select up to 100 memory or skill records.')
         if any(type(v) is not bool for v in (disclose, compute, proposals)):
             raise Denied('Choose the agent permissions.')
-        rows = self.snapshot()
+        rows = self.snapshot() if records else {}
         if any(not self.allowed(r, rows) for r in records):
             raise Denied('A selected record or its source must stay local.')
         if disclose_records is not None and (not isinstance(disclose_records,list) or any(not isinstance(r,str) or r not in records for r in disclose_records)):

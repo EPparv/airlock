@@ -15,7 +15,6 @@ import subprocess
 import tempfile
 import time
 import tomllib
-import uuid
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request,build_opener,ProxyHandler
@@ -186,31 +185,41 @@ def check(app, cached_runtime=None, window_probe=None):
             assert 'November 20' in str(call(entry,'get_private_context',{'query':'Cypress launch'}))
             api('revoke',{'id':entry['id']},personal=True)
             call(entry,'get_private_context',{'query':'Cypress'},denied=True)
-            if window_probe:
-                # These client apps exist only in the disposable install check. The
-                # shipping native bridge opens them via Launch Services, never a user's AI.
-                fixture=Path(temp)/'Fixture.app'
-                executable=fixture/'Contents/MacOS/Fixture'
-                executable.parent.mkdir(parents=True)
-                shutil.copy2(window_probe,executable)
-                (fixture/'Contents/Info.plist').write_bytes(plistlib.dumps({
-                    'CFBundleName':'Airlock test client','CFBundleExecutable':'Fixture',
-                    'CFBundleIdentifier':'com.airlock.fixture.desktop.'+uuid.uuid4().hex,
-                    'CFBundlePackageType':'APPL','CFBundleVersion':'1','NSPrincipalClass':'NSApplication',
-                    'CFBundleURLTypes':[{'CFBundleURLName':'Airlock disposable test', 'CFBundleTypeRole':'Viewer',
-                                         'LSHandlerRank':'None','CFBundleURLSchemes':['codex']}],
-                }))
-                subprocess.run(['/usr/bin/codesign','--force','--sign','-',fixture],check=True)
-                for name in ('Cursor','Codex'):
-                    api('close-personal')
-                    subprocess.run([binary,'--data-dir',base,'--profile-home',home,'--no-update-check',
-                                    '--test-client',fixture,name],env=env,check=True,timeout=90)
-                    assert api('test-state')['personal_open']
-                    personal_owner=api('open-personal',{'approved':True})['url'].split('#')[1]
-                    agents=api('workspace-state',personal=True)['agents']
-                    active=[a for a in agents if a['name']==name.lower() and a['status'] not in ('expired','revoked')]
-                    assert len(active)==1 and active[0]['installed'] and active[0]['scope']['records']==[]
-                    assert not active[0]['proposals'] and not any(active[0]['device'].values())
+            # Register test bundles with vendor IDs only on disposable hosted Macs
+            # that have no matching installed app. No machine-level changes on user Macs.
+            if window_probe and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted':
+                register='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+                for name,identifier in [('Cursor','com.todesktop.230313mzl4w4u92'),('Codex','com.openai.codex')]:
+                    def resolved():
+                        return subprocess.check_output([binary,'--find-installed-bundle',identifier],env=env,text=True).strip()
+                    assert not resolved(), 'Refusing to register a disposable bundle over an installed agent.'
+                    fixture=Path(temp)/name/'Fixture.app'
+                    executable=fixture/'Contents/MacOS/Fixture'
+                    executable.parent.mkdir(parents=True)
+                    shutil.copy2(window_probe,executable)
+                    (fixture/'Contents/Info.plist').write_bytes(plistlib.dumps({
+                        'CFBundleName':'Airlock test client','CFBundleExecutable':'Fixture',
+                        'CFBundleIdentifier':identifier,'AirlockDisposableLaunchFixture':True,
+                        'CFBundlePackageType':'APPL','CFBundleVersion':'1','NSPrincipalClass':'NSApplication',
+                        'CFBundleURLTypes':[{'CFBundleURLName':'Airlock disposable test', 'CFBundleTypeRole':'Viewer',
+                                             'LSHandlerRank':'None','CFBundleURLSchemes':[name.lower()]}],
+                    }))
+                    subprocess.run(['/usr/bin/codesign','--force','--sign','-',fixture],check=True)
+                    subprocess.run([register,'-f',fixture],check=True)
+                    try:
+                        assert Path(resolved()).resolve()==fixture.resolve(), 'Launch Services did not register the test bundle.'
+                        api('close-personal')
+                        subprocess.run([binary,'--data-dir',base,'--profile-home',home,'--no-update-check',
+                                        '--test-client',fixture,name],env=env,check=True,timeout=120)
+                        assert api('test-state')['personal_open']
+                        personal_owner=api('open-personal',{'approved':True})['url'].split('#')[1]
+                        agents=api('workspace-state',personal=True)['agents']
+                        active=[a for a in agents if a['name']==name.lower() and a['status'] not in ('expired','revoked')]
+                        assert len(active)==1 and active[0]['installed'] and active[0]['scope']['records']==[]
+                        assert not active[0]['proposals'] and not any(active[0]['device'].values())
+                        assert active[0]['last_call'] is None and active[0]['last_discovery'] is None
+                    finally:
+                        subprocess.run([register,'-u',fixture],check=False)
             print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'approved_cross_agent_handoff':True,'personal_model_key_revoked_on_lock':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'archived_executable':bool(window_probe),'native_window':bool(window_probe),'finder_ui_tested':False}))
         finally:
             if native_process and native_process.poll() is None:

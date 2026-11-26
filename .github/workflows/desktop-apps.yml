@@ -81,13 +81,13 @@ jobs:
           spctl --assess --type execute --verbose=2 "$bundle_path"
           /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$bundle_path"
           echo "AIRLOCK_VENDOR_BUNDLE=$bundle_path" >> "$GITHUB_ENV"
-      - name: Open through Airlock and reopen the same process
+      - name: Connect twice from the loopback browser and verify the running vendor process
         env:
           AIRLOCK_VENDOR_AGENT: ${{ matrix.agent }}
         run: |
           set -eu
           export AIRLOCK_VENDOR_PROBE="$RUNNER_TEMP/airlock-vendor-probe"
-          xcrun clang -fobjc-arc -framework Cocoa -framework WebKit -framework CoreImage scripts/check_vendor_desktop.m -o "$AIRLOCK_VENDOR_PROBE"
+          xcrun clang -fobjc-arc -framework Cocoa -framework WebKit scripts/check_vendor_desktop.m -o "$AIRLOCK_VENDOR_PROBE"
           python -m pytest -q -s tests/test_vendor_desktop.py::test_vendor_mac_launch_and_mcp_discovery
       - name: Verify the packaged Codex daemon can read and revoke scoped memory without inference
         if: matrix.agent == 'codex'

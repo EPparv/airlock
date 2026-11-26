@@ -37,10 +37,20 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  const btn=label=>byText('#app button',label), sheet=label=>byText('dialog[open] button',label);
  const contains=text=>until('document.getElementById("app")?.innerText.includes('+JSON.stringify(text)+')');
  const titled=title=>until('document.querySelector("#app h1")?.textContent==='+JSON.stringify(title));
- const pickerChoices = ['Codex','Cursor','Other agents'];
- const directoryChoices = ['Claude Desktop','Claude Code','ChatGPT','Meta Muse','Manus','IronClaw','Dot','OpenClaw',
+ const pickerChoices = ['Codex','Cursor','Claude Desktop','Claude Code','ChatGPT','Meta Muse','Manus','IronClaw','Dot','OpenClaw',
    'VS Code · GitHub Copilot','Gemini CLI','Muse Code','Custom MCP client','Other remote MCP client'];
  const visibleActions = () => evaluate("Array.from(document.querySelectorAll('#app button:not(.back), #app a[href], #app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
+ async function matchesPicker() {
+   await until("document.querySelector('#app [aria-busy]')===null");
+   const labels=await visibleActions();
+   assert.equal(labels.includes('Other agents'),false);
+   for(const name of pickerChoices) assert.ok(labels.includes(name),'Missing agent: '+name);
+ }
+ async function noManualHandoff() {
+   await until("!document.querySelector('#app [aria-busy]') && [...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
+   assert.equal(await evaluate("!!document.querySelector('dialog[open]') || /Copy test request|Settings saved\.|Check connection/.test(document.querySelector('#app').innerText)"),false);
+ }
+ const launched=()=>fs.existsSync(path.join(tmp,'launched.jsonl'))?fs.readFileSync(path.join(tmp,'launched.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line).agent):[];
  async function screenshot(name){if(!process.argv[4])return;fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],name),Buffer.from(shot.data,'base64'));}
  async function type(label,value,area='dialog[open]'){
   const expr='Array.from(document.querySelectorAll('+JSON.stringify(area+' label')+')).find(x=>x.firstChild.textContent==='+JSON.stringify(label)+')?.querySelector("input,textarea,select")';
@@ -52,12 +62,17 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);await screenshot('workspace-mobile.png');
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
- await btn('Connect agent');assert.deepEqual(await visibleActions(),pickerChoices);await screenshot('workspace-connect.png');
- await btn('Other agents');await titled('Other agents');
- assert.deepEqual((await visibleActions()).sort(),[...directoryChoices].sort());
+ await btn('Connect agent');await matchesPicker();await screenshot('workspace-connect.png');
  assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
- await btn('Connect agent');await btn('Codex');await until("document.querySelector('dialog[open] h2')?.textContent==='Unlock your workspace'");
- assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);await click('close');await home();
+ assert.deepEqual(launched(),[]);
+ await btn('Cursor');await noManualHandoff();await screenshot('workspace-handoff.png');
+ assert.equal(await evaluate("document.querySelector('.handoff-status').textContent"),'Waiting for Cursor');
+ assert.deepEqual(launched(),['cursor']);
+ const firstCursor=await evaluate("api('workspace-state').then(s=>s.agents.find(g=>g.name==='cursor'))");
+ assert.equal(firstCursor.scope.records.length,0);assert.equal(firstCursor.last_call,null);assert.equal(firstCursor.last_discovery,null);
+ assert.ok(fs.existsSync(path.join(tmp,'profile/.cursor/mcp.json')));
+ await home();await btn('Privacy & connections');await btn('App settings');await btn('Lock workspace');await sheet('Lock workspace');
+ await until("location.pathname==='/workspace' && document.querySelectorAll('nav button').length===3");
  await btn('Context & memory');await contains('Proposed changes');await screenshot('workspace-context.png');await home();
  await btn('Privacy & connections');await contains('App settings');await screenshot('workspace-privacy.png');
  await btn('Privacy checks');await btn('Example actions');await contains('Investor follow-up');
@@ -138,24 +153,18 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await btn('Add memory');await type('Memory','Follow up about the fictional pilot.');await sheet('Save');await contains('Follow up about the fictional pilot.');
  await btn('Follow up about the fictional pilot.');await btn('Edit');await type('Memory','Follow up about the revised fictional pilot.');await sheet('Save changes');await contains('Follow up about the revised fictional pilot.');
  await btn('Pin to core profile');await contains('Unpin from core profile');await btn('Retire from recall');await contains('Restore to recall');await btn('Restore to recall');await contains('Retire from recall');
- await home();await btn('Connect agent');await btn('Other agents');
- for(const name of directoryChoices){
-   await btn(name);await titled(name);await until("!document.querySelector('#app [aria-busy]')");
-   assert.equal(await evaluate("document.querySelector('.back').textContent"),'Other agents',name);
-   assert.equal(await evaluate("Array.from(document.querySelectorAll('#app button')).some(b=>b.textContent==='Try again')"),false,name);
-   await btn('Other agents');await titled('Other agents');
- }
- await btn('Connect agent');assert.deepEqual(await visibleActions(),pickerChoices);
- await btn('Cursor');await titled('Cursor');
+ await home();await btn('Connect agent');await matchesPicker();await btn('Cursor');await noManualHandoff();
+ await btn('Manage access');await titled('Cursor');
  await byText('summary','Shared records · 0 selected');await type('Follow up about the revised fictional pilot.','excerpt','#app');
  assert.ok(!(await evaluate("document.querySelector('#app').innerText.includes('FICTIONAL_PRIVATE_PERSONAL')")));
- await btn('Connect Cursor');await until("document.querySelector('dialog[open] h2')?.textContent==='Settings saved'");
- await sheet('Check connection');await until("document.querySelector('dialog').innerText.includes('Waiting for the agent')");await sheet('Close');
- assert.ok(fs.existsSync(path.join(tmp,'profile/.cursor/mcp.json')));
- const savedCursor=await evaluate("api('workspace-state').then(s=>s.agents.find(g=>g.name==='cursor'&&g.status==='configured'))");assert.equal(savedCursor.scope.records.length,1);assert.equal(savedCursor.scope.disclose_records.length,1);
- await home();await btn('Connect agent');await btn('Cursor');await titled('Cursor');
- await byText('summary','Connection help');await btn('Check connection');await contains('Waiting for the agent');
- assert.equal(await evaluate("api('workspace-state').then(s=>s.agents.filter(a=>a.name==='cursor'&&a.status==='configured').length)"),1);
+ await btn('Save access');await titled('Connected agents');
+ const savedCursor=await evaluate("api('workspace-state').then(s=>s.agents.find(g=>g.name==='cursor'&&g.status==='configured'))");
+ assert.equal(savedCursor.id,firstCursor.id);assert.equal(savedCursor.scope.records.length,1);assert.equal(savedCursor.scope.disclose_records.length,1);
+ await home();await btn('Connect agent');await btn('Cursor');await noManualHandoff();
+ const cursorGrants=await evaluate("api('workspace-state').then(s=>s.agents.filter(a=>a.name==='cursor'&&a.status==='configured'))");
+ assert.equal(cursorGrants.length,1);assert.deepEqual(cursorGrants[0].scope,savedCursor.scope);
+ assert.equal(cursorGrants[0].last_discovery,null);assert.equal(cursorGrants[0].last_call,null);
+ assert.deepEqual(launched(),['cursor','cursor','cursor']);
  await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Sensitive Pilot Code','#app');await btn('Save phrases');await until("document.getElementById('notice').textContent==='Private phrases saved.'");
  await byText('summary','Test redaction');await type('Sample','Write to test@example.org about Sensitive Pilot Code.','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.length>0");
  const redacted=await evaluate("document.querySelector('#app pre').textContent");assert.ok(!redacted.includes('test@example.org')&&!redacted.includes('Sensitive Pilot Code'));
@@ -217,6 +226,11 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await sheet('Test this connection');await contains('Waiting for a status call');await byText('summary','Connection help');await contains('HTTP 429');
  await btn('End test');await contains('Unconfirmed');
  await visit(['Privacy & connections','Cloud agents'],'Cloud agents');await btn('ChatGPT');await contains('Waiting for first call');
+ await home();await btn('Connect agent');await btn('ChatGPT');await titled('ChatGPT');await contains('Open tunnel setup');
+ assert.equal(await evaluate("document.querySelector('#app a.button').href"),'https://chatgpt.com/plugins');
+ assert.equal(await evaluate("document.querySelector('.handoff-status').textContent"),'Finish setup');
+ assert.equal(await evaluate("!!document.querySelector('dialog[open]')"),false);
+ assert.equal(await evaluate("api('remote-state').then(s=>s.connections.filter(g=>g.vendor==='chatgpt' && g.active).length)"),1);
  await visit(['Privacy & connections','Approvals & activity','Private task approvals'],'No private tasks');
  await visit(['Privacy & connections','Approvals & activity','Disclosure receipts'],'Refresh');
  await visit(['Privacy & connections','Approvals & activity','Access log'],'Refresh');
@@ -235,9 +249,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
    await home();await btn('Connect agent');
    assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://try-airlock.parv223885.chatgpt.site/#connect');
    assert.equal((await visibleActions()).some(label=>pickerChoices.includes(label)),false);
-   await btn('Try sample agents');assert.deepEqual(await visibleActions(),pickerChoices);
-   await btn('Other agents');await titled('Other agents');assert.deepEqual((await visibleActions()).sort(),[...directoryChoices].sort());
-   await btn('Connect agent');await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
+   await btn('Try sample agents');await matchesPicker();await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
    await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Preview code','#app');await btn('Save phrases');await byText('summary','Test redaction');await type('Sample','Preview code at sample@example.org','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.includes('[withheld]')");assert.ok(!(await evaluate("document.querySelector('#app pre').textContent.includes('sample@example.org')")));
    await home();await btn('Privacy & connections');await btn('Approvals & activity');await btn('Device actions');await contains('Investor follow-up');
    await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Investor follow-up')).click()");await sheet('Approve example');await contains('Simulated');

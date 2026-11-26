@@ -2,13 +2,13 @@
 
 Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives selected, locally filtered context. Sensitive records use private tasks with separate input and result approvals. Useful preferences stay available across sessions.
 
-Download the Mac app: https://epparv.github.io/airlock/
+[Download the Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip)
 
-Version **0.11.3** opens in its own Mac window. The home screen has three controls.
+Version **0.11.4** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
-- **Connect agent** opens Codex or Cursor in one click. Choose **Other agents** for another desktop app, an online agent or a custom MCP client. New connections share zero records.
+- **Connect agent** lets you choose an installed app or an online agent. Supported clients open with the Airlock privacy check ready. New connections share zero records.
 - **Context & memory** holds memories, reusable skills, imports, linked sources and agent proposals. Search, edit, pin, retire or restrict a record. Review imported records before saving. Skill packages and their generated files are under Skills.
 - **Privacy & connections** contains connected agents, the local redaction tester, app and data permissions, write approvals, disclosure receipts, private inference, diagnostics and app settings. Mail recipients, calendar details and attachments resolve locally. You can give each agent selected fields from a live on-device SQLite database, CSV or JSON file, or a snapshot. Agents can request a write to one configured API endpoint or an append to a specific file. You approve the exact payload. The endpoint receives approved values and the agent receives a receipt.
 
@@ -24,7 +24,7 @@ On iPhone, **Connect agent → Set up on Mac** shares the Mac setup link. To tes
 
 1. Unzip the Mac download, move **Airlock.app** to Applications and open it. First setup downloads the pinned runtime. Subsequent launches use the installation on your Mac.
 2. Choose **Context & memory → Memories → Unlock workspace → Add memory**, or import existing context. Personal access opens only after you choose to unlock it.
-3. Choose **Connect agent** and pick an app. For Codex and Cursor, Airlock saves the connection and opens the app. You can give it access to selected memories under **Privacy & connections → Connected agents**.
+3. Choose **Connect agent** and pick an app. For Codex and Cursor, Airlock saves the connection and opens the app with a privacy check ready. You can give it access to selected memories under **Privacy & connections → Connected agents**.
 4. Manage access under **Privacy & connections → Connected agents**. Use **App settings → Lock workspace** to close personal access. To explore with fictional data while locked, choose **Privacy checks**.
 
 Quitting and reopening starts with personal access closed. Test results persist in their own encrypted fixture vault; its key is stored beside it because it contains only fictional fixtures. Personal vault keys continue to use macOS Keychain. Resetting the test revokes test connections and replaces only fictional data. For Gmail on a fresh installation, open Apps & data → Gmail search. Choose Connect Gmail if this download includes the publisher’s Google Desktop app, or add your own OAuth client. Gmail reads require consent from the account holder. [Gmail setup](docs/GOOGLE_SIGN_IN.md)
@@ -42,7 +42,7 @@ Managed connections from an earlier Airlock installation are migrated to the ins
 
 ## Connect cloud agents and hand work to another agent
 
-Open **Connect agent → Other agents** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
+Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
 
 Under **Privacy & connections → Approvals & activity → Agent handoffs**, give one agent an assignment and choose who should receive the outcome. The worker claims the assignment and submits a report. You review and release the exact text for the second agent. Each agent uses its own permissions, and a separately approved memory proposal can outlive the handoff.
 

@@ -165,6 +165,8 @@ def owner_app(gateway, owner_token, port=8791):
     from .agent_memory import AgentMemory, PrivateTasks
     memory, private_tasks = AgentMemory(gateway), PrivateTasks(gateway, near=near_setup)
     from .workspace import WORKSPACE_ASSETS
+    from .quick_connect import QuickConnections
+    quick = QuickConnections(gateway)
     async def asset(req):
         filename={'/':'index.html','/near-demo':'index.html','/ui.js':'ui.js','/context.js':'context.js','/workbench.js':'workbench.js','/onboarding.js':'onboarding.js','/ui.css':'ui.css','/icon.svg':'icon.svg'}.get(req.url.path)
         if req.url.path in ('/near.js','/near.css','/near-setup.js'): filename = req.url.path[1:]
@@ -192,6 +194,8 @@ def owner_app(gateway, owner_token, port=8791):
             hub=ContextHub(gateway.store,getattr(gateway.sources,'context_home',None),gateway.clock)
             if action.startswith('prompt-'):
                 result = prompts.owner(action, body)
+            elif action in ('workspace-launch-options', 'workspace-quick-connect', 'workspace-open-client', 'workspace-agent-help'):
+                result = await asyncio.to_thread(quick.owner, action, body)
             elif action.startswith('workspace-'):
                 from .workspace import Workspace
                 result = await asyncio.to_thread(Workspace(gateway).owner, action, body)
