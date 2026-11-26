@@ -31,12 +31,16 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  const controls=['Connect agent','Context & memory','Privacy & connections'];
  const labels=()=>evaluate("Array.from(document.querySelectorAll('#app.home nav button'),b=>b.textContent)");
  const byText=async(selector,label)=>{
-  const expr='Array.from(document.querySelectorAll('+JSON.stringify(selector)+')).find(b=>b.getClientRects().length && b.textContent.trim()==='+JSON.stringify(label)+')';
+  const expr='Array.from(document.querySelectorAll('+JSON.stringify(selector)+')).find(b=>b.getClientRects().length && (b.getAttribute("aria-label")||b.textContent.trim())==='+JSON.stringify(label)+')';
   await until('!!('+expr+')');return evaluate('('+expr+').click()');
  };
  const btn=label=>byText('#app button',label), sheet=label=>byText('dialog[open] button',label);
  const contains=text=>until('document.getElementById("app")?.innerText.includes('+JSON.stringify(text)+')');
  const titled=title=>until('document.querySelector("#app h1")?.textContent==='+JSON.stringify(title));
+ const pickerChoices = ['Codex','Cursor','Other agents'];
+ const directoryChoices = ['Claude Desktop','Claude Code','ChatGPT','Meta Muse','Manus','IronClaw','Dot','OpenClaw',
+   'VS Code · GitHub Copilot','Gemini CLI','Muse Code','Custom MCP client','Other remote MCP client'];
+ const visibleActions = () => evaluate("Array.from(document.querySelectorAll('#app button:not(.back), #app a[href], #app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
  async function screenshot(name){if(!process.argv[4])return;fs.mkdirSync(process.argv[4],{recursive:true});const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},session);fs.writeFileSync(path.join(process.argv[4],name),Buffer.from(shot.data,'base64'));}
  async function type(label,value,area='dialog[open]'){
   const expr='Array.from(document.querySelectorAll('+JSON.stringify(area+' label')+')).find(x=>x.firstChild.textContent==='+JSON.stringify(label)+')?.querySelector("input,textarea,select")';
@@ -48,6 +52,10 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true},session);
  assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true);await screenshot('workspace-mobile.png');
  await send('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false},session);
+ await btn('Connect agent');assert.deepEqual(await visibleActions(),pickerChoices);await screenshot('workspace-connect.png');
+ await btn('Other agents');await titled('Other agents');
+ assert.deepEqual((await visibleActions()).sort(),[...directoryChoices].sort());
+ assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);
  await btn('Connect agent');await btn('Codex');await until("document.querySelector('dialog[open] h2')?.textContent==='Unlock your workspace'");
  assert.equal(await evaluate("api('test-state').then(s=>s.personal_open)"),false);await click('close');await home();
  await btn('Context & memory');await contains('Proposed changes');await screenshot('workspace-context.png');await home();
@@ -130,7 +138,15 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await btn('Add memory');await type('Memory','Follow up about the fictional pilot.');await sheet('Save');await contains('Follow up about the fictional pilot.');
  await btn('Follow up about the fictional pilot.');await btn('Edit');await type('Memory','Follow up about the revised fictional pilot.');await sheet('Save changes');await contains('Follow up about the revised fictional pilot.');
  await btn('Pin to core profile');await contains('Unpin from core profile');await btn('Retire from recall');await contains('Restore to recall');await btn('Restore to recall');await contains('Retire from recall');
- await home();await btn('Connect agent');await contains('Meta Muse');await contains('ChatGPT');await contains('Manus');await btn('Cursor');await titled('Cursor');
+ await home();await btn('Connect agent');await btn('Other agents');
+ for(const name of directoryChoices){
+   await btn(name);await titled(name);await until("!document.querySelector('#app [aria-busy]')");
+   assert.equal(await evaluate("document.querySelector('.back').textContent"),'Other agents',name);
+   assert.equal(await evaluate("Array.from(document.querySelectorAll('#app button')).some(b=>b.textContent==='Try again')"),false,name);
+   await btn('Other agents');await titled('Other agents');
+ }
+ await btn('Connect agent');assert.deepEqual(await visibleActions(),pickerChoices);
+ await btn('Cursor');await titled('Cursor');
  await byText('summary','Shared records · 0 selected');await type('Follow up about the revised fictional pilot.','excerpt','#app');
  assert.ok(!(await evaluate("document.querySelector('#app').innerText.includes('FICTIONAL_PRIVATE_PERSONAL')")));
  await btn('Connect Cursor');await until("document.querySelector('dialog[open] h2')?.textContent==='Settings saved'");
@@ -187,7 +203,11 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await evaluate("Array.from(document.querySelectorAll('#app .item-button')).find(b=>b.innerText.includes('Browser fixture')).click()");
  await sheet('Revoke');await contains('No model connections');
  await visit(['Privacy & connections','Approvals & activity','Agent handoffs'],'Agent handoffs');
- await visit(['Connect agent','Cloud agents'],'Cloud agents');
+ await visit(['Context & memory','Reviewed excerpts'],'Reviewed excerpts');
+ assert.equal(await evaluate("document.querySelector('.back').textContent"),'Context & memory');
+ await visit(['Privacy & connections','Pair iPhone'],'Pair iPhone');
+ assert.equal(await evaluate("document.querySelector('.back').textContent"),'Privacy & connections');
+ await visit(['Privacy & connections','Cloud agents'],'Cloud agents');
  await btn('ChatGPT');await btn('Create connection');
  await until("document.querySelector('dialog[open] h2')?.textContent==='Connect ChatGPT'");
  await evaluate("Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw Error('Clipboard unavailable')}}})");
@@ -196,7 +216,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  await sheet('Done copying');await evaluate("delete navigator.clipboard");
  await sheet('Test this connection');await contains('Waiting for a status call');await byText('summary','Connection help');await contains('HTTP 429');
  await btn('End test');await contains('Unconfirmed');
- await visit(['Connect agent','Cloud agents'],'Cloud agents');await btn('ChatGPT');await contains('Waiting for first call');
+ await visit(['Privacy & connections','Cloud agents'],'Cloud agents');await btn('ChatGPT');await contains('Waiting for first call');
  await visit(['Privacy & connections','Approvals & activity','Private task approvals'],'No private tasks');
  await visit(['Privacy & connections','Approvals & activity','Disclosure receipts'],'Refresh');
  await visit(['Privacy & connections','Approvals & activity','Access log'],'Refresh');
@@ -214,7 +234,10 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
    await btn('Context & memory');await btn('Import context');await type('Paste context','Remember the demo date.','#app');await btn('Review import');await sheet('Add selected records');await sheet('View memories');await contains('Remember the demo date.');
    await home();await btn('Connect agent');
    assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://try-airlock.parv223885.chatgpt.site/#connect');
-   await btn('Try sample agents');await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
+   assert.equal((await visibleActions()).some(label=>pickerChoices.includes(label)),false);
+   await btn('Try sample agents');assert.deepEqual(await visibleActions(),pickerChoices);
+   await btn('Other agents');await titled('Other agents');assert.deepEqual((await visibleActions()).sort(),[...directoryChoices].sort());
+   await btn('Connect agent');await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
    await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Preview code','#app');await btn('Save phrases');await byText('summary','Test redaction');await type('Sample','Preview code at sample@example.org','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.includes('[withheld]')");assert.ok(!(await evaluate("document.querySelector('#app pre').textContent.includes('sample@example.org')")));
    await home();await btn('Privacy & connections');await btn('Approvals & activity');await btn('Device actions');await contains('Investor follow-up');
    await evaluate("Array.from(document.querySelectorAll('.item-button')).find(b=>b.innerText.includes('Investor follow-up')).click()");await sheet('Approve example');await contains('Simulated');

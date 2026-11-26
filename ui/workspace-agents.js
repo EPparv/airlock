@@ -1,35 +1,61 @@
 'use strict';
-const featuredAgents = ['codex', 'cursor', 'claude-desktop', 'claude-code'];
-const otherLocalAgents = ['muse-code', 'gemini-cli', 'vscode', 'openclaw'];
-const localAgents = [...featuredAgents, ...otherLocalAgents];
 const desktopApps = ['codex', 'cursor'];
+const localAgents = [...desktopApps, 'claude-desktop', 'claude-code', 'muse-code', 'gemini-cli', 'vscode', 'openclaw'];
 const nativeLauncher = () => window.webkit?.messageHandlers?.airlockSettings;
 const canOpen = agent => !preview && desktopApps.includes(agent) && !!nativeLauncher();
 addPage('connect', 'Connect agent', 'home', host => {
-  const local = section(host, 'On this Mac');
-  if (canOpen('codex')) {
-    note(local, 'Open your workspace and the app together. New connections share no memories. Existing connections keep their approved access.');
-    for (const agent of desktopApps) {
-      row(local, 'Connect & open ' + names[agent], () => connectDesktopNow(agent));
-    }
-    const custom = details(local, 'Choose what to share first');
-    for (const agent of desktopApps) row(custom, names[agent], () => go('agent', {agent, customize:true}));
+  note(host, 'New connections share no memories. Reconnecting keeps the access you approved.');
+  const list = el('div', null, 'menu');
+  host.append(list);
+  for (const agent of desktopApps) {
+    if (canOpen(agent)) row(list, 'Connect & open ' + names[agent], () => connectDesktopNow(agent));
+    else row(list, names[agent], () => go('agent', {agent}));
   }
-  for (const agent of featuredAgents.filter(agent => !canOpen(agent))) {
-    row(local, names[agent], () => go('agent', {agent}));
-  }
-  const cloud = section(host, 'Online');
-  for (const vendor of ['chatgpt', 'muse', 'manus']) {
-    row(cloud, cloudClients[vendor], () => go('remote-create', {vendor}));
-  }
-  const other = section(host, 'More connections');
-  row(other, 'Pair iPhone', () => go('pair-iphone'));
-  row(other, 'Cloud agents', () => go('remote-clients'));
-  const more = details(other, 'Other clients');
-  for (const id of [...otherLocalAgents, 'mcp', 'ironclaw', 'dot']) row(more, names[id], () => id === 'ironclaw' && !preview ?
-    go('remote-create', {vendor: id}) : go('agent', {agent: id}));
-  choose(more, 'Share exact excerpts', 'excerpts');
+  choose(list, 'Other agents', 'other-agents');
 }, false);
+
+addPage('other-agents', 'Other agents', 'connect', host => {
+  const local = section(host, 'On this Mac');
+  const online = section(host, 'Online');
+  function entry(list, label, description, page, options) {
+    const button = item(list, label, description, () => go(page, {...options, from:'other-agents'}));
+    const subtitle = button.querySelector('.row-sub');
+    subtitle.id = 'about-' + (options.agent || options.vendor);
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-describedby', subtitle.id);
+  }
+  for (const [agent, description] of [
+    ['claude-desktop', 'Claude’s Mac app.'],
+    ['claude-code', 'Claude in your terminal.'],
+    ['gemini-cli', 'Gemini in your terminal.'],
+    ['muse-code', 'Meta’s coding agent in your terminal.'],
+    ['openclaw', 'An OpenClaw gateway running on this Mac.'],
+    ['vscode', 'Local Copilot sessions in VS Code.'],
+    ['mcp', 'Another app that accepts a local MCP command.']
+  ]) entry(local, names[agent], description, 'agent', {agent});
+  for (const [vendor, description] of [
+    ['chatgpt', 'Connect through your ChatGPT workspace’s private tunnel.'],
+    ['muse', 'Connect the Muse app using a custom connector.'],
+    ['manus', 'Add Airlock in Manus integrations.'],
+    ['ironclaw', 'Install Airlock as an HTTPS extension.'],
+    ['custom', 'Another service that accepts an MCP server URL.']
+  ]) {
+    if (vendor === 'ironclaw' && preview) entry(online, cloudClients[vendor], description, 'agent', {agent:vendor});
+    else entry(online, cloudClients[vendor], description, 'remote-create', {vendor});
+  }
+  entry(online, names.dot, 'Use your existing private Dot tunnel.', 'agent', {agent:'dot'});
+  if (canOpen('codex')) {
+    const more = details(host, 'Advanced setup');
+    note(more, 'Choose records or a custom profile before connecting.');
+    for (const agent of desktopApps) row(more, 'Configure ' + names[agent], () => go('agent', {agent, from:'other-agents'}));
+  }
+}, false);
+
+function useDirectoryBack(host, options) {
+  if (options.from === 'other-agents') {
+    host.closest('.page').querySelector('.back').replaceWith(button('Other agents', () => go('other-agents'), 'back'));
+  }
+}
 
 function linkStatus(status) {
   if (status.status === 'revoked') return 'Access revoked.';
@@ -179,13 +205,14 @@ function revokeAgent(a) {
 }
 addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   const agent = opt.agent;
+  useDirectoryBack(host, opt);
   if (!names[agent]) {
     empty(host, 'Choose an agent first.');
     host.append(button('Choose agent', () => go('connect')));
     return;
   }
   bar.querySelector('h1').textContent = names[agent];
-  const [ws, context] = await Promise.all([api('workspace-state'), api('client-context')]);
+  const ws = await api('workspace-state');
   const previous = ws.agents.filter(a => a.name === agent && active(a));
   let existing = opt.id && ws.agents.find(a => a.id === opt.id && a.name === agent);
   if (!opt.id && !opt.createNew && localAgents.includes(agent) && previous.length) {
@@ -194,7 +221,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
       const list = section(host, 'Existing connections');
       for (const a of previous) item(list, names[agent] + ' · ' + a.id.slice(-6),
         'Expires ' + when(a.expires), () => go('agent', {agent, id:a.id}));
-      host.append(button('Create another connection', () => go('agent', {agent, createNew:true})));
+      host.append(button('Create another connection', () => go('agent', {agent, from:opt.from, createNew:true})));
       return;
     }
   }
@@ -205,11 +232,17 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
       'connections'), 'back'));
     if (opt.launchNotice) note(host, opt.launchNotice);
     if (!preview && active(existing) && localAgents.includes(agent)) {
-      if (canOpen(agent) && existing.installed === true) host.append(button('Open ' + names[agent], async () => {
+      if (canOpen(agent) && existing.installed === true && (!opt.launchNotice || opt.openHelp)) host.append(button('Open ' + names[agent], async () => {
         const reply = await openClient(agent);
         flash(reply.message || names[agent] + ' opened.');
       }, 'primary'));
       const update = watchConnection(host, existing.id, {...existing, last_context_read:existing.last_read});
+      if (opt.launchNotice) {
+        const selected = existing.scope?.records?.length;
+        if (selected != null) note(host, selected === 0 ? 'No records shared.' :
+          selected + (selected === 1 ? ' record selected for this agent.' : ' records selected for this agent.'));
+        host.append(button('Manage access', () => go('agent', {id:existing.id, agent})));
+      }
       const help = details(host, 'Connection help', null, !!opt.openHelp || existing.installed === false);
       note(help, 'In a fresh chat, ask: ' + firstRequest);
       help.append(button('Copy test request', () => copyText(firstRequest)), button('Check connection', update));
@@ -222,12 +255,14 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
         const result = await api('workspace-reconnect', {id:existing.id});
         if (!result.installed) {
           const f = modal('Finish in ' + names[agent]); note(f, result.message); configuration(f, result);
+        } else if (canOpen(agent)) {
+          await finishLocalConnection(agent, result);
         } else {
-          if (canOpen(agent)) await openClient(agent);
           await refresh(); flash('Agent settings restored.');
         }
       }));
     }
+    if (opt.launchNotice && active(existing)) return;
     const accessFacts = [
       ['Requests left', existing.remaining],
       ['Expires', when(existing.expires) || '—']
@@ -253,15 +288,18 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   }
   const form = el('div', null, 'form');
   host.append(form);
+  const context = await api('client-context');
   const records = context.records || [],
     scope = existing?.scope;
-  if (!existing) note(form, 'Only the records you choose can be shared. You can connect with none.');
+  if (!existing) note(form, 'You can connect now and choose what to share later.');
   const choices = details(form, 'Shared records'),
     summary = choices.parentElement.querySelector('summary'),
     checks = [];
   if (!records.length) {
     note(choices, 'Your library is empty.');
     choices.append(button('Add a memory', () => addNote('memories')));
+  } else {
+    note(choices, 'Filtered excerpts let the agent read text. For a private task, you review the result before the agent receives it.');
   }
   const allowed = scope?.disclose_records ?? scope?.records ?? [];
   for (const r of records) {
@@ -291,7 +329,8 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   const proposals = check(devices, 'Propose memory updates', existing?.proposals);
   const compute = check(devices, 'Allow private tasks on selected records', scope?.compute);
   note(devices, 'Sending mail and releasing a private task result each require your approval.');
-  const readLimits = existing ? null : limits(details(advanced, 'Connection limits'));
+  const readLimits = existing ? null : limits(details(advanced, 'Connection limits',
+    el('p', 'Access ends when either limit is reached.', 'hint')));
   let install;
   if (!existing && !preview && localAgents.includes(agent)) {
     const setup = details(advanced, 'Client settings');
@@ -354,7 +393,7 @@ addPage('agent', 'Agent access', 'connect', async (host, opt, bar) => {
   if (existing) form.append(button('Revoke connection', () => revokeAgent(existing), 'danger'));
 });
 
-addPage('dot', 'Dot tunnel', 'connect', async host => {
+addPage('dot', 'Dot tunnel', 'other-agents', async host => {
   const status = await api('saved-dot');
   note(host, status.configured ? 'A tunnel configuration is saved on this Mac.' :
     'Use the tunnel ID and runtime key from your private Dot connection.');
@@ -386,7 +425,7 @@ addPage('dot', 'Dot tunnel', 'connect', async host => {
   }));
 });
 
-addPage('excerpts', 'Reviewed excerpts', 'connect', async host => {
+addPage('excerpts', 'Reviewed excerpts', 'context', async host => {
   const form = el('div', null, 'form');
   host.append(form);
   const agent = field(form, 'Agent', select(Object.entries(names).map(([k, v]) => [k, v])));

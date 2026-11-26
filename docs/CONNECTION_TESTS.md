@@ -1,6 +1,6 @@
 # Test an agent connection
 
-In the unlocked Mac workspace, choose **Connect agent → Cloud agents → Test a connection**. Select the connection you intend to test, then choose **Start test**. Paste the displayed request in your signed-in agent and enter its eight-character reply in Airlock.
+In the unlocked Mac workspace, choose **Privacy & connections → Cloud agents → Test a connection**. Select the connection you intend to test, then choose **Start test**. Paste the displayed request in your signed-in agent and enter its eight-character reply in Airlock.
 
 A listening bridge or a saved ChatGPT credential confirms local setup. A new status request using the tested credential returns only a code and uses one call. A tool catalog refresh alone cannot produce the code. Matching the code from your agent confirms that it received the Airlock reply. It does not verify the legal identity of the caller or the permissions of everyone with access to the same credential. Each check expires in ten minutes or when the grant expires, whichever comes first. Revoke a credential to invalidate its pending check.
 

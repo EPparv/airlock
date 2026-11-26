@@ -1,6 +1,6 @@
 # Connect a cloud agent
 
-Open **Connect agent → Cloud agents** in the Mac app. Create a separate connection for each agent. A new connection can check its status. It starts with zero shared records and no permission to propose changes, compute on records or request email/calendar follow-ups. Use **Choose permissions** to select records and permissions. Assign local actions or handoffs separately. The same record can be selected for multiple agents.
+Open **Connect agent → Other agents** in the Mac app and choose the online agent you use. Create a separate connection for each agent. A new connection can check its status. It starts with zero shared records and no permission to propose changes, compute on records or request email/calendar follow-ups. Use **Choose permissions** to select records and permissions. Assign local actions or handoffs separately. The same record can be selected for multiple agents.
 
 | Client | Connection | Setup in the client |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ ChatGPT access depends on workspace plugin permissions and tunnel association. O
 
 ## Check your signed-in agent
 
-Open **Connect agent → Cloud agents → Test a connection**. Start a test for the exact connection, ask the agent for its status code, then match the reply in Airlock. Each test status response contains only the code. For ChatGPT, connection help displays the tunnel setup command again when the local credential exists. [Connection tests and error recovery](CONNECTION_TESTS.md)
+Open **Privacy & connections → Cloud agents → Test a connection**. Start a test for the exact connection, ask the agent for its status code, then match the reply in Airlock. Each test status response contains only the code. For ChatGPT, connection help displays the tunnel setup command again when the local credential exists. [Connection tests and error recovery](CONNECTION_TESTS.md)
 
 ## Provider review and verification
 

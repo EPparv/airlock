@@ -12,7 +12,7 @@ Download the current app at https://epparv.github.io/airlock/. No Terminal, sepa
 
 ## Connect a local agent
 
-Open **Connect agent**, then **Connect & open Codex** or **Connect & open Cursor**. Airlock opens the workspace, saves the local settings and opens the desktop app. A new connection starts with zero shared records. Returning connections keep their existing permissions. To select memories before connecting, open **Choose what to share first**. You can edit access later.
+Open **Connect agent**, then **Connect & open Codex** or **Connect & open Cursor**. Airlock opens the workspace, saves the local settings and opens the desktop app. A new connection starts with zero shared records. Returning connections keep their existing permissions. To select memories before connecting, open **Other agents → Advanced setup** and choose the app. To change access later, open **Privacy & connections → Connected agents**.
 
 Airlock shows when a client requests its tool list, makes a successful tool call, or reads context. For a manual check in your agent, ask it to call Airlock’s `privacy_status` tool. This check works with zero shared records. Return to the same agent in Airlock to open it again or use **Connection help → Repair setup**. The repair preserves the connection’s approved records, expiry and call budget.
 
@@ -27,11 +27,11 @@ For a custom profile, use **More settings → Client settings** and turn off **S
 | Codex | `~/.codex/config.toml` | Run `codex mcp get airlock` to check the saved settings. |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | Restart Claude Desktop and check its local MCP servers. |
 | Claude Code | `~/.claude.json` | Restart Claude Code and run `/mcp`. |
-| Cursor | `~/.cursor/mcp.json` | Reopen Cursor and check its MCP settings. |
+| Cursor | `~/.cursor/mcp.json` | Open Cursor’s MCP settings and look for Airlock. |
 
 For commented JSON, OpenClaw includes or a linked profile, use the client’s editor to merge the exported entry. Airlock offers that fallback automatically on the four new clients. Ask the agent to retrieve a selected record, then check **Privacy & connections → Connected agents** for the first context read. A listed server only confirms that its settings loaded.
 
-Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Connect agent → Cloud agents**.
+Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Connect agent → Other agents → Meta Muse**.
 
 ## Optional real AI experience
 
@@ -45,7 +45,7 @@ Muse Code is Meta’s terminal agent. For the consumer Meta Muse app, open **Con
 
 1. Open **Context & memory → Memories** and choose **Unlock workspace**. Existing approved connections can resume with their previous permissions. Importing real information is optional; fictional text also works here.
 2. Import and review context. Choose **Connect agent** on the home screen. Confirm no records are preselected and private records are absent. Choose the AI and records together, then connect. Older managed Airlock settings should migrate without changing other connections.
-3. Restart your AI, enable Airlock if prompted and paste the supplied question. Use **Check connection** to see whether the agent has made its first context request. Check the response. Further permissions are in **Privacy & connections → Connected agents**. Gmail and arbitrary actions remain unavailable to scoped connections.
+3. Open your AI, enable Airlock if prompted and paste the supplied question. Use **Check connection** to see whether the agent has made its first context request. Check the response. Further permissions are in **Privacy & connections → Connected agents**. Gmail and arbitrary actions remain unavailable to scoped connections.
 4. Correct, retire, pin and restrict records. Ask the AI to refresh and compare responses. Review proposed memories before accepting them, then add approved notes to each relevant connection's selection. Airlock cannot silently capture hidden chats.
 5. Choose **Privacy & connections → App settings → Lock workspace**. New personal calls must fail. Quit and reopen; personal access stays closed until explicitly reopened. Saved personal data and permissions are preserved.
 6. Revoke a personal connection and verify fresh requests fail even while the personal workspace is open.

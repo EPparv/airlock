@@ -30,16 +30,23 @@ if (document.querySelector('main').innerText.includes('two-paragraph')) throw Er
 await press('Revoke access'); await seen('Access revoked.');
 await press('Writing agent'); await seen('two-paragraph');
 await press('Connect my agent'); await title('Connect agent');
-if (findButton('Create vault') || findButton('New test session')) throw Error('Agent setup landed in the local test vault.');
-await press('Set up on Mac'); await title('Mac setup');
+const actions = () => [...document.querySelectorAll('main button:not(.back), main a')].map(n => n.textContent);
+if (JSON.stringify(actions()) !== JSON.stringify(['Set up on Mac'])) throw Error('Expected one iPhone connection action.');
+let handedOff;
+Object.defineProperty(navigator, 'share', {configurable:true, value:async data => { handedOff = data.url; }});
+await press('Set up on Mac');
+delete navigator.share;
+if (handedOff !== 'https://try-airlock.parv223885.chatgpt.site/#mac') throw Error('Incorrect Mac handoff.');
+location.hash = '#mac'; await title('Mac setup');
 if (document.querySelector('a').href !== 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip') throw Error('Missing direct Mac download.');
-await press('‹ Connect agent'); await press('Pair this iPhone');
+location.hash = '#connect'; await title('Connect agent');
+await press('‹ Airlock'); await press('Privacy & connections'); await press('Pair this iPhone');
 write('Pairing link from your Mac','https://example.com/wrong#pair=bad'); await press('Check link');
 await until(() => document.querySelector('#notice').textContent.includes('complete one-time'), 'Invalid pairing link rejected');
 const fakePair = 'https://test-mac.example.org/phone#pair=' + 'A'.repeat(43);
 write('Pairing link from your Mac',fakePair); await press('Check link');
 if (document.querySelector('a')?.href !== fakePair || document.querySelector('input').value) throw Error('Pairing link handoff failed.');
-await press('‹ Connect agent'); await press('Share an excerpt from iPhone');
+await press('‹ Privacy & connections'); await press('‹ Airlock'); await press('Context & memory'); await press('Share an excerpt');
 if (phase === 1) {
   await title('Share an excerpt'); write('Text to share','Send the draft to editor@example.org');
   await press('Review excerpt'); const approved = document.querySelectorAll('textarea')[1];
@@ -47,22 +54,23 @@ if (phase === 1) {
 } else {
   await until(() => findButton('Unlock vault'), 'saved privacy settings require unlocking before one-time sharing');
 }
-await press('‹ Connect agent'); await press('‹ Airlock'); await title('Airlock');
+await press('‹ Context & memory'); await press('‹ Airlock'); await title('Airlock');
+history.replaceState(null,'',location.pathname+location.search);
 if (phase === 2) {
-  await press('Context & memory'); await until(() => findButton('Unlock vault'), 'existing vault');
+  await press('Context & memory'); await press('Memories'); await until(() => findButton('Unlock vault'), 'existing vault');
   write('Passphrase','incorrect phrase'); await press('Unlock vault');
   await until(() => document.querySelector('#notice')?.textContent.includes('could not be opened'), 'wrong passphrase blocked');
-  write('Passphrase','Local iPhone fixture 42'); await press('Unlock vault'); await press('Memories');
+  write('Passphrase','Local iPhone fixture 42'); await press('Unlock vault');
   await seen(message); await seen(suggested); await seen(hidden);
   return true;
 }
-await press('Context & memory'); await until(() => findButton('Create vault'), 'new vault');
+await press('Context & memory'); await press('Memories'); await until(() => findButton('Create vault'), 'new vault');
 write('Passphrase','Local iPhone fixture 42'); write('Confirm passphrase','Local iPhone fixture 42');
-await press('Create vault'); await press('Memories');
+await press('Create vault');
 await press('Add memory'); write('Memory', message); await press('Save memory');
 await press('Add memory'); write('Memory', hidden);
 document.querySelector('input[type=checkbox]').checked = true; await press('Save memory');
-await press('‹ Context & memory'); await press('‹ Airlock'); await press('Connect agent'); await press('Local test sessions');
+await press('‹ Context & memory'); await press('‹ Airlock'); await press('Privacy & connections'); await press('Local test sessions');
 async function create(name) {
   await press('New test session'); write('Session name',name); await press('Create session'); await title(name);
 }
@@ -86,7 +94,7 @@ await press('‹ Agent access'); await press('‹ Local test sessions'); await p
 await press('Revoke session'); await press('Revoke access'); await title('Local test sessions');
 if (findButton('Atlas')) throw Error('Revoked session survived.');
 await press('Ember'); await press('Try session'); write('Propose a memory',suggested); await press('Send for review');
-await press('‹ Agent access'); await press('‹ Local test sessions'); await press('‹ Connect agent'); await press('‹ Airlock');
+await press('‹ Agent access'); await press('‹ Local test sessions'); await press('‹ Privacy & connections'); await press('‹ Airlock');
 await press('Context & memory'); await press('Proposed changes'); await seen(suggested); await press('Approve');
 await seen('No changes waiting'); await press('‹ Context & memory'); await press('Memories'); await seen(suggested);
 const envelope = await new Promise((resolve,reject) => {

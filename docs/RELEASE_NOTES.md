@@ -1,3 +1,9 @@
+# Airlock 0.11.3
+
+Connect agent now shows Codex, Cursor and Other agents. Choosing Codex or Cursor opens the app with its approved access. New connections start with no shared records. Other agents lists the remaining clients and their setup options.
+
+iPhone pairing and cloud connection settings are in Privacy & connections. One-time excerpts are in Context & memory. On iPhone, Connect agent leads directly to Mac setup.
+
 # Airlock 0.11.2
 
 Choose Codex or Cursor and approve the records it may use. Airlock saves those permissions and opens the desktop app, or brings the running app forward. Airlock shows when an agent discovers its tools, makes its first call, or reads shared context. Repairing a connection preserves its existing permissions.

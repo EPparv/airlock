@@ -11,7 +11,7 @@ async function phoneQR(host, action, url, label) {
   } catch { note(host, 'Use the copy button below to open the link in Safari.'); }
 }
 
-addPage('pair-iphone', 'Pair iPhone', 'connect', async host => {
+addPage('pair-iphone', 'Pair iPhone', 'privacy', async host => {
   if (preview) {
     note(host, 'Open Airlock on your Mac to pair an iPhone.');
     return;

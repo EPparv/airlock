@@ -5,6 +5,8 @@ addPage('privacy', 'Privacy & connections', 'home', host => {
   host.append(m);
   for (const [label, key] of [
       ['Connected agents', 'connections'],
+      ['Cloud agents', 'remote-clients'],
+      ['Pair iPhone', 'pair-iphone'],
       ['Data protection', 'protection'],
       ['Apps & data', 'apps'],
       ['Approvals & activity', 'activity'],
@@ -460,7 +462,7 @@ addPage('settings', 'App settings', 'privacy', async host => {
   const native = window.webkit?.messageHandlers?.airlockSettings;
   const isOpen = preview ? false : testToken() ? (await testAPI('test-state')).personal_open : personal;
   host.append(facts([
-    ['Version', '0.11.2'],
+    ['Version', '0.11.3'],
     ['Workspace', preview ? 'Preview' : isOpen ? 'Unlocked' : 'Locked']
   ]));
   if (isOpen && testToken()) host.append(button('Lock workspace', lockWorkspace));

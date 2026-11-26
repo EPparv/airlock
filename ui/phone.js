@@ -9,7 +9,7 @@
     ++generation;
     session = ''; code = ''; nextQuery = '';
     byId('connected').hidden = true; byId('welcome').hidden = false;
-    byId('connect').hidden = true; byId('pair-help').textContent = 'Open Airlock on your Mac and choose Connect agent → Pair iPhone.';
+    byId('connect').hidden = true; byId('pair-help').textContent = 'Open Airlock on your Mac and choose Privacy & connections → Pair iPhone.';
     byId('scope').textContent = ''; byId('topic').value = ''; byId('more').hidden = true;
     byId('actions').replaceChildren(); byId('records').replaceChildren();
   }

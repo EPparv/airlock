@@ -1,6 +1,6 @@
 # Pair an iPhone with a Mac
 
-1. Open Airlock on the Mac. Under **Connect agent → Pair iPhone**, unlock your personal workspace.
+1. Open Airlock on the Mac. Under **Privacy & connections → Pair iPhone**, unlock your personal workspace.
 2. Choose **Start temporary link** and review the HTTPS provider disclosure, or choose **Use my HTTPS domain** to supply your own reverse proxy. If Airlock cannot confirm the temporary address from the Mac, scan the first code with your iPhone and type the eight digits shown in Safari back into the Mac. This checks the public address. The separate pairing step below controls access to records and actions. The bridge serves the phone and agent endpoints. The owner interface stays on the Mac.
 3. If you want to try a real read, add a simple fact in **Context & memory → Memories**. Back in **Pair iPhone**, expand **Shared records**, select that fact and choose **Create pairing link**.
 4. On the iPhone, scan the displayed code with Camera, or transfer the one-time link privately to Safari. Tap **Connect to Mac** within five minutes. Search for a word in your selected record. Safari shows the filtered text from your active Mac. No model is called by this phone view.

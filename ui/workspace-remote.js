@@ -14,7 +14,7 @@ async function startProviderCheck(id) {
   await go('provider-check', {id});
 }
 
-addPage('remote-clients', 'Cloud agents', 'connect', async host => {
+addPage('remote-clients', 'Cloud agents', 'privacy', async host => {
   if (preview) {
     note(host, 'Open Airlock on your Mac to connect a cloud agent.');
     return;
@@ -121,16 +121,21 @@ addPage('remote-bridge', 'HTTPS bridge', 'remote-clients', async host => {
 });
 
 addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, opt, bar) => {
-  if (preview) return nativeOnly('Cloud agents');
+  useDirectoryBack(host, opt);
   const name = cloudClients[opt.vendor];
   if (!name) return go('remote-clients');
   bar.querySelector('h1').textContent = name;
+  if (preview) {
+    note(host, 'Open Airlock on your Mac to connect ' + name + '.');
+    host.append(previewSetupLink());
+    return;
+  }
   const state = await api('remote-state');
   const existing = state.connections.filter(c => c.vendor === opt.vendor && c.active);
   if (existing.length && !opt.newConnection) {
     const list = section(host, 'Your connections');
     for (const grant of existing) cloudConnectionRow(list, grant);
-    host.append(button('Add another connection', () => go('remote-create', {vendor: opt.vendor, newConnection: true})));
+    host.append(button('Add another connection', () => go('remote-create', {...opt, newConnection:true})));
     return;
   }
   if (opt.vendor !== 'chatgpt' && state.mode === 'temporary' && state.enabled && !state.verified) {

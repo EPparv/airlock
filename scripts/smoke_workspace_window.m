@@ -81,6 +81,10 @@ static void checkClientLaunch(PrivacyLauncher *launcher, NSBundle *fixture, NSSt
             return [value isEqual:@"codex://threads/new"];
         },10),@"Codex received only its documented new-chat link");
     }
+    pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Manage access' && b.getClientRects().length)");
+    require([javascript(view,@"![...document.querySelectorAll('#app button, #app summary')].some(b=>/^(Save access|Revoke connection|Shared records)/.test(b.textContent) && b.getClientRects().length)") isEqual:@YES],@"new connection receipt keeps editing controls out of view");
+    click(view,@"Manage access");
+    pageHas(view,@"[...document.querySelectorAll('#app button')].some(b=>b.textContent==='Save access' && b.getClientRects().length)");
     NSString *again=[NSString stringWithFormat:@"webkit.messageHandlers.airlockSettings.postMessage({action:'open-client',agent:'%@'}).then(r=>window.reused=r.opened && r.wasRunning);true",client];
     javascript(view,again); pageHas(view,@"window.reused===true");
     require(instances().count==1 && ((NSRunningApplication *)instances().firstObject).processIdentifier==first.processIdentifier,@"second open reused the same PID");
@@ -132,7 +136,14 @@ int main(int argc,const char *argv[]) {
         require([buttons isEqual:@[@"Connect agent",@"Context & memory",@"Privacy & connections"]],@"home controls");
         javascript(view,@"document.querySelectorAll('nav button')[0].click();true");
         pageHas(view,@"document.querySelector('h1')?.textContent==='Connect agent'");
-        pageHas(view,@"['Codex','Cursor'].every(name=>[...document.querySelectorAll('button')].some(b=>b.textContent==='Connect & open '+name && b.getClientRects().length))");
+        NSArray *picker=javascript(view,@"Array.from(document.querySelectorAll('#app button:not(.back),#app a[href],#app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
+        require([picker isEqual:@[@"Connect & open Codex",@"Connect & open Cursor",@"Other agents"]],@"only three actions in the Mac agent picker");
+        click(view,@"Other agents");
+        pageHas(view,@"document.querySelector('h1')?.textContent==='Other agents'");
+        pageHas(view,@"!document.querySelector('dialog').open && !sessionStorage.getItem('private-ai-owner')");
+        javascript(view,@"Array.from(document.querySelectorAll('#app summary')).find(s=>s.textContent==='Advanced setup').click();true");
+        pageHas(view,@"['Configure Codex','Configure Cursor'].every(label=>[...document.querySelectorAll('#app button')].some(b=>(b.getAttribute('aria-label')||b.textContent)===label && b.getClientRects().length))");
+        click(view,@"Connect agent");
         require([javascript(view,@"!document.querySelector('dialog').open && location.pathname==='/workspace' && !sessionStorage.getItem('private-ai-owner')") isEqual:@YES],@"choosing Connect agent preserves the locked workspace");
         javascript(view,@"document.querySelector('.back').click();true");
         pageHas(view,@"document.querySelectorAll('nav button').length===3");

@@ -7,6 +7,7 @@ addPage('context', 'Context & memory', 'home', host => {
       ['Memories', 'memories'],
       ['Skills', 'skills'],
       ['Import context', 'import'],
+      ['Reviewed excerpts', 'excerpts'],
       ['Sources & imports', 'sources'],
       ['Proposed changes', 'proposals']
     ]) choose(m, label, key);

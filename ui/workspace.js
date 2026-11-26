@@ -423,7 +423,7 @@ async function render(navigated = true) {
   body.setAttribute('aria-busy', 'true');
   try {
     if (preview && key === 'connect' && !usingExampleAgents) {
-      note(body, 'Open Airlock to connect an AI you use, or try the controls here with fictional data.');
+      note(body, 'Connect your agent on a Mac, or try a sample here with fictional data.');
       const options = el('div', null, 'buttons');
       options.append(previewSetupLink(), button('Try sample agents', () => {
         usingExampleAgents = true;
