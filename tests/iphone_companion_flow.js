@@ -14,8 +14,9 @@ window.fetch = async (url, options) => {
   if (url === '/phone/pair') {
     exchanges++;
     const reply = await originalFetch(url, options);
+    if (!reply.ok) return reply;
     const paired = await reply.json();
-    if (!reply.ok || paired.count !== 1 || !Number.isFinite(paired.expires)) {
+    if (paired.count !== 1 || !Number.isFinite(paired.expires)) {
       throw Error('Mac pairing did not return the selected record count.');
     }
     // Simulate the previous Mac release. The one-use code has already been redeemed.

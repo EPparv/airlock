@@ -23,7 +23,9 @@
     try {
       reply = await fetch('/phone/' + action, {method:'POST', headers, body:JSON.stringify(body),
         credentials:'omit', mode:'same-origin', cache:'no-store', redirect:'error',
-        signal:controller.signal, referrerPolicy:'no-referrer'});
+        // WebKit uses this policy to populate Origin on same-origin POSTs.
+        // Send only the bridge origin, never the pairing URL or its fragment.
+        signal:controller.signal, referrerPolicy:'origin'});
       if ((reply.headers.get('Content-Type') || '').includes('application/json')) data = await reply.json();
     } catch {
       if (version !== generation) throw Error('Connection closed.');

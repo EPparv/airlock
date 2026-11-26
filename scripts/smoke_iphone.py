@@ -85,11 +85,18 @@ class TestServer(http.server.SimpleHTTPRequestHandler):
             return
         length = int(self.headers.get('Content-Length') or 0)
         headers = {k: v for k, v in self.headers.items() if k.lower() in
-                   ('host', 'content-type', 'authorization', 'origin', 'accept', 'cookie', 'content-length')}
+                   ('host', 'content-type', 'authorization', 'origin', 'accept', 'cookie', 'content-length', 'sec-fetch-site')}
         conn = http.client.HTTPConnection('127.0.0.1', self.server.fixture_port, timeout=10)
         try:
             conn.request(self.command, self.path, self.rfile.read(length) if length else None, headers)
             response = conn.getresponse()
+            if self.command == 'POST':
+                expected_origin = f'https://127.0.0.1:{self.server.server_port}'
+                origin = self.headers.get('Origin')
+                origin_kind = {None:'absent', 'null':'null', expected_origin:'same-origin'}.get(origin, 'other')
+                # Do not include URLs, form values, credential headers or private records.
+                print('iPhone WebKit companion POST:', response.status, 'origin classification:', origin_kind,
+                      flush=True)
             data = response.read()
             self.send_response(response.status)
             for key, value in response.getheaders():
