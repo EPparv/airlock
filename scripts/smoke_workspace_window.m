@@ -89,6 +89,10 @@ int main(int argc,const char *argv[]) {
         umask(0077);
         NSApplication *app=NSApplication.sharedApplication;
         if ([[NSBundle.mainBundle objectForInfoDictionaryKey:@"AirlockDisposableLaunchFixture"] boolValue]) {
+            if ([NSProcessInfo.processInfo.arguments containsObject:@"--register-disposable-fixture"]) {
+                [app finishLaunching];
+                return 0;
+            }
             static DesktopFixtureDelegate *delegate;
             delegate=[DesktopFixtureDelegate new];
             app.delegate=delegate;

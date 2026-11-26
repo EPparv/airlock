@@ -5,6 +5,7 @@ No separately installed Python or Ollama is on PATH.
 """
 import argparse
 import base64
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,38 @@ import tomllib
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request,build_opener,ProxyHandler
+
+
+@contextmanager
+def installed_fixture(window_probe, name, identifier):
+    # Modern Launch Services excludes bundles in temporary-system paths. Install in
+    # this disposable CI user's Applications folder, like the real vendor apps.
+    register='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+    apps=Path.home()/'Applications'
+    apps.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='Airlock-test-', dir=apps) as folder:
+        fixture=Path(folder)/(name+'.app')
+        executable=fixture/'Contents/MacOS/Fixture'
+        executable.parent.mkdir(parents=True)
+        shutil.copy2(window_probe,executable)
+        (fixture/'Contents/Info.plist').write_bytes(plistlib.dumps({
+            'CFBundleName':'Airlock test client','CFBundleExecutable':'Fixture',
+            'CFBundleIdentifier':identifier,'AirlockDisposableLaunchFixture':True,
+            'CFBundlePackageType':'APPL','CFBundleInfoDictionaryVersion':'6.0',
+            'CFBundleShortVersionString':'1.0','CFBundleVersion':'1','NSPrincipalClass':'NSApplication',
+            'CFBundleURLTypes':[{'CFBundleURLName':'Airlock disposable test', 'CFBundleTypeRole':'Viewer',
+                                 'LSHandlerRank':'Alternate','CFBundleURLSchemes':[name.lower()]}],
+        }))
+        subprocess.run(['/usr/bin/codesign','--force','--sign','-',fixture],check=True)
+        subprocess.run([register,'-f',fixture],check=True)
+        try:
+            # Explicit launch allows Launch Services to index a newly made bundle.
+            # It exits before the cold-start test and receives no draft or credentials.
+            subprocess.run(['/usr/bin/open','-W','-n','-a',fixture,'--args','--register-disposable-fixture'],
+                           check=True, timeout=25)
+            yield fixture
+        finally:
+            subprocess.run([register,'-u',fixture],check=False)
 
 
 def check(app, cached_runtime=None, window_probe=None):
@@ -188,26 +221,19 @@ def check(app, cached_runtime=None, window_probe=None):
             # Register test bundles with vendor IDs only on disposable hosted Macs
             # that have no matching installed app. No machine-level changes on user Macs.
             if window_probe and os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted':
-                register='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
                 for name,identifier in [('Cursor','com.todesktop.230313mzl4w4u92'),('Codex','com.openai.codex')]:
                     def resolved():
                         return subprocess.check_output([binary,'--find-installed-bundle',identifier],env=env,text=True).strip()
                     assert not resolved(), 'Refusing to register a disposable bundle over an installed agent.'
-                    fixture=Path(temp)/name/'Fixture.app'
-                    executable=fixture/'Contents/MacOS/Fixture'
-                    executable.parent.mkdir(parents=True)
-                    shutil.copy2(window_probe,executable)
-                    (fixture/'Contents/Info.plist').write_bytes(plistlib.dumps({
-                        'CFBundleName':'Airlock test client','CFBundleExecutable':'Fixture',
-                        'CFBundleIdentifier':identifier,'AirlockDisposableLaunchFixture':True,
-                        'CFBundlePackageType':'APPL','CFBundleVersion':'1','NSPrincipalClass':'NSApplication',
-                        'CFBundleURLTypes':[{'CFBundleURLName':'Airlock disposable test', 'CFBundleTypeRole':'Viewer',
-                                             'LSHandlerRank':'None','CFBundleURLSchemes':[name.lower()]}],
-                    }))
-                    subprocess.run(['/usr/bin/codesign','--force','--sign','-',fixture],check=True)
-                    subprocess.run([register,'-f',fixture],check=True)
-                    try:
-                        assert Path(resolved()).resolve()==fixture.resolve(), 'Launch Services did not register the test bundle.'
+                    with installed_fixture(window_probe, name, identifier) as fixture:
+                        deadline=time.monotonic()+20
+                        while True:
+                            actual=resolved()
+                            if actual and Path(actual).resolve()==fixture.resolve():
+                                break
+                            if time.monotonic()>=deadline:
+                                raise AssertionError(f'Launch Services resolved {identifier} to {actual or "no app"} after installing {fixture}.')
+                            time.sleep(.4)
                         api('close-personal')
                         subprocess.run([binary,'--data-dir',base,'--profile-home',home,'--no-update-check',
                                         '--test-client',fixture,name],env=env,check=True,timeout=120)
@@ -218,8 +244,6 @@ def check(app, cached_runtime=None, window_probe=None):
                         assert len(active)==1 and active[0]['installed'] and active[0]['scope']['records']==[]
                         assert not active[0]['proposals'] and not any(active[0]['device'].values())
                         assert active[0]['last_call'] is None and active[0]['last_discovery'] is None
-                    finally:
-                        subprocess.run([register,'-u',fixture],check=False)
             print(json.dumps({'passed':True,'version':launch['version'],'fresh_runtime':not bool(cached_runtime),'safe_start':True,'existing_vault_untouched':True,'guided_checks':7,'separate_client_names':True,'personal_opt_in':True,'zero_access_default':True,'old_install_migration':True,'inline_selection':True,'connection_verification':True,'mcp_retrieval':True,'approved_cross_agent_handoff':True,'personal_model_key_revoked_on_lock':True,'filtering':True,'restart_preserves_data_and_closes_personal':True,'revocation':True,'archived_executable':bool(window_probe),'native_window':bool(window_probe),'finder_ui_tested':False}))
         finally:
             if native_process and native_process.poll() is None:
