@@ -147,7 +147,7 @@ int main(int argc,const char *argv[]) {
         NSArray *buttons=javascript(view,@"Array.from(document.querySelectorAll('nav button'), b=>b.textContent)");
         require([buttons isEqual:@[@"Connect agent",@"Context & memory",@"Privacy & connections"]],@"home controls");
         javascript(view,@"document.querySelectorAll('nav button')[0].click();true");
-        pageHas(view,@"document.querySelector('h1')?.textContent==='Connect agent'");
+        pageHas(view,@"document.querySelector('h1')?.textContent==='Connect agent' && document.querySelectorAll('#app .agent-option').length===15");
         NSArray *picker=javascript(view,@"Array.from(document.querySelectorAll('#app button:not(.back),#app a[href],#app summary')).filter(b=>b.getClientRects().length).map(b=>b.getAttribute('aria-label')||b.textContent.trim())");
         for (NSString *label in @[@"Codex",@"Cursor",@"Claude Desktop",@"Claude Code",@"Meta Muse",@"OpenClaw",@"VS Code · GitHub Copilot",@"Gemini CLI",@"ChatGPT",@"Dot"])
             require([picker containsObject:label],[NSString stringWithFormat:@"%@ is directly selectable",label]);
