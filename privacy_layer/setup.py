@@ -2,10 +2,9 @@
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 from urllib.parse import urlsplit
-from .remote_tunnel import TUNNEL_PHASE, failure_phase, tunnel_binary
+from .remote_tunnel import TUNNEL_PHASE, failure_phase, tunnel_binary, valid_tunnel_id
 from .core import Denied
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -61,7 +60,7 @@ def dot_status(binary=None):
 def configure_dot(gateway,token,tunnel_id,runtime_key):
     if gateway.authenticate(token)['agent'] != 'dot':
         raise Denied('Use a Dot connection for this tunnel.')
-    if not isinstance(tunnel_id,str) or not re.fullmatch(r'tunnel_[A-Za-z0-9]{4,128}',tunnel_id):
+    if not valid_tunnel_id(tunnel_id):
         raise Denied('Enter the OpenAI tunnel ID.')
     if not isinstance(runtime_key,str) or not runtime_key.startswith('sk-') or not 8 <= len(runtime_key) <= 500:
         raise Denied('Enter the restricted OpenAI tunnel runtime key.')

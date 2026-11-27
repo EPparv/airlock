@@ -26,6 +26,11 @@ TUNNEL_PHASE = {
 }
 
 
+def valid_tunnel_id(value):
+    """OpenAI accepts a 32-character ID, optionally prefixed by a four-character namespace."""
+    return isinstance(value, str) and re.fullmatch(r'tunnel_(?:[a-z0-9]{4}_)?[a-z0-9]{32}', value) is not None
+
+
 def tunnel_binary(root=None):
     """Finder, Terminal and earlier Airlock installs can have different search paths."""
     if root:
@@ -76,7 +81,7 @@ def write_phase(state, phase):
 
 
 def run(token_file, session_file, tunnel_id, runtime_key, binary, on_phase=lambda _: None):
-    if not re.fullmatch(r'tunnel_[A-Za-z0-9]{4,128}', tunnel_id):
+    if not valid_tunnel_id(tunnel_id):
         raise ValueError('Enter a valid OpenAI tunnel ID.')
     if not runtime_key.startswith('sk-') or not 8 <= len(runtime_key) <= 500:
         raise ValueError('Enter the restricted tunnel runtime key.')

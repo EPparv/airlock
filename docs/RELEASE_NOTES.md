@@ -1,6 +1,6 @@
 # Airlock 0.11.6
 
-Reopening a ChatGPT tunnel now creates a temporary local client profile for the existing Airlock grant. You can reconnect after closing Terminal and keep the records and permissions you previously selected.
+ChatGPT and Dot accept OpenAI tunnel IDs with or without a namespace. Reopening a ChatGPT tunnel creates a temporary local client profile for the existing Airlock grant. You can reconnect after closing Terminal and keep the records and permissions you previously selected.
 
 # Airlock 0.11.5
 

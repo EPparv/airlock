@@ -36,6 +36,10 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
   await contains('Manual configuration');
   assert.ok((await evaluate("document.querySelector('#app pre')?.textContent"))?.includes('stdio'));
   await choose('Dot'); await contains('Restricted runtime key'); await contains('Connect Dot');
+  const tunnelId = 'tunnel_ab12_' + 'c'.repeat(32);
+  await type('Tunnel ID', tunnelId, '#app');
+  assert.equal(await evaluate("document.querySelector('#app input').value"), tunnelId);
+  assert.equal(await evaluate("document.querySelector('#app input').checkValidity()"), true);
   for (const name of [...cloud.keys()].filter(n=>n!=='ChatGPT')) {
     await choose(name); await contains('Start temporary link');
   }

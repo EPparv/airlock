@@ -8,12 +8,12 @@ import getpass
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import subprocess
 from .core import Gateway,EncryptedStore,Denied
 from .sources import LocalSources
 from .setup import ROOT,configure_dot
+from .remote_tunnel import valid_tunnel_id
 from .launcher import start
 
 def main():
@@ -21,7 +21,7 @@ def main():
     sources=LocalSources();gateway=Gateway(EncryptedStore(ROOT/'.private/connections.enc',sources.key),sources)
     print('Use a tunnel associated with your ChatGPT workspace. The runtime key needs only Tunnels Read + Use.')
     identifier=input('OpenAI tunnel ID: ').strip()
-    if not re.fullmatch(r'tunnel_[A-Za-z0-9]+',identifier):raise Denied('Invalid tunnel ID.')
+    if not valid_tunnel_id(identifier):raise Denied('Invalid tunnel ID.')
     token=getpass.getpass('Airlock Dot connection token (hidden): ').strip()
     if gateway.authenticate(token)['agent']!='dot':raise Denied('Choose an approved Dot connection.')
     key=getpass.getpass('OpenAI tunnel runtime key (hidden): ').strip()

@@ -155,13 +155,23 @@ def test_tunnel_export_contains_only_paths_and_uses_dedicated_profile(bundle, mo
         calls.append(args)
         return type('Result', (), {'returncode': 0})()
     monkeypatch.setattr(remote_tunnel.subprocess, 'run', record)
-    assert remote_tunnel.run(token_file, session, 'tunnel_test1234', 'sk-fictional-runtime-key', 'tunnel-client') == 0
+    assert remote_tunnel.run(token_file, session, 'tunnel_' + 'a' * 32, 'sk-fictional-runtime-key', 'tunnel-client') == 0
     assert [args[1] for args in calls] == ['init', 'doctor', 'run']
     assert all('airlock-' + created['id'] in args for args in calls)
 
 
+@pytest.mark.parametrize('value', [
+    None, 'tunnel_abc', 'tunnel_' + 'a' * 31, 'tunnel_' + 'a' * 33, 'tunnel_' + 'A' * 32,
+    'tunnel_abc_' + 'a' * 32, 'tunnel_abcde_' + 'a' * 32, 'tunnel_AB12_' + 'a' * 32,
+    'tunnel_ab12_' + 'a' * 31, 'tunnel_ab12_' + 'a' * 32 + '/', 'tunnel_ab12_' + 'a' * 32 + '\n',
+])
+def test_invalid_tunnel_id(value):
+    assert not remote_tunnel.valid_tunnel_id(value)
+
+
+@pytest.mark.parametrize('tunnel_id', ['tunnel_' + 'b' * 32, 'tunnel_ab12_' + 'b' * 32])
 @pytest.mark.skipif(not os.environ.get('AIRLOCK_TEST_TUNNEL_CLIENT'), reason='official tunnel-client executable required')
-def test_reopen_chatgpt_with_official_tunnel_client(tmp_path, monkeypatch):
+def test_reopen_chatgpt_with_official_tunnel_client(tmp_path, monkeypatch, tunnel_id):
     binary = os.environ['AIRLOCK_TEST_TUNNEL_CLIENT']
     profile_id = 'a' * 32
     token = tmp_path/f'chatgpt-{profile_id}.token'
@@ -182,13 +192,13 @@ def test_reopen_chatgpt_with_official_tunnel_client(tmp_path, monkeypatch):
         directory = Path(args[args.index('--profile-dir')+1])
         contents = (directory/f'airlock-{profile_id}.yaml').read_text()
         assert directory.stat().st_mode & 0o777 == 0o700
-        assert token.name in contents and 'env:CONTROL_PLANE_API_KEY' in contents
+        assert tunnel_id in contents and token.name in contents and 'env:CONTROL_PLANE_API_KEY' in contents
         assert 'sk-offline-test' not in contents
         prepared.append(directory)
         return subprocess.CompletedProcess(args, 0)
     monkeypatch.setattr(remote_tunnel.subprocess, 'run', offline_run)
     for _ in range(2):
-        assert remote_tunnel.run(token, session, 'tunnel_'+'b'*32, 'sk-offline-test', binary) == 0
+        assert remote_tunnel.run(token, session, tunnel_id, 'sk-offline-test', binary) == 0
     assert len(set(prepared)) == 2 and not any(directory.exists() for directory in prepared)
     assert legacy.read_text() == 'owner configuration'
 
