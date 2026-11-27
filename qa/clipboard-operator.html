@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XSBZ36IIHZsou8sBV0kusogzQoP8nK9ZHs8vYPQp8qU='; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Airlock empty workspace verification</title></head>
+<body><main><h1>Airlock empty workspace verification</h1>
+<p>Use the disposable configuration only in the provider’s private connector settings.</p>
+<p><button type="button" id="marker">Test clipboard</button> <button type="button" id="generate">Generate public key</button></p>
+<p><label>Public key <textarea id="public" readonly rows="4" cols="55"></textarea></label></p>
+<p><label>Encrypted test configuration <input id="file" type="file" accept=".json,application/json"></label></p>
+<p><button type="button" id="unlock" disabled>Unlock test configuration</button></p>
+<p><button type="button" id="copy" disabled>Copy test configuration</button> <button type="button" id="clear">Clear clipboard</button></p>
+<p role="status" id="status">Generate a key for this tab.</p></main><script>'use strict';
+(() => {
+  const get = id => document.getElementById(id);
+  const tell = message => { get('status').textContent = message; };
+  const aad = new TextEncoder().encode('airlock-integration-v1');
+  const labels = {muse:'Copy for Muse', manus:'Copy for Manus'};
+  let privateKey, grant, expiryTimer;
+  const b64 = bytes => btoa(String.fromCharCode(...bytes));
+  function unb64(value, maxSize) {
+    if (typeof value !== 'string' || !value || value.length > maxSize || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw Error();
+    return Uint8Array.from(atob(value), c => c.charCodeAt(0));
+  }
+  function forgetGrant() {
+    clearTimeout(expiryTimer);
+    grant = undefined;
+    get('copy').disabled = true;
+    get('copy').textContent = 'Copy test configuration';
+  }
+  function forget() {
+    forgetGrant();
+    privateKey = undefined;
+    get('public').value = '';
+    get('file').value = '';
+    get('unlock').disabled = true;
+  }
+  function validGrant(item) {
+    if (!item || !Object.hasOwn(labels,item.vendor) ||
+        item.origin !== location.origin || !/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(item.origin) ||
+        item.url !== item.origin + (item.vendor === 'muse' ? '/openapi.json' : '/mcp') ||
+        typeof item.token !== 'string' || !/^pal_[A-Za-z0-9_-]{43}$/.test(item.token) ||
+        !Number.isFinite(item.expires)) return false;
+    const remaining = item.expires * 1000 - Date.now();
+    return remaining > 0 && remaining <= 3600000;
+  }
+  get('marker').onclick = async () => {
+    try { await navigator.clipboard.writeText('Airlock QA clipboard check'); tell('Test marker copied.'); }
+    catch { tell('Clipboard permission is unavailable.'); }
+  };
+  get('generate').onclick = async () => {
+    forget(); get('generate').disabled = true;
+    try {
+      const keys = await crypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:3072,
+        publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},false,['encrypt','decrypt']);
+      if (keys.privateKey.extractable) throw Error();
+      const exported = await crypto.subtle.exportKey('spki',keys.publicKey);
+      privateKey = keys.privateKey;
+      get('public').value = b64(new Uint8Array(exported));
+      tell('Public key ready. Select the encrypted test configuration.');
+    } catch { tell('Could not generate the private tab key.'); }
+    finally { get('generate').disabled = false; }
+  };
+  get('file').onchange = () => {
+    forgetGrant();
+    get('unlock').disabled = !(privateKey && get('file').files.length === 1);
+    tell(get('unlock').disabled ? 'Generate a tab key and select an encrypted file.' : 'Encrypted file selected.');
+  };
+  get('unlock').onclick = async () => {
+    const file = get('file').files[0];
+    const tabKey = privateKey;
+    forgetGrant();
+    get('unlock').disabled = true;
+    let rawKey, clear;
+    try {
+      if (!file || !tabKey || file.size > 12000) throw Error();
+      const box = JSON.parse(await file.text());
+      const wrapped = unb64(box.wrapped,512), iv = unb64(box.iv,16), cipher = unb64(box.data,9000);
+      if (wrapped.length !== 384 || iv.length !== 12) throw Error();
+      rawKey = new Uint8Array(await crypto.subtle.decrypt({name:'RSA-OAEP'},tabKey,wrapped));
+      if (rawKey.length !== 32) throw Error();
+      const aes = await crypto.subtle.importKey('raw',rawKey,{name:'AES-GCM'},false,['decrypt']);
+      clear = new Uint8Array(await crypto.subtle.decrypt({name:'AES-GCM',iv,additionalData:aad},aes,cipher));
+      const item = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(clear));
+      if (privateKey !== tabKey || get('file').files[0] !== file || !validGrant(item)) throw Error();
+      grant = item;
+      get('copy').textContent = labels[item.vendor];
+      get('copy').disabled = false;
+      expiryTimer = setTimeout(() => { forget(); tell('Configuration expired.'); }, item.expires*1000 - Date.now());
+      tell('Ready for the private provider form.');
+    } catch { tell('Could not unlock this file. Verify its origin, tab key and expiry.'); }
+    finally {
+      rawKey?.fill(0); clear?.fill(0);
+      get('unlock').disabled = !(privateKey && get('file').files.length === 1);
+    }
+  };
+  get('copy').onclick = async () => {
+    if (!validGrant(grant)) { forget(); tell('Configuration expired.'); return; }
+    const value = grant.vendor === 'muse' ? grant.token : JSON.stringify({mcpServers:{'Airlock verification':{
+      type:'streamableHttp',url:grant.url,headers:{Authorization:'Bearer '+grant.token}
+    }}});
+    try { await navigator.clipboard.writeText(value); tell('Configuration copied for the private provider form.'); }
+    catch { tell('Clipboard permission is unavailable. No value was displayed.'); }
+  };
+  get('clear').onclick = async () => {
+    forget();
+    try { await navigator.clipboard.writeText(''); tell('Clipboard and local configuration cleared.'); }
+    catch { tell('Local configuration cleared. Clipboard access is unavailable.'); }
+  };
+  window.addEventListener('pagehide',forget);
+  window.addEventListener('pageshow',e=>{ if (e.persisted) { forget(); tell('Generate a new tab key.'); } });
+})();
+</script></body></html>
