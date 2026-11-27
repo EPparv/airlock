@@ -1,0 +1,187 @@
+name: Empty Muse status session
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: empty-test/provider-muse-dc4f16d37ccf
+  cancel-in-progress: false
+jobs:
+  host:
+    name: Disposable Mac tunnel
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: .
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: pip
+        cache-dependency-path: requirements.lock
+    - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
+    - name: Wait until the independent device is ready
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-ready-$GITHUB_RUN_ATTEMPT\" --peer \"External\
+        \ HTTPS witness\" --seconds 1100\n"
+    - name: Start the empty, expiring agent bridge on the Mac
+      run: 'set -eu
+
+        route_dir="$RUNNER_TEMP/airlock-route"
+
+        umask 077
+
+        nohup python -u scripts/vendor_session.py "$route_dir" tests/vendor-session-recipient.pem
+        muse > "$route_dir/host.log" 2>&1 < /dev/null &
+
+        echo $! > "$route_dir/host.pid"
+
+        python scripts/smoke_quick_link.py wait-file "$route_dir" --name offer.json
+        --seconds 210
+
+        '
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/offer.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Wait for the independent HTTPS proof
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-proof-$GITHUB_RUN_ATTEMPT\" --peer \"External\
+        \ HTTPS witness\" --seconds 390\n"
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_7_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_2
+      if: steps.download_7_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_7_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-proof
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_7_3
+      if: steps.download_7_2.outcome == 'failure'
+    - name: Deliver the public challenge response to the Mac owner
+      run: mv "$RUNNER_TEMP/airlock-proof/proof.json" "$RUNNER_TEMP/airlock-route/proof.json"
+    - name: Wait for the encrypted operator handoff
+      run: python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route"
+        --name sealed.json --seconds 60
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sealed-vendor-session-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/sealed.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Wait for a status result or expiration
+      run: python scripts/smoke_quick_link.py wait-file "$RUNNER_TEMP/airlock-route"
+        --name receipt.json --seconds 1260
+    - uses: actions/upload-artifact@v4
+      with:
+        name: vendor-receipt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/receipt.json
+        retention-days: 1
+        if-no-files-found: error
+    - name: Stop any remaining disposable service
+      if: always()
+      run: 'dir="$RUNNER_TEMP/airlock-route"
+
+        if test -f "$dir/host.pid" && ! test -f "$dir/receipt.json"; then touch "$dir/stop";
+        kill -TERM "$(cat "$dir/host.pid")" 2>/dev/null || true; fi
+
+        if test -f "$dir/host.log"; then cat "$dir/host.log"; fi'
+  witness:
+    name: External HTTPS witness
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Mark the independent runner ready
+      run: 'mkdir -p "$RUNNER_TEMP/airlock-route"
+
+        echo ready > "$RUNNER_TEMP/airlock-route/ready"
+
+        '
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-ready-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/ready
+        retention-days: 1
+    - name: Wait for the Mac offer
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: "python3 scripts/smoke_quick_link.py wait-artifact \"$RUNNER_TEMP/airlock-route\"\
+        \ \\\n  --name \"airlock-route-offer-$GITHUB_RUN_ATTEMPT\" --peer \"Disposable\
+        \ Mac tunnel\" --seconds 1350\n"
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_1
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_5_1.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_2
+      if: steps.download_5_1.outcome == 'failure'
+      continue-on-error: true
+    - name: Wait for cross-job artifact visibility
+      if: steps.download_5_2.outcome == 'failure'
+      run: sleep 10
+    - uses: actions/download-artifact@v4
+      with:
+        name: airlock-route-offer-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route
+        github-token: ${{ github.token }}
+        run-id: ${{ github.run_id }}
+      id: download_5_3
+      if: steps.download_5_2.outcome == 'failure'
+    - name: Read the disposable challenge over public HTTPS
+      run: python3 scripts/smoke_quick_link.py witness "$RUNNER_TEMP/airlock-route"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: airlock-route-proof-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/airlock-route/proof.json
+        retention-days: 1
+        if-no-files-found: error
+'on':
+  push:
+    branches:
+    - test/provider-muse-dc4f16d37ccf
