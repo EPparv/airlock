@@ -2,9 +2,9 @@
 
 Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives selected, locally filtered context. Sensitive records use private tasks with separate input and result approvals. Useful preferences stay available across sessions.
 
-[Download the Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip)
+[Download the Mac tester](https://epparv.github.io/airlock/Airlock_Mac_Latest.zip)
 
-Version **0.11.7** opens in its own Mac window. The home screen has three controls.
+Version **0.11.8** opens in its own Mac window. The home screen has three controls.
 
 ## The workspace
 
@@ -16,7 +16,7 @@ Only tools routed through Airlock use these policies. Free-text detection is bes
 
 ## Test on iPhone
 
-Open [the iPhone sample](https://try-airlock.parv223885.chatgpt.site/#sample) in Safari. Switch between the writing and planning agents to see which fictional memory each can read. Revoke one agent and switch back to the other. The sample runs in memory and resets when you leave. Anyone with the link can try it without an account.
+Open [the iPhone sample](https://epparv.github.io/airlock/iphone/#sample) in Safari. Switch between the writing and planning agents to see which fictional memory each can read. Revoke one agent and switch back to the other. The sample runs in memory and resets when you leave. Anyone with the link can try it without an account.
 
 On iPhone, **Connect agent → Set up on Mac** shares the Mac setup link. To test permissions with your own iPhone vault, open **Privacy & connections → Local test sessions**. Safari stores this vault on your device. Clearing website data removes it. To use Mac records on your phone, open **Privacy & connections → Pair iPhone** on the Mac, enable the HTTPS bridge, select records, and scan the one-time code. You can request an assigned action from your phone and approve it on your Mac.
 
@@ -42,7 +42,7 @@ Managed connections from an earlier Airlock installation are migrated to the ins
 
 ## Connect cloud agents and hand work to another agent
 
-Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
+Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, choose **Copy Manus configuration** in Airlock and paste it into **Connectors → Create → Import MCP by JSON** in Manus. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
 
 Under **Privacy & connections → Approvals & activity → Agent handoffs**, give one agent an assignment and choose who should receive the outcome. The worker claims the assignment and submits a report. You review and release the exact text for the second agent. Each agent uses its own permissions, and a separately approved memory proposal can outlive the handoff.
 

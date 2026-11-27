@@ -73,9 +73,10 @@ addPage('provider-check', 'Connection test', 'provider-checks', async (host, opt
     }
   } else if (status.vendor === 'muse') {
     note(help, 'Ask Muse to use your personal custom connector. Verify the current HTTPS schema URL ends in /openapi.json and the Airlock credential was saved in the connector’s secure authentication settings.');
+  } else if (status.vendor === 'manus') {
+    note(help, 'In Manus, check that the Airlock connector is enabled. To reinstall it, open Connectors → Create → Import MCP by JSON and paste the configuration you saved. If you lost the token, replace it below.');
   } else {
     note(help, 'Check your current HTTPS address ends in /mcp. Use this connection’s bearer token in the client’s authentication settings and refresh its tools.');
-    if (status.vendor === 'manus') note(help, 'In Manus, open Connectors and check the Airlock server before requesting the code.');
   }
   if (status.url) {
     const url = field(help, 'Configured endpoint', input('url', status.url));

@@ -7,7 +7,7 @@ For Meta Muse and Manus, **Sign in or create an account** opens the provider in 
 | Agent | On first use | After setup |
 | --- | --- | --- |
 | Meta Muse | Airlock opens Muse and puts a setup request on the Mac clipboard. Paste it into Muse. Enter the schema URL in connector setup and the token in its secure credential prompt. | Opens Muse and prepares a status request to paste. |
-| Manus | Airlock opens Manus. In **Connectors → Create → Add MCP by URL**, enter the server URL and store the token in the authentication settings. | Opens Manus and prepares a status request to paste. |
+| Manus | Choose **Copy Manus configuration** in Airlock. In **Connectors → Create → Import MCP by JSON** in Manus, paste the configuration and save. It contains the HTTPS endpoint and this connection’s bearer token. | Opens Manus and prepares a status request to paste. |
 | ChatGPT | Airlock opens Plugins and starts local tunnel setup in Terminal. Associate your dedicated tunnel with the workspace, then install the private plugin. | Opens ChatGPT and prepares a status request to paste. Keep your tunnel running. |
 | IronClaw | Enter the URL of your own IronClaw. In **Extensions → Registry → Add MCP server**, enter Airlock’s server URL and choose bearer authentication. Install the extension and enter its token in setup. | Opens your saved IronClaw address and prepares a status request to paste. |
 | Other remote MCP client | In the app you use, add the provided server URL and save the token under bearer authentication. | Open your app and use its Airlock connection. |

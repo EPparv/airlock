@@ -1,6 +1,6 @@
 # Test Airlock on iPhone
 
-Open the public Airlock workspace in Safari. **Try a sample** lets anyone try two fictional agents without signing in. **Connect agent → Set up on Mac** sends the setup link to the Mac that will run your agent. For a one-time share, open **Context & memory → Share an excerpt** to review and copy filtered text. [Open Airlock](https://try-airlock.parv223885.chatgpt.site)
+Open the public Airlock workspace in Safari. **Try a sample** lets anyone try two fictional agents without signing in. **Connect agent → Set up on Mac** sends the setup link to the Mac that will run your agent. For a one-time share, open **Context & memory → Share an excerpt** to review and copy filtered text. [Open Airlock](https://epparv.github.io/airlock/iphone/)
 
 To test access to memories in your encrypted iPhone vault, use fictional records. These sessions run locally in Safari.
 

@@ -163,10 +163,11 @@ def test_first_dot_connection_issues_own_zero_scope_and_uses_current_port(bundle
         return SimpleNamespace(returncode=0, stdout=json.dumps(state), stderr='')
     monkeypatch.setattr(setup.subprocess, 'run', process)
     remote = RemoteClients(gateway, FakeListener())
-    request = dict(approved=True, tunnel_id='tunnel_example', runtime_key='sk-only-for-this-test')
+    request = dict(approved=True, tunnel_id='tunnel_ab12_' + 'c' * 32, runtime_key='sk-only-for-this-test')
     first = remote.owner('remote-connect-dot', request)
     assert first['opened'] and not any(k in first for k in ('credential','token','runtime_key'))
     args, options = calls[0]
+    assert args[args.index('--tunnel-id')+1] == request['tunnel_id']
     assert args[args.index('--mcp-server-url')+1] == 'http://127.0.0.1:34909/mcp'
     token = (root/'dot.token').read_text()
     assert token not in str(args) and request['runtime_key'] not in str(args)
@@ -200,17 +201,18 @@ def test_dot_setup_retries_after_missing_client_unopened_session_and_failed_prov
     monkeypatch.setattr(setup, 'ROOT', root)
     monkeypatch.setattr(setup, 'tunnel_binary', lambda _:None)
     never = Mock()
+    tunnel_id = 'tunnel_' + 'a' * 32
     monkeypatch.setattr(remote_clients, 'open_provider', never)
     with pytest.raises(Denied, match='Install'):
-        remote.connect_dot('tunnel_test', 'sk-test-key', True)
+        remote.connect_dot(tunnel_id, 'sk-test-key', True)
     assert not gateway.list_grants()
     monkeypatch.setattr(setup, 'tunnel_binary', lambda _:'/usr/local/bin/tunnel-client')
     with pytest.raises(Denied, match='Open your Airlock workspace'):
-        remote.connect_dot('tunnel_test', 'sk-test-key', True)
+        remote.connect_dot(tunnel_id, 'sk-test-key', True)
     (root/'launch.json').write_text('{"mcp_url":"http://127.0.0.1:34001/mcp"}')
     monkeypatch.setattr(setup.subprocess, 'run', lambda *a, **kw:SimpleNamespace(returncode=1, stdout='HTTP 403',stderr='secret text'))
     with pytest.raises(Denied, match='restricted runtime key') as err:
-        remote.connect_dot('tunnel_test', 'sk-test-key', True)
+        remote.connect_dot(tunnel_id, 'sk-test-key', True)
     assert 'secret text' not in str(err.value) and not (root/'dot.token').exists()
     assert all(g['revoked'] for g in gateway.list_grants())
     assert not setup.saved_dot_available(gateway)
@@ -250,7 +252,7 @@ def test_tunnel_doctor_reports_rate_limit_without_secret_or_retry(bundle, monkey
     monkeypatch.setattr(remote_tunnel.subprocess, 'run', process)
     phases = []
     with pytest.raises(ValueError, match='429') as error:
-        remote_tunnel.run(token,session,'tunnel_test','sk-test-key','tunnel-client',phases.append)
+        remote_tunnel.run(token,session,'tunnel_' + 'a' * 32,'sk-test-key','tunnel-client',phases.append)
     assert phases == ['checking','rate'] and process.call_count == 2
     assert 'private diagnostic' not in str(error.value) and 'sk-test-key' not in str(error.value)
 

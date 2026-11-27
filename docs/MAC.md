@@ -1,6 +1,6 @@
 # Mac app: first-use acceptance
 
-[Download the current Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip). No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. The download page reports notarization for the current release. Pull-request test builds use an ad-hoc signature.
+[Download the current Mac tester](https://epparv.github.io/airlock/Airlock_Mac_Latest.zip). No Terminal, separately installed Python or Ollama is required for the context flow. First runtime setup needs internet. The download page reports notarization for the current release. Pull-request test builds use an ad-hoc signature.
 
 ## Start with fictional data
 

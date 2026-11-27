@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 
 
 TUNNEL_PHASE = {
@@ -23,6 +24,11 @@ TUNNEL_PHASE = {
     'auth':'OpenAI rejected the tunnel credentials. Check the restricted runtime key, the workspace association and Tunnels Read and Use.',
     'failed':'The tunnel did not start. Check the tunnel ID, network and workspace permissions.',
 }
+
+
+def valid_tunnel_id(value):
+    """OpenAI accepts a 32-character ID, optionally prefixed by a four-character namespace."""
+    return isinstance(value, str) and re.fullmatch(r'tunnel_(?:[a-z0-9]{4}_)?[a-z0-9]{32}', value) is not None
 
 
 def tunnel_binary(root=None):
@@ -75,7 +81,7 @@ def write_phase(state, phase):
 
 
 def run(token_file, session_file, tunnel_id, runtime_key, binary, on_phase=lambda _: None):
-    if not re.fullmatch(r'tunnel_[A-Za-z0-9]{4,128}', tunnel_id):
+    if not valid_tunnel_id(tunnel_id):
         raise ValueError('Enter a valid OpenAI tunnel ID.')
     if not runtime_key.startswith('sk-') or not 8 <= len(runtime_key) <= 500:
         raise ValueError('Enter the restricted tunnel runtime key.')
@@ -86,18 +92,22 @@ def run(token_file, session_file, tunnel_id, runtime_key, binary, on_phase=lambd
     bridge = Path(__file__).with_name('stdio.py')
     command = shlex.join([sys.executable, str(bridge), '--token-file', str(token_file), '--session-file', str(session_file)])
     profile = 'airlock-' + token_file.stem.split('-', 1)[1]
-    env = {**os.environ, 'CONTROL_PLANE_API_KEY':runtime_key}
     on_phase('checking')
-    for args in (['init', '--sample', 'sample_mcp_stdio_local', '--profile', profile,
-                  '--tunnel-id', tunnel_id, '--mcp-command', command], ['doctor', '--profile', profile, '--explain']):
-        result = subprocess.run([binary, *args], env=env, capture_output=True, timeout=45)
-        if result.returncode:
-            detail = (result.stderr + result.stdout).decode('utf-8', errors='replace')
-            phase = failure_phase(detail)
-            on_phase(phase)
-            raise ValueError(TUNNEL_PHASE[phase])
-    on_phase('running')
-    return subprocess.run([binary, 'run', '--profile', profile], env=env).returncode
+    # init refuses existing profiles. Keep the generated configuration private
+    # to this run and reuse the persistent Airlock grant on every reconnect.
+    with tempfile.TemporaryDirectory(prefix='airlock-chatgpt-') as profile_dir:
+        env = {**os.environ, 'CONTROL_PLANE_API_KEY':runtime_key}
+        selection = ['--profile', profile, '--profile-dir', profile_dir]
+        for args in (['init', '--sample', 'sample_mcp_stdio_local', *selection,
+                      '--tunnel-id', tunnel_id, '--mcp-command', command], ['doctor', *selection, '--explain']):
+            result = subprocess.run([binary, *args], env=env, capture_output=True, timeout=45)
+            if result.returncode:
+                detail = (result.stderr + result.stdout).decode('utf-8', errors='replace')
+                phase = failure_phase(detail)
+                on_phase(phase)
+                raise ValueError(TUNNEL_PHASE[phase])
+        on_phase('running')
+        return subprocess.run([binary, 'run', *selection], env=env).returncode
 
 
 def main():

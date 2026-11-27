@@ -189,6 +189,21 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  assert.equal(cursorGrants.length,1);assert.deepEqual(cursorGrants[0].scope,savedCursor.scope);
  assert.equal(cursorGrants[0].last_discovery,null);assert.equal(cursorGrants[0].last_call,null);
  assert.deepEqual(launched(),['cursor','cursor','cursor']);
+ // Drive the handoff through initialization, tool listing and the first successful call.
+ // Each snapshot is a fixture, independent of any installed agent or model account.
+ const sampleStatus = {status:'waiting', last_initialized:1, last_discovery:null, last_call:null};
+ const statusReply = () => ({
+   responseCode:200, responseHeaders:[{name:'Content-Type',value:'application/json'}],
+   body:Buffer.from(JSON.stringify(sampleStatus)).toString('base64')
+ });
+ interceptedReply = statusReply();
+ await send('Fetch.enable',{patterns:[{urlPattern:`http://127.0.0.1:${port}/api/client-status`,requestStage:'Request'}]},session);
+ for (const [title, update] of [['Session opened',{}], ['Tools discovered',{last_discovery:2}], ['Connected',{last_call:3}]]) {
+   Object.assign(sampleStatus, update);
+   interceptedReply = statusReply();
+   await until("document.querySelector('.handoff-status')?.textContent===" + JSON.stringify(title));
+ }
+ await send('Fetch.disable',{},session);interceptedReply=null;
  await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Sensitive Pilot Code','#app');await btn('Save phrases');await until("document.getElementById('notice').textContent==='Private phrases saved.'");
  await byText('summary','Test redaction');await type('Sample','Write to test@example.org about Sensitive Pilot Code.','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.length>0");
  const redacted=await evaluate("document.querySelector('#app pre').textContent");assert.ok(!redacted.includes('test@example.org')&&!redacted.includes('Sensitive Pilot Code'));
@@ -317,7 +332,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
    await until("document.querySelector('.preview-note') && document.querySelectorAll('nav button').length===3");assert.deepEqual(await labels(),controls);
    await btn('Context & memory');await btn('Import context');await type('Paste context','Remember the demo date.','#app');await btn('Review import');await sheet('Add selected records');await sheet('View memories');await contains('Remember the demo date.');
    await home();await btn('Connect agent');
-   assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://try-airlock.parv223885.chatgpt.site/#connect');
+   assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://epparv.github.io/airlock/iphone/#connect');
    assert.equal((await visibleActions()).some(label=>pickerChoices.includes(label)),false);
    await btn('Try sample agents');await matchesPicker();await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
    await pickerTests.offlineChoices({home,btn,titled,contains,evaluate,until});
