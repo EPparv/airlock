@@ -39,6 +39,45 @@ function cloudValue(host, label, value, type = 'text') {
   }));
 }
 
+function manusSetup(host, receipt) {
+  if (!receipt.credential) {
+    note(host, 'Use the Airlock connector in Manus or import the configuration you saved. If you lost it, open Test or recover connection, then Connection help → Lost the token?');
+    return;
+  }
+  note(host, 'In Manus, choose Connectors → Create → Import MCP by JSON. Paste the configuration into that form. It contains your Airlock token.');
+  let manual;
+  const copy = button('Copy Manus configuration', async () => {
+    const server = {type:'streamableHttp', url:receipt.url, headers:{Authorization:'Bearer ' + receipt.credential}};
+    const config = JSON.stringify({mcpServers:{Airlock:server}}, null, 2);
+    try {
+      await navigator.clipboard.writeText(config);
+      manual?.remove();
+      flash('Manus configuration copied.');
+    } catch {
+      manual?.remove();
+      manual = el('div', null, 'form');
+      copy.after(manual);
+      note(manual, 'Choose Copy from the Edit menu or press Command-C on your Mac.');
+      const selected = field(manual, 'Manual copy', input('text', 'Airlock configuration'));
+      selected.readOnly = true;
+      selected.addEventListener('copy', event => {
+        if (!event.clipboardData) return;
+        event.clipboardData.setData('text/plain', config);
+        event.preventDefault();
+        manual.remove();
+        copy.focus();
+        flash('Manus configuration copied.');
+      });
+      selected.focus();
+      selected.select();
+    }
+  }, 'primary');
+  host.append(copy);
+  const values = details(host, 'Connection values');
+  cloudValue(values, 'Server URL', receipt.url, 'url');
+  cloudValue(values, 'Bearer token · shown once', receipt.credential, 'password');
+}
+
 function hostedSignIn(host, vendor, setup, initial) {
   const label = setup ? 'Continue in ' + cloudClients[vendor] : 'Sign in or create an account';
   let fallback;
@@ -148,9 +187,10 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
       if (receipt.helper_installed === false) addTunnelDownload(host);
       host.append(button('Open tunnel setup', () => openCloudTunnel(host, opt.id), 'primary'));
     }
+  } else if (setup && opt.vendor === 'manus') {
+    manusSetup(host, receipt);
   } else if (setup) {
     const next = {
-      manus:'In Manus, choose Connectors → Create → Add MCP by URL. Enter the server URL and save the bearer token in its authentication settings.',
       muse:'Enter your schema URL in the custom connector setup. Save the bearer token in Muse’s secure credential prompt.',
       ironclaw:'In Extensions → Registry, choose Add MCP server. Enter the Server URL and select Bearer token. Install Airlock and save its token in IronClaw’s setup form.',
       custom:'Add a Streamable HTTP MCP server in your app. Save the token in its bearer authentication settings.'
@@ -164,7 +204,7 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
     const recovery = {
       chatgpt:'Select the installed Airlock plugin in the correct ChatGPT workspace. Under Connection details you can check the local tunnel and reopen it.',
       muse:'Check that the custom connector has the current schema URL and that Muse saved the bearer token in its credential store.',
-      manus:'In Manus Connectors, open your Airlock server and check its URL and bearer authentication.',
+      manus:'In Manus Connectors, check that the Airlock server imported from your JSON is enabled.',
       ironclaw:'In your IronClaw instance, check that the Airlock extension is installed and its bearer token is configured.',
       custom:'Check the server URL and bearer authentication settings in your MCP app.'
     };
@@ -190,7 +230,7 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
   if (setup && receipt?.state === 'existing' && opt.vendor !== 'chatgpt') {
     const status = await api('provider-check-state', {id:opt.id});
     if (status.url) cloudValue(host, opt.vendor === 'muse' ? 'Schema URL' : 'Server URL', status.url, 'url');
-    note(host, 'Use the token you saved when this connection was created. If you lost it, open connection recovery.');
+    if (opt.vendor !== 'manus') note(host, 'Use the token you saved when this connection was created. If you lost it, open connection recovery.');
   }
 });
 
@@ -409,6 +449,7 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
     const result = await api('remote-create', {vendor: opt.vendor, ...getLimits()});
     const destination = go('provider-check', {id: result.id});
     const f = modal('Connect ' + name);
+    if (hostedSignupVendors.includes(opt.vendor)) hostedSignIn(f, opt.vendor, true);
     if (opt.vendor === 'chatgpt') {
       note(f, 'Install OpenAI’s tunnel-client on your Mac. Run this command in Terminal, enter your dedicated tunnel ID and restricted runtime key, and leave the process running.');
       const cmd = field(f, 'Terminal command', el('textarea'));
@@ -416,11 +457,11 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       cmd.readOnly = true;
       f.append(button('Copy command', () => copyText(result.command)));
       note(f, 'In ChatGPT on the web, open Plugins → + → Add custom MCP server. Choose Tunnel, select the same tunnel and choose No authentication. Create and install the plugin.');
+    } else if (opt.vendor === 'manus') {
+      manusSetup(f, result);
     } else {
-      if (hostedSignupVendors.includes(opt.vendor)) hostedSignIn(f, opt.vendor, true);
       note(f, opt.vendor === 'muse' ?
         'Paste the setup request into Muse. When Muse opens its secure credential prompt, enter the token there.' :
-        opt.vendor === 'manus' ? 'In Manus, choose Connectors → Create → Add MCP by URL. Save the token in its authentication settings.' :
         opt.vendor === 'ironclaw' ? 'In your IronClaw instance, open Extensions → Registry → Add MCP server. Choose bearer authentication, install the extension, then enter the token in its setup form.' :
         'Add this URL as a Streamable HTTP MCP server. Set Authorization to Bearer followed by the token in the client’s secret settings.');
       if (result.manifest) {

@@ -4,6 +4,8 @@ ChatGPT and Dot accept OpenAI tunnel IDs with or without a namespace. Reopening 
 
 The connection screen now shows when an agent has opened a session or discovered Airlock’s tools. It shows Connected once the agent calls a tool successfully.
 
+New Manus connections include **Copy Manus configuration**. Paste it into **Connectors → Create → Import MCP by JSON** in Manus to add the server and its scoped credential together.
+
 # Airlock 0.11.7
 
 You can open Meta Muse or Manus from Airlock and create an account before starting the HTTPS bridge. If sign-in closes the tab or redirects you away from connector setup, reopen the provider from the same connection.

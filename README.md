@@ -42,7 +42,7 @@ Managed connections from an earlier Airlock installation are migrated to the ins
 
 ## Connect cloud agents and hand work to another agent
 
-Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, use a private HTTPS MCP endpoint. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
+Open **Connect agent** and choose a provider under **Online**. For Meta Muse, open the custom API connector flow. For Manus, choose **Copy Manus configuration** in Airlock and paste it into **Connectors → Create → Import MCP by JSON** in Manus. ChatGPT uses an owner-configured Secure MCP Tunnel. Start with an empty scope, choose the records a connection needs, then check its last successful request. The Mac must be awake and unlocked in Airlock. See [cloud agent setup](docs/REMOTE_CLIENTS.md).
 
 Under **Privacy & connections → Approvals & activity → Agent handoffs**, give one agent an assignment and choose who should receive the outcome. The worker claims the assignment and submits a report. You review and release the exact text for the second agent. Each agent uses its own permissions, and a separately approved memory proposal can outlive the handoff.
 

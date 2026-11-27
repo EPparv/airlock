@@ -31,6 +31,50 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
       JSON.stringify('Open ' + name + ' in your browser') + ").map(a=>a.href)");
     assert.deepEqual(links, [url]);
   }
+  // Use an in-memory clipboard for this disposable workspace. No provider or
+  // operating-system clipboard is touched by either copy path.
+  async function testClipboard() {
+    await evaluate(`window.manusClipboard = {writes:0, value:'', denied:false};
+      Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{
+        async writeText(text) {
+          if (manusClipboard.denied) throw new DOMException('Clipboard denied', 'NotAllowedError');
+          manusClipboard.writes++; manusClipboard.value = text;
+        }
+      }})`);
+  }
+  async function verifyManusImport(area) {
+    const label = 'Copy Manus configuration';
+    const matches = `(() => {
+      const token = document.querySelector(${JSON.stringify(area)}).querySelector('input[type=password]').value;
+      const surfaces = [document.body.textContent, document.body.innerHTML, location.href,
+        JSON.stringify(history.state), JSON.stringify(localStorage), JSON.stringify(sessionStorage),
+        ...Array.from(document.querySelectorAll('input:not([type=password]),textarea'), e => e.value)];
+      if (!/^pal_[A-Za-z0-9_-]{43}$/.test(token) || surfaces.some(text => text.includes(token))) {
+        throw Error('The bearer token was missing or exposed outside its masked field');
+      }
+      return JSON.parse(manusClipboard.value.replaceAll(token, 'test-token'));
+    })()`;
+    const expected = {mcpServers:{Airlock:{type:'streamableHttp', url:'https://browser-check.example.org/mcp',
+      headers:{Authorization:'Bearer test-token'}}}};
+    assert.equal(await evaluate('manusClipboard.writes'), 0);
+    await byText(area+' button', label);
+    await until('manusClipboard.writes === 1');
+    assert.deepEqual(await evaluate(matches), expected);
+    await evaluate("manusClipboard.denied = true; manusClipboard.value = ''");
+    await byText(area+' button', label);
+    await until("document.activeElement?.labels?.[0]?.textContent.includes('Manual copy')");
+    assert.equal(await evaluate(`(() => {
+      const field = document.activeElement;
+      if (!field.readOnly || field.value !== 'Airlock configuration') return false;
+      const transfer = new DataTransfer();
+      const copy = new ClipboardEvent('copy', {clipboardData:transfer, bubbles:true, cancelable:true});
+      field.dispatchEvent(copy);
+      manusClipboard.value = transfer.getData('text/plain');
+      return copy.defaultPrevented;
+    })()`), true);
+    assert.deepEqual(await evaluate(matches), expected);
+    await evaluate('delete navigator.clipboard; delete window.manusClipboard');
+  }
   for (const [name,key] of local) {
     const before = launched().length;
     await choose(name);
@@ -69,6 +113,7 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
   await type('Local bridge port',String(await freePort()),'#app');
   await btn('Save and enable'); await titled('Other remote MCP client'); await contains('Bearer token');
   for (const [name,vendor] of cloud) {
+    if (vendor==='manus') await testClipboard();
     await choose(name); await contains('Connection details');
     const state = await evaluate("api('remote-state').then(s=>s.connections.filter(g=>g.active && g.vendor==="+JSON.stringify(vendor)+"))");
     assert.equal(state.length,1,name);
@@ -76,7 +121,8 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
     assert.ok(!(await evaluate("JSON.stringify(history.state).includes('pal_') || location.href.includes('pal_')")));
     if (vendor==='chatgpt') await contains('Open tunnel setup');
     else {
-      await contains(vendor==='ironclaw'?'Extension manifest':vendor==='muse'?'Schema URL':'Server URL');
+      await contains(vendor==='ironclaw'?'Extension manifest':vendor==='muse'?'Schema URL':
+        vendor==='manus'?'Copy Manus configuration':'Server URL');
       assert.equal(await evaluate("document.querySelector('.handoff-status')?.textContent"),'Finish setup');
       const signupUrl = hostedSignup.get(name);
       if (signupUrl) {
@@ -86,9 +132,19 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
         assert.deepEqual(await evaluate("api('remote-state')"), before);
         assert.ok(await evaluate("Boolean(document.querySelector('#app input[type=password]')?.value)"));
         assert.equal(await evaluate("document.querySelector('.handoff-status')?.textContent"), 'Finish setup');
+        if (vendor==='manus') await verifyManusImport('#app');
       }
     }
   }
+  await choose('Manus'); await contains('Connection details');
+  assert.ok(!(await evaluate("Array.from(document.querySelectorAll('#app button')).some(b=>b.textContent==='Copy Manus configuration')")));
+  await byText('summary','Connection details'); await contains('Test or recover connection');
+  await btn('Test or recover connection'); await byText('summary','Connection help'); await contains('Lost the token?');
+  await home(); await btn('Privacy & connections'); await btn('Cloud agents'); await btn('Manus');
+  await btn('Add another connection'); await testClipboard();
+  await btn('Create connection');
+  await verifyManusImport('dialog[open]');
+  await byText('dialog[open] button','Test this connection'); await contains('Waiting for a status call');
 }
 
 async function offlineChoices({home,btn,titled,contains,evaluate,until}) {
