@@ -2,6 +2,8 @@
 
 In the Mac app, select **Connect agent** and choose a provider. Airlock opens its official site and watches the grant for authenticated tool discovery or a call. A new grant has zero shared records and expires after one day or 100 calls. Selecting the same provider reuses its active grant and its existing permissions. If you have several active grants for that provider, choose the one to use. Manage access under **Privacy & connections → Connected agents**. You can share the same record with several agents.
 
+For Meta Muse and Manus, **Sign in or create an account** opens the provider in your browser, even with the HTTPS bridge off. Return to Airlock after signup. If Manus opens its home screen, choose **Continue in Manus** in Airlock to reopen Connectors for the same connection.
+
 | Agent | On first use | After setup |
 | --- | --- | --- |
 | Meta Muse | Airlock opens Muse and puts a setup request on the Mac clipboard. Paste it into Muse. Enter the schema URL in connector setup and the token in its secure credential prompt. | Opens Muse and prepares a status request to paste. |

@@ -25,6 +25,15 @@ agent_launch.open_agent=record_open
 # Use the real remote receipt and safe browser-link path without opening an
 # external provider or Terminal on the machine running this synthetic suite.
 remote_clients.sys=SimpleNamespace(platform='linux')
+# Simulate macOS accepting the first launch; signup and manual retries take
+# the normal non-Mac fallback so Chromium never navigates to a real account.
+open_provider = remote_clients.open_provider
+def fixture_provider(vendor, setup=False, **options):
+    result = open_provider(vendor, setup, **options)
+    if vendor in ('muse', 'manus') and options.get('prepare_request', True):
+        result.update(opened=True, prepared='request' in result)
+    return result
+remote_clients.open_provider = fixture_provider
 original=sources.LocalSources
 sources.LocalSources=lambda **kw:original(key=b'b'*32,context_home=profile)
 # Reproduce a valid Codex config that still points to an earlier Airlock copy.

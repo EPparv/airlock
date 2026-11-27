@@ -59,7 +59,7 @@ def ironclaw_origin(value):
         raise Denied('Enter your IronClaw HTTPS address or the local address printed by ironclaw serve.') from None
 
 
-def open_provider(vendor, setup=False, *, ironclaw_host=None):
+def open_provider(vendor, setup=False, *, ironclaw_host=None, prepare_request=True):
     """Launch only known provider surfaces. Credentials, endpoints and personal data never enter the URL or prompt."""
     if not isinstance(vendor, str) or vendor not in (*PROVIDER_SITES, 'custom', 'ironclaw') or type(setup) is not bool:
         raise Denied('Choose a supported agent.')
@@ -77,7 +77,7 @@ def open_provider(vendor, setup=False, *, ironclaw_host=None):
     result['url'] = url
     name = VENDORS.get(vendor, 'Dot')
     result['message'] = 'Open ' + name + ' to continue.'
-    if not setup or vendor == 'muse':
+    if prepare_request and (not setup or vendor == 'muse'):
         result['request'] = MUSE_SETUP_REQUEST if setup else STATUS_REQUEST
     if sys.platform != 'darwin':
         return result
@@ -87,7 +87,7 @@ def open_provider(vendor, setup=False, *, ironclaw_host=None):
     except (OSError, subprocess.SubprocessError):
         return {**result, 'retry_native':True}
     result.update(opened=True, method='open', message='Opened ' + name + '.')
-    if setup and vendor != 'muse':
+    if 'request' not in result:
         return result
     prompt = result['request']
     try:
@@ -819,6 +819,7 @@ class RemoteClients:
                   'remote-create': ('vendor', 'lifetime', 'max_calls')}
         schema.update({'remote-quick-confirm':('code',), 'remote-quick-retry':(),
                        'remote-connect':('vendor','approved'), 'remote-open-provider':('vendor','setup'),
+                       'remote-open-hosted':('vendor',),
                        'remote-ironclaw-host':('origin','setup'), 'remote-tunnel-helper':('open_download',), 'remote-open-tunnel':('id',), 'remote-connect-dot':('tunnel_id','runtime_key','approved')})
         if action == 'remote-connect' and isinstance(body, dict) and 'id' in body:
             schema[action] = ('vendor','approved','id')
@@ -840,6 +841,10 @@ class RemoteClients:
             return self.open_tunnel_setup(body['id'])
         if action == 'remote-open-provider':
             return self.open_client(**body)
+        if action == 'remote-open-hosted':
+            if self.closed or body['vendor'] not in ('muse', 'manus'):
+                raise Denied('Unlock Airlock and choose Meta Muse or Manus.')
+            return open_provider(body['vendor'], setup=True, prepare_request=False)
         if action == 'remote-quick-start':
             return self.start_temporary(**body)
         if action == 'remote-quick-confirm':
