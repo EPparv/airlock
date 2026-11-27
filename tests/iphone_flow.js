@@ -13,6 +13,12 @@ function write(label, text) {
   const field = [...document.querySelectorAll('label')].find(l => l.firstChild.textContent === label);
   if (!field) throw Error('Missing field ' + label); field.querySelector('input,textarea').value = text;
 }
+async function reviewedExcerpt() {
+  const field = await until(() => [...document.querySelectorAll('main label')].find(label =>
+    label.firstChild?.textContent === 'Reviewed text')?.querySelector('textarea'), 'Filtered review did not finish');
+  if (!field.readOnly) throw Error('Reviewed output must be read-only.');
+  return field;
+}
 const title = name => until(() => document.querySelector('h1')?.textContent === name, 'Heading ' + name);
 const seen = text => until(() => document.querySelector('main').innerText.includes(text), text);
 const message = 'Cypress pilot contact sam@example.com';
@@ -31,7 +37,45 @@ await press('Revoke access'); await seen('Access revoked.');
 await press('Writing agent'); await seen('two-paragraph');
 await press('Connect my agent'); await title('Connect agent');
 const actions = () => [...document.querySelectorAll('main button:not(.back), main a')].map(n => n.textContent);
-if (JSON.stringify(actions()) !== JSON.stringify(['Set up on Mac'])) throw Error('Expected one iPhone connection action.');
+if (JSON.stringify(actions().sort()) !== JSON.stringify(['Set up on Mac','Share an excerpt'])) throw Error('Missing iPhone agent action.');
+await press('Share an excerpt');
+if (phase === 1) {
+  await title('Share an excerpt');
+  const shared = [], copied = [];
+  let nextError;
+  Object.defineProperty(navigator, 'share', {configurable:true, value:async data => {
+    shared.push(data);
+    if (nextError) throw new DOMException('Test share sheet', nextError);
+  }});
+  Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:async text => { copied.push(text); }}});
+  write('Text to share', 'The demo word is cedar. Email editor@example.org.');
+  if (findButton('Share reviewed text')) throw Error('Unreviewed input is shareable.');
+  await press('Review excerpt');
+  const approved = await reviewedExcerpt(), reviewed = approved.value;
+  if (!/^The demo word is cedar\. Email \[email-[a-f0-9]{16}\]\.$/.test(reviewed)) throw Error('Reviewed text did not preserve the sentence and fully pseudonymize its email.');
+  if (shared.length || copied.length) throw Error('Review released text without a user action.');
+  const originalURL = location.href;
+  nextError = 'AbortError';
+  await press('Share reviewed text');
+  if (copied.length || !document.querySelector('#notice').hidden || approved.value !== reviewed ||
+      !approved.isConnected || location.href !== originalURL) throw Error('Cancelling the share changed the review or clipboard.');
+  nextError = 'NotAllowedError';
+  await press('Share reviewed text');
+  await until(() => /copy/i.test(document.querySelector('#notice').textContent), 'Share failure offers manual copy');
+  if (copied.length) throw Error('Failed share automatically wrote to clipboard.');
+  nextError = null;
+  await press('Share reviewed text');
+  if (shared.length !== 3 || shared.some(data => JSON.stringify(data) !== JSON.stringify({text:reviewed}))) {
+    throw Error('Share sheet received data other than the exact reviewed text.');
+  }
+  if (copied.length) throw Error('Sharing also wrote to clipboard.');
+  await press('Copy reviewed text');
+  if (copied.length !== 1 || copied[0] !== reviewed) throw Error('Explicit copy changed the reviewed text.');
+  delete navigator.share; delete navigator.clipboard;
+} else {
+  await until(() => findButton('Unlock vault'), 'Connect excerpt uses the saved privacy settings');
+}
+await press('‹ Connect agent'); await title('Connect agent');
 let handedOff;
 Object.defineProperty(navigator, 'share', {configurable:true, value:async data => { handedOff = data.url; }});
 await press('Set up on Mac');
@@ -48,9 +92,12 @@ write('Pairing link from your Mac',fakePair); await press('Check link');
 if (document.querySelector('a')?.href !== fakePair || document.querySelector('input').value) throw Error('Pairing link handoff failed.');
 await press('‹ Privacy & connections'); await press('‹ Airlock'); await press('Context & memory'); await press('Share an excerpt');
 if (phase === 1) {
+  Object.defineProperty(navigator, 'share', {configurable:true, value:undefined});
   await title('Share an excerpt'); write('Text to share','Send the draft to editor@example.org');
-  await press('Review excerpt'); const approved = document.querySelectorAll('textarea')[1];
-  if (!approved?.readOnly || !approved.value.includes('[email-') || approved.value.includes('example.org')) throw Error('One-time excerpt leaked raw email.');
+  await press('Review excerpt'); const approved = await reviewedExcerpt();
+  if (!/^Send the draft to \[email-[a-f0-9]{16}\]$/.test(approved.value)) throw Error('One-time excerpt did not fully pseudonymize its email.');
+  if (findButton('Share reviewed text') || !findButton('Copy reviewed text')) throw Error('Unsupported share sheet should offer copy.');
+  delete navigator.share;
 } else {
   await until(() => findButton('Unlock vault'), 'saved privacy settings require unlocking before one-time sharing');
 }

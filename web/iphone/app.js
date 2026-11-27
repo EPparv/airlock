@@ -94,7 +94,7 @@
       fallback.focus(); fallback.select(); say('Select Copy to use the highlighted text.');
     }
   }
-  function macHandoff(label) {
+  function macHandoff(label, cls = 'primary') {
     const manual = node('textarea', undefined, 'field'); manual.hidden = true;
     manual.setAttribute('aria-label', 'Mac setup link');
     const send = button(label, async () => {
@@ -103,7 +103,7 @@
         catch (error) { if (error.name === 'AbortError') return; }
       }
       await copyText(macSetup, 'Setup link copied. Open it on your Mac.', manual);
-    }, 'primary');
+    }, cls);
     root.append(send, manual);
   }
   function showMacSetup() {
@@ -117,7 +117,7 @@
     external(root, 'Download Airlock for Mac', macDownload, phone ? 'secondary' : 'primary');
   }
   function showExcerpt(generation) {
-    info(root, 'Review a filtered note, then paste it into any agent. This shares it once.');
+    info(root, 'Review the filtered text before choosing where to send it.');
     const input = field(root, 'Text to share', 'textarea');
     input.maxLength = 4000; input.autocomplete = 'off'; input.spellcheck = false;
     const section = node('section'); section.setAttribute('aria-live', 'polite');
@@ -128,9 +128,18 @@
       catch (error) { input.readOnly = false; throw error; }
       if (generation !== request) return;
       review.hidden = true;
-      const approved = field(section, 'Text to copy', 'textarea');
+      const approved = field(section, 'Reviewed text', 'textarea');
       approved.value = output; approved.readOnly = true;
-      section.append(button('Copy reviewed text', () => copyText(output, 'Copied. Paste it into your agent.', approved), 'primary'),
+      const canShare = typeof navigator.share === 'function';
+      if (canShare) {
+        section.append(button('Share reviewed text', async () => {
+          try { await navigator.share({text:output}); }
+          catch (error) {
+            if (error.name !== 'AbortError') say('Sharing is unavailable. Use Copy reviewed text.');
+          }
+        }, 'primary'));
+      }
+      section.append(button('Copy reviewed text', () => copyText(output, 'Copied. Paste it into your agent.', approved), canShare ? 'secondary' : 'primary'),
         button('Edit', () => { section.replaceChildren(); input.readOnly = false; review.hidden = false; input.focus(); }));
     }, 'primary');
     root.append(review, section);
@@ -158,12 +167,13 @@
   async function go(key, ref = selected) {
     if (!pages[key]) key = 'home';
     const generation = ++request; page = key; selected = ref; say('');
+    const parent = key === 'excerpt' && ref === 'agents' ? 'agents' : pages[key][1];
     root.replaceChildren(); root.className = key === 'home' ? 'home' : '';
     if (!vault && (needsVault(key) || key === 'excerpt')) {
       const available = await api.exists();
       if (generation !== request) return;
       if (needsVault(key) || available) {
-        header('Your iPhone vault', pages[key][1]);
+        header('Your iPhone vault', parent);
         info(root, available ? 'Open your local vault with its passphrase.' :
           'Choose a passphrase to encrypt memories in this browser. Keep it safe. Clearing website data removes this vault.');
         const pass = field(root, 'Passphrase', 'password'); pass.autocomplete = available ? 'current-password' : 'new-password';
@@ -180,7 +190,7 @@
       }
     }
     if (key === 'sample') root.append(button('Exit sample', exitSample, 'back'));
-    header(pages[key][0], pages[key][1]);
+    header(pages[key][0], parent);
     if (key === 'home') {
       const mark = node('span', undefined, 'mark'); mark.setAttribute('aria-hidden','true');
       root.querySelector('h1').prepend(mark);
@@ -191,13 +201,11 @@
       await showSample(ref);
       if (generation === request) root.append(button('Connect my agent', () => exitSample('agents'), 'primary'));
     } else if (key === 'agents') {
-      if (window.matchMedia('(pointer: coarse)').matches) {
-        info(root, 'Agent connections run on your Mac. Send yourself the setup link to continue there.');
-        macHandoff('Set up on Mac');
-      } else {
-        info(root, 'The Mac app connects your agent and lets you choose which memories it can read.');
-        external(root, 'Download Airlock for Mac', macDownload, 'primary');
-      }
+      info(root, 'Send a reviewed excerpt to an agent, including Instinct in Messages.');
+      root.append(button('Share an excerpt', () => go('excerpt', 'agents'), 'primary'));
+      info(root, 'For live tools, connect Muse or Manus on your Mac. Keep Airlock unlocked and use the same agent account on your iPhone.');
+      if (window.matchMedia('(pointer: coarse)').matches) macHandoff('Set up on Mac', 'secondary');
+      else external(root, 'Download Airlock for Mac', macDownload);
     } else if (key === 'mac') {
       showMacSetup();
     } else if (key === 'excerpt') {
@@ -251,7 +259,7 @@
         }));
       }
     } else if (key === 'context') {
-      const g = group(); link(g,'Memories','memories'); link(g,'Share an excerpt','excerpt'); link(g,'Proposed changes','proposals');
+      const g = group(); link(g,'Memories','memories'); link(g,'Share an excerpt','excerpt','context'); link(g,'Proposed changes','proposals');
     } else if (key === 'memories') {
       const g = group();
       if (!state().records.length) info(g,'No memories on this iPhone.');

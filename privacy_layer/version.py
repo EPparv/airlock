@@ -1,3 +1,3 @@
 """Release identity. Increase BUILD for every published Mac release."""
-VERSION = "0.11.8"
-BUILD = 81
+VERSION = "0.11.9"
+BUILD = 82

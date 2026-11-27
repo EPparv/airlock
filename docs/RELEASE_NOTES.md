@@ -1,3 +1,9 @@
+# Airlock 0.11.9
+
+The Muse setup request includes your public schema address. Paste the request into Muse, then enter the separate token in its secure credential field. After importing the private JSON configuration into Manus, use **Copy status request** to test the connection.
+
+On iPhone, choose **Connect agent → Share an excerpt** to review the filtered text before sending or copying it to an agent.
+
 # Airlock 0.11.8
 
 ChatGPT and Dot accept OpenAI tunnel IDs with or without a namespace. Reopening a ChatGPT tunnel creates a temporary local client profile for the existing Airlock connection, so closing and reopening Terminal preserves the records and permissions you selected.

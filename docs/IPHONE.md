@@ -1,6 +1,10 @@
 # Test Airlock on iPhone
 
-Open the public Airlock workspace in Safari. **Try a sample** lets anyone try two fictional agents without signing in. **Connect agent → Set up on Mac** sends the setup link to the Mac that will run your agent. For a one-time share, open **Context & memory → Share an excerpt** to review and copy filtered text. [Open Airlock](https://epparv.github.io/airlock/iphone/)
+Open Airlock in Safari. **Try a sample** lets anyone try two fictional agents without signing in. [Open Airlock](https://epparv.github.io/airlock/iphone/)
+
+**Test with your own agent on iPhone.** Tap **Connect agent → Share an excerpt**, type `My demo word is cedar. Contact alex@example.com.`, then tap **Review excerpt**. With the default filters the email becomes an `[email-…]` token. Tap **Share reviewed text** and choose Messages for your Instinct conversation, or use **Copy reviewed text** and paste into Muse or Manus. Ask for the demo word. This sends the excerpt you approved and grants no continuing access to your vault.
+
+**Test live tools in Muse or Manus.** Set up the connector once from **Connect agent** in Airlock on your Mac. Use Muse’s secure key field or Manus’s **Import MCP by JSON** in that same provider account. Keep your Mac awake with Airlock unlocked and the HTTPS bridge running. From the agent on your iPhone, ask it to call `privacy_status`, then check Airlock on the Mac for the successful call. [Cloud agent setup](REMOTE_CLIENTS.md)
 
 To test access to memories in your encrypted iPhone vault, use fictional records. These sessions run locally in Safari.
 
