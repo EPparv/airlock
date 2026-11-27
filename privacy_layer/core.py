@@ -26,7 +26,7 @@ class Denied(ValueError):
     pass
 
 QUERY_LIMIT = 2000
-AGENTS = ('dot', 'codex', 'claude-desktop', 'claude-code', 'cursor', 'mcp', 'test', 'ironclaw')
+AGENTS = ('dot', 'codex', 'claude-desktop', 'claude-code', 'cursor', 'mcp', 'test', 'ironclaw', 'muse-code', 'gemini-cli', 'vscode', 'openclaw')
 
 
 def canonical(value):
@@ -126,12 +126,16 @@ class Gateway:
             raise Denied('Connection unavailable. Ask the owner to review its access.')
         return grant
 
-    def authenticate(self, token):
+    def authenticate(self, token, *, discovered=False, initialized=False):
         with self.store.transaction() as data:
             grant = self._grant(data, token)
+            if initialized and grant['remaining'] > 0:
+                grant['last_initialized'] = self.clock()
+            if discovered and grant['remaining'] > 0:
+                grant['last_discovery'] = self.clock()
             return {'id':grant['id'], 'agent':grant['agent']}
 
-    def create(self, *, agent, purpose, views, approved=False, lifetime=86400, max_calls=100, mode='reviewed'):
+    def create(self, *, agent, purpose, views, approved=False, lifetime=86400, max_calls=100, mode='reviewed', cloud_client=None):
         if approved is not True:
             raise Denied('Review the exact released excerpts before enabling an agent.')
         if agent not in AGENTS:
@@ -165,6 +169,11 @@ class Gateway:
         grant = {'id':secrets.token_hex(16), 'agent':agent, 'purpose':purpose, 'views':items,
                  'expires':self.clock()+lifetime, 'remaining':max_calls, 'revoked':False,
                  'token_hash':hashlib.sha256(token.encode()).hexdigest(), 'created':self.clock()}
+        if cloud_client is not None:
+            from .remote_clients import VENDORS
+            if agent != 'mcp' or cloud_client not in VENDORS:
+                raise Denied('Choose a supported cloud client.')
+            grant.update(cloud_client=cloud_client, display_name=VENDORS[cloud_client])
         if mode=='automatic':
             from .automatic import POLICY
             grant.update(mode='automatic',policy=POLICY,policy_revision=1,reviewed_purpose=purpose)
@@ -210,14 +219,20 @@ class Gateway:
 
     def list_grants(self):
         with self.store.transaction() as data:
-            return [{'id':g['id'],'agent':g['agent'],'purpose':g['purpose'],'expires':g['expires'],
+            # These receipts also cover connections created by older versions.
+            calls = {r['agent']:r['at'] for r in data['audit'] if r['status']=='released'}
+            return [{'id':g['id'],'agent':g['agent'],'display_name':g.get('display_name'),'cloud_client':g.get('cloud_client'),'purpose':g['purpose'],'expires':g['expires'],
                      'remaining':g['remaining'],'revoked':g['revoked'],'mode':g.get('mode','reviewed'),'configured':g.get('client_setup',{}).get('installed'),
-                     'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
+                     'last_call':calls.get(g['id']), 'last_initialized':g.get('last_initialized'), 'last_discovery':g.get('last_discovery'), 'last_context_read':g.get('last_context_read'),'last_context_fingerprint':g.get('last_context_fingerprint'),
                      'scope':g.get('scope'),'capabilities':g.get('capabilities',{}),'counts':{k:sum(v['kind']==k for v in g['views']) for k in ('memories','skills','gmail')}} for g in data['grants'].values()]
 
-    def call(self, token, tool, args):
+    def call(self, token, tool, args, *, connection_route='local'):
         if not isinstance(args, dict): raise Denied('Invalid tool arguments.')
         schemas = {'privacy_status':set(), 'get_private_context':{'query'}, 'search_gmail':{'query'}, 'read_gmail':{'reference'},'stage_context_import':{'transfer_code','memories','skills','scope'},'context_status':set(),'list_local_skills':{'query'},'read_local_skill':{'skill_id','resource','offset'},'run_local_skill':{'skill_id','script','topic','gmail_query'},'prepare_private_brief':{'topic','gmail_query','max_messages'},'update_shared_context':{'operation','kind','text','reference','expected_revision'},'request_private_task':{'instruction','records','route'},'get_private_task_result':{'task_id'}}
+        from .workspace import TOOLS as device_tools, Workspace
+        from .agent_handoffs import TOOLS as handoff_tools, Handoffs
+        schemas.update(device_tools)
+        schemas.update(handoff_tools)
         if tool not in schemas or set(args) != schemas[tool]: raise Denied('Unsupported tool or arguments.')
         query = args.get('query', '')
         if not isinstance(query, str) or len(query)>QUERY_LIMIT:
@@ -226,8 +241,14 @@ class Gateway:
             g = self._grant(data, token)
             if g['remaining'] <= 0: raise Denied('This connection reached its request limit. Ask the owner to renew it.')
             g['remaining'] -= 1
-            snapshot = copy.deepcopy(g)
             self.audit(data, g, tool, 'started')
+            if tool == 'privacy_status' and g.get('provider_check'):
+                from .provider_checks import status_reply
+                reply = status_reply(g, self.clock(), connection_route)
+                if reply is not None:
+                    self.audit(data, g, tool, 'released')
+                    return reply
+            snapshot = copy.deepcopy(g)
         try:
             if tool == 'privacy_status':
                 automatic=snapshot.get('mode')=='automatic'
@@ -235,6 +256,10 @@ class Gateway:
                           'mode':'automatic' if automatic else 'reviewed',
                           'scope':('Automatic local selection across the full memory/skill library and live read-only Gmail search. Only filtered excerpts leave the Mac. Device-only records, detected secrets and identifiers are withheld. Filtering is not guaranteed anonymization. No sending or arbitrary file access.' if automatic else 'Only owner-reviewed memory, skill and email excerpts. No sending, raw files, credentials or unrestricted inbox.'),
                           'scope_selection':snapshot.get('scope'), 'expires':snapshot['expires'],'capabilities':snapshot.get('capabilities',{}),'local_actions':'Owner-enabled Python skill packages run offline with selected inputs. Generated outputs are owner-only; shared note updates are versioned and unverified.'}
+            elif tool in handoff_tools:
+                result = Handoffs(self).call(snapshot, tool, args)
+            elif tool in device_tools:
+                result = Workspace(self).call(snapshot, tool, args)
             elif snapshot.get('scope') is not None:
                 from .agent_memory import AgentMemory, PrivateTasks
                 memory = AgentMemory(self)
@@ -311,7 +336,7 @@ class Gateway:
             if tool == 'privacy_status' and snapshot.get('scope') is not None:
                 from .agent_memory import AgentMemory
                 result['scope_selection'] = AgentMemory(self).public_scope(snapshot)
-                result['scope'] = 'Owner-selected local memories and skills. Excerpt disclosure and private computation are separate permissions. Proposals need owner review; computation and result release need separate approval. No Gmail or arbitrary actions.'
+                result['scope'] = 'Owner-selected local memories and skills. Excerpt disclosure and private computation are separate permissions. Proposals need owner review; computation and result release need separate approval. Private device actions require a separately assigned handle and local approval for writes.'
             if snapshot.get('mode')=='automatic' and tool in ('run_local_skill','prepare_private_brief'):
                 # A long-running local action must not return evidence filtered
                 # before the owner added a private phrase during execution.
@@ -340,11 +365,15 @@ class Gateway:
             with self.store.transaction() as data:
                 current = self._grant(data, token)
                 if any(current.get(k)!=snapshot.get(k) for k in ('views','mode','policy','policy_revision','capabilities','scope')): raise Denied('Sharing rules changed. Retry after owner review.')
+                if tool in handoff_tools:
+                    Handoffs(self).authorize_release(data, current, tool, args, result)
+                if tool in device_tools and current.get('device_actions_revision',0) != snapshot.get('device_actions_revision',0):
+                    raise Denied('The assigned actions changed. Retry after owner review.')
                 self.audit(data,current,tool,'released',[i['ref'] for i in result.get('items',[])])
                 if tool=='get_private_context':
                     current['last_context_read']=self.clock()
                     current['last_context_fingerprint']=result.get('context_fingerprint')
-                if snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context'):
+                if snapshot.get('scope') is not None or tool in device_tools or (snapshot.get('mode')=='automatic' and tool in ('get_private_context','search_gmail','read_gmail','prepare_private_brief','run_local_skill','read_local_skill','update_shared_context')):
                     receipts=data.setdefault('disclosures',[])
                     receipts.append({'at':self.clock(),'agent':current['id'],'tool':tool,'items':copy.deepcopy(result.get('items',[])),'coverage':result.get('coverage',''),'response':copy.deepcopy(result)})
                     data['disclosures']=receipts[-50:]

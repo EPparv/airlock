@@ -4,6 +4,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 import hashlib
 import json
+import os
 import sys
 import zipfile
 from build_site import ROOT, sources
@@ -22,18 +23,26 @@ with zipfile.ZipFile(archive) as z:
         assert z.read(name) == (ROOT / name.removeprefix('Airlock/')).read_bytes()
 
 class Links(HTMLParser):
+    def __init__(self, document_root):
+        super().__init__()
+        self.document_root = document_root
+
     def handle_starttag(self, tag, attrs):
         for key, value in attrs:
             if key in ('href', 'src') and value:
                 link = urlsplit(value)
                 if not link.scheme and not link.netloc and link.path:
                     assert not link.path.startswith('/'), 'Use relative links for subpath hosting'
-                    assert (out / link.path).resolve().is_relative_to(out.resolve())
-                    assert (out / link.path).is_file(), f'Missing asset: {value}'
+                    assert (self.document_root / link.path).resolve().is_relative_to(out.resolve())
+                    assert (self.document_root / link.path).is_file(), f'Missing asset: {value}'
 
-Links().feed((out / 'index.html').read_text())
+for page in (out / 'index.html', out / 'iphone' / 'index.html'):
+    Links(page.parent).feed(page.read_text())
 if meta.get('mac'):
     mac=out/meta['mac']['archive']
+    sys.path.insert(0, str(ROOT))
+    from privacy_layer.updater import validate_manifest
+    validate_manifest(json.loads((out / 'updates.json').read_text()))
     assert hashlib.sha256(mac.read_bytes()).hexdigest()==meta['mac']['sha256']
     with zipfile.ZipFile(mac) as z:
         assert z.testzip() is None
@@ -44,6 +53,13 @@ if meta.get('mac'):
         from macos.package import entries
         expected_payload=entries()
         payload=prefix+'Resources/payload/'
+        publisher_digest = os.environ.get('AIRLOCK_GOOGLE_PUBLIC_SHA256')
+        if publisher_digest:
+            from prepare_google_oauth import verify_distributable
+            identity = 'vendor/private_ai/google_client.json'
+            record = z.getinfo(payload + identity)
+            assert record.file_size <= 65536
+            expected_payload[identity] = verify_distributable(z.read(record), publisher_digest)
         assert {n.removeprefix(payload) for n in z.namelist() if n.startswith(payload)}==set(expected_payload)
         for name,data in expected_payload.items():
             assert z.read(payload+name)==data,f'Mac payload differs from source: {name}'

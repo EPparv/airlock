@@ -175,6 +175,130 @@ def test_actionable_config_conflict_is_not_hidden_by_valueerror_handler(tmp_path
         clients.install_config('codex',clients.server_entry(tmp_path/'root/.private/new.token'),home)
 
 
+def test_codex_active_profile_and_markerless_config_survive_reconnect(bundle,tmp_path,monkeypatch):
+    home=tmp_path/'owner'; profile=home/'Codex work'
+    profile.mkdir(parents=True)
+    monkeypatch.setenv('CODEX_HOME',str(profile))
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    gateway=bundle[0]
+    first=clients.connect(gateway,agent='codex',approved=True,home=home,scope=clients.selected_scope(gateway,{}))
+    target=profile/'config.toml'
+    assert first['installed'] and Path(first['path'])==target and not (home/'.codex/config.toml').exists()
+    entry=tomllib.loads(target.read_text())['mcp_servers']['airlock']
+    rewritten='[mcp_servers.airlock]\ncommand='+json.dumps(entry['command'])+'\nargs='+json.dumps(entry['args'],indent=2)+'\n# Keep this comment\n[mcp_servers.other]\ncommand="other"\n'
+    target.write_text(rewritten)
+    second=clients.manual_connection_details(gateway, first['id'],reinstall=True,home=home)
+    assert second['installed'] and tomllib.loads(target.read_text())==tomllib.loads(rewritten)
+    assert '# Keep this comment' in target.read_text()
+    assert len(gateway.list_grants())==1
+
+
+@pytest.mark.parametrize('agent',['codex','cursor'])
+def test_repair_uses_existing_credential_and_keeps_scope_limits(bundle,tmp_path,monkeypatch,agent):
+    gateway,sources,*_=bundle
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'owner'
+    selected=clients.connection_context(gateway)['records'][0]
+    scope=clients.selected_scope(gateway,{selected['ref']:selected['text_hash']})
+    first=clients.connect(gateway,agent=agent,approved=True,home=home,scope=scope,max_calls=5)
+    config=Path(first['path']);original=config.read_text();config.unlink()
+    from privacy_layer.workspace import Workspace
+    sources.context_home=home;gateway.device_apps=object()
+    workspace=Workspace(gateway)
+    before=gateway.list_grants()[0]
+    result=workspace.owner('workspace-reconnect',{'id':first['id']})
+    assert result['installed'] and config.read_text()==original
+    assert gateway.list_grants()==[before]
+    gateway.revoke(first['id']);config.unlink()
+    with pytest.raises(Denied):workspace.owner('workspace-reconnect',{'id':first['id']})
+    assert not config.exists()
+
+
+def test_external_codex_profile_offers_manual_setup_without_writing(bundle,tmp_path,monkeypatch):
+    home=tmp_path/'owner';home.mkdir()
+    monkeypatch.setenv('HOME',str(home))
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path/'outside'))
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    result=clients.connect(bundle[0],agent='codex',approved=True,scope=clients.selected_scope(bundle[0],{}))
+    assert not result['installed'] and 'outside this home' in result['message']
+    assert '[mcp_servers.airlock]' in result['client_config']
+    assert not (home/'.codex').exists() and not (tmp_path/'outside').exists()
+
+
+def test_finder_detects_user_command_line_install(tmp_path,monkeypatch):
+    binary=tmp_path/'.local/bin/claude'
+    binary.parent.mkdir(parents=True);binary.touch()
+    monkeypatch.setenv('PATH',str(tmp_path/'empty'))
+    binary.chmod(0o700)
+    assert next(c['app_present'] for c in clients.catalog(tmp_path) if c['id']=='claude-code')
+
+
+def test_codex_bundle_binary_supports_current_and_legacy_vendor_layouts(tmp_path):
+    import plistlib
+    app = tmp_path/'ChatGPT.app'
+    resources = app/'Contents/Resources'
+    nested = resources/'codex-cli/CodexCLI.app/Contents/MacOS/codex'
+    wrapper = resources/'codex-cli/bin/codex'
+    legacy = resources/'codex'
+    for exe in (nested, wrapper, legacy):
+        exe.parent.mkdir(parents=True, exist_ok=True)
+        exe.touch()
+        exe.chmod(0o755)
+    info = app/'Contents/Info.plist'
+    info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.chat'}))
+    assert clients.codex_bundle_binary(app) is None
+    info.write_bytes(plistlib.dumps({'CFBundleIdentifier':'com.openai.codex'}))
+    assert clients.codex_bundle_binary(app) == nested
+    nested.chmod(0o644)
+    assert clients.codex_bundle_binary(app) == legacy
+    legacy.unlink()
+    assert clients.codex_bundle_binary(app) == wrapper
+    wrapper.unlink()
+    external = tmp_path/'external-executable'; external.touch(); external.chmod(0o755)
+    wrapper.symlink_to(external)
+    assert clients.codex_bundle_binary(app) is None
+
+
+def test_codex_refresh_never_starts_a_daemon_for_missing_or_linked_socket(tmp_path,monkeypatch):
+    cfg=tmp_path/'codex'/'config.toml'
+    control=cfg.parent/'app-server-control'
+    control.mkdir(parents=True)
+    monkeypatch.setattr(clients, '_refresh_codex_proxy', lambda *a: pytest.fail('A proxy was launched.'))
+    assert not clients.refresh_codex(cfg,tmp_path)
+    (control/'app-server-control.sock').symlink_to(tmp_path/'other')
+    assert not clients.refresh_codex(cfg,tmp_path)
+
+
+def test_codex_refresh_requires_acknowledgment_from_the_existing_service(tmp_path):
+    import sys
+    script=tmp_path/'proxy-fixture.py'
+    script.write_text("""
+import json, os, sys
+from wsproto import ConnectionType, WSConnection
+from wsproto.events import AcceptConnection, Ping, Request, TextMessage
+ws = WSConnection(ConnectionType.SERVER)
+def send(event):
+    os.write(1, ws.send(event))
+expected = iter(['initialize', 'initialized', 'config/mcpServer/reload'])
+while data := os.read(0, 8192):
+    ws.receive_data(data)
+    for event in ws.events():
+        if isinstance(event, Request):
+            assert event.target == '/'
+            send(AcceptConnection())
+        if isinstance(event, TextMessage):
+            request = json.loads(event.data)
+            assert request['method'] == next(expected)
+            if 'id' in request:
+                response = json.dumps({'id':request['id'], 'result' if request['id']==1 else sys.argv[1]:{}})
+                send(TextMessage(data=response[:7], message_finished=False))
+                send(Ping(payload=b'test'))
+                send(TextMessage(data=response[7:]))
+""")
+    assert clients._refresh_codex_proxy([sys.executable,str(script),'result'])
+    assert not clients._refresh_codex_proxy([sys.executable,str(script),'error'])
+
+
 def test_connection_wizard_shares_only_reviewed_selection_and_reports_real_request(bundle,tmp_path,monkeypatch):
     g,s,*_=bundle;monkeypatch.setattr(clients,'ROOT',tmp_path)
     with TestClient(owner_app(g,'owner'),base_url='http://127.0.0.1:8791') as c:
@@ -189,7 +313,9 @@ def test_connection_wizard_shares_only_reviewed_selection_and_reports_real_reque
         assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
         args=entry['args'];token=Path(args[args.index('--token-file')+1]).read_text()
         g.call(token,'privacy_status',{})
-        assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='waiting'
+        status=c.post('/api/client-status',json={'id':entry['id']},headers=h).json()
+        assert status['status']=='waiting' and status['last_call'] is not None
+        assert status['last_context_read'] is None and status['last_discovery'] is None
         result=g.call(token,'get_private_context',{'query':''})
         assert 'Be concise' in str(result) and 'Hyderabad' not in str(result)
         assert c.post('/api/client-status',json={'id':entry['id']},headers=h).json()['status']=='verified'
@@ -207,3 +333,195 @@ def test_selection_failures_create_no_connection(bundle,tmp_path,monkeypatch,sel
         r=c.post('/api/client-connect',json={'agent':'codex','approved':True,'install':False,'selection':selection,'proposals':proposals},headers={'Authorization':'Bearer owner'})
         assert r.status_code==400,r.text
     assert not bundle[0].list_grants()
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile_environment(monkeypatch):
+    for key in ('XDG_CONFIG_HOME','COPILOT_HOME','OPENCLAW_CONFIG_PATH','OPENCLAW_STATE_DIR','OPENCLAW_PROFILE','GEMINI_CLI_HOME','CLAUDE_CONFIG_DIR'):
+        monkeypatch.delenv(key,raising=False)
+
+
+PROFILE_FIXTURES = [
+    ('muse-code', '.config/muse/settings.json', ('mcp_servers',), {'transport':'stdio','mode':'optional'}),
+    ('gemini-cli', '.gemini/settings.json', ('mcpServers',), {}),
+    ('vscode', '.copilot/mcp-config.json', ('mcpServers',), {'type':'stdio','tools':['*']}),
+    ('openclaw', '.openclaw/openclaw.json', ('mcp','servers'), {'transport':'stdio'}),
+]
+
+
+def server_list(profile, keys):
+    for key in keys:
+        profile = profile[key]
+    return profile
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_client_profile_round_trip_scoped_and_revocable(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    gateway = bundle[0]
+    root, home = tmp_path/'Airlock App', tmp_path/'user profile'
+    monkeypatch.setattr(clients, 'ROOT', root)
+    original = {'theme':'custom'}
+    if agent=='muse-code':
+        original['schema_version']=1
+    servers = original
+    for key in keys:
+        servers = servers.setdefault(key,{})
+    servers['unrelated'] = {'command':'custom-tool','env':{'EXISTING_SETTING':'preserve'}}
+    settings = home/path
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps(original))
+    for _ in range(2):
+        result = clients.connect(gateway, agent=agent, approved=True, home=home)
+        assert result['installed'] and result['path']==str(settings)
+        exported = json.loads(result['config'])
+        entry = server_list(exported,keys)['airlock']
+        assert entry == {**options, 'command':result['command'], 'args':result['args']}
+        updated = json.loads(settings.read_text())
+        assert server_list(updated,keys).pop('airlock') == entry
+        assert updated == original
+        token_file = Path(entry['args'][entry['args'].index('--token-file')+1])
+        token = token_file.read_text()
+        assert stat.S_IMODE(token_file.stat().st_mode)==0o600
+        assert token not in settings.read_text() and token not in result['config']
+        with pytest.raises(Denied):
+            gateway.call(token,'get_private_context',{'query':''})
+        gateway.revoke(result['id'])
+        with pytest.raises(Denied):
+            gateway.call(token,'privacy_status',{})
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_client_export_only_never_touches_a_profile(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    result=clients.connect(bundle[0],agent=agent,approved=True,install=False,home=home)
+    assert not result['installed'] and not home.exists()
+    assert server_list(json.loads(result['config']), keys)['airlock']['command'] == result['command']
+
+
+@pytest.mark.parametrize('agent,path,keys,options', PROFILE_FIXTURES)
+def test_clients_reject_conflicting_names_and_keep_permissions(bundle,tmp_path,monkeypatch,agent,path,keys,options):
+    root, home = tmp_path/'app', tmp_path/'profile'
+    monkeypatch.setattr(clients, 'ROOT', root)
+    entry = clients.server_entry(root/'.private/custom.token')
+    profile=json.loads(clients.json_config('',entry,agent=agent))
+    server_list(profile,keys)['airlock']['env'] = {'OWNER_SETTING':'preserve'}
+    target=home/path
+    target.parent.mkdir(parents=True)
+    original=json.dumps(profile)
+    target.write_text(original)
+    with pytest.raises(Denied,match='unrelated'):
+        clients.connect(bundle[0],agent=agent,approved=True,home=home)
+    assert target.read_text()==original
+    assert all(g['revoked'] for g in bundle[0].list_grants())
+    assert not list((root/'.private/clients').glob('*.token'))
+
+
+@pytest.mark.parametrize('agent,content', [
+    ('gemini-cli','{ // settings with comments\n  "mcpServers": {},\n}'),
+    ('openclaw','{mcp: {servers: {}}, channels: {}}'),
+    ('openclaw','{"mcp":{"servers":{"$include":"./local-servers.json5"}}}'),
+])
+def test_custom_profile_format_offers_owner_manual_setup(bundle,tmp_path,monkeypatch,agent,content):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    target=home/clients.RELATIVE_CONFIGS[agent]
+    target.parent.mkdir(parents=True)
+    target.write_text(content)
+    result=clients.connect(bundle[0],agent=agent,approved=True,home=home)
+    assert not result['installed'] and result['config'] and target.read_text()==content
+    assert clients.connection_status(bundle[0],result['id'])['status']=='waiting'
+
+
+def test_custom_copilot_home_uses_export_without_writing_to_default(bundle,tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    monkeypatch.setenv('COPILOT_HOME',str(tmp_path/'custom'))
+    home=tmp_path/'profile'
+    result=clients.connect(bundle[0],agent='vscode',approved=True,home=home)
+    assert not result['installed'] and not home.exists()
+    assert 'custom client profile' in result['message']
+
+
+@pytest.mark.parametrize('agent,variable,suffix', [
+    ('gemini-cli', 'GEMINI_CLI_HOME', '.gemini/settings.json'),
+    ('claude-code', 'CLAUDE_CONFIG_DIR', '.claude.json'),
+    ('vscode', 'COPILOT_HOME', 'mcp-config.json'),
+    ('muse-code', 'XDG_CONFIG_HOME', 'muse/settings.json'),
+    ('openclaw', 'OPENCLAW_STATE_DIR', 'openclaw.json'),
+    ('openclaw', 'OPENCLAW_CONFIG_PATH', ''),
+])
+def test_connect_uses_active_in_home_configuration(bundle, tmp_path, monkeypatch, agent, variable, suffix):
+    home = tmp_path/'owner'
+    location = home/'work profile' if suffix else home/'work profile'/'settings.json'
+    path = location/suffix if suffix else location
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'theme':'keep'}))
+    monkeypatch.setattr(clients, 'ROOT', tmp_path/'Airlock')
+    monkeypatch.setenv(variable, str(location))
+    result = clients.connect(bundle[0], agent=agent, approved=True, home=home)
+    assert result['installed'] and result['path'] == str(path)
+    assert json.loads(path.read_text())['theme'] == 'keep'
+    assert not (home/clients.RELATIVE_CONFIGS[agent]).exists()
+
+
+def test_copilot_repairs_0114_entry_and_preserves_explicit_tool_filter(tmp_path, monkeypatch):
+    monkeypatch.setattr(clients, 'ROOT', tmp_path/'Airlock')
+    entry = clients.server_entry(clients.ROOT/'.private/clients/vscode-example.token')
+    profile = {'mcpServers':{'airlock':{'type':'stdio', **entry}}}
+    migrated = json.loads(clients.json_config(json.dumps(profile), entry, agent='vscode'))
+    assert migrated['mcpServers']['airlock'] == {'type':'stdio', 'tools':['*'], **entry}
+    profile['mcpServers']['airlock']['tools'] = ['privacy_status']
+    with pytest.raises(Denied):
+        clients.json_config(json.dumps(profile), entry, agent='vscode')
+
+
+def test_registration_uses_gateway_only_descriptor_as_soon_as_published(tmp_path, monkeypatch):
+    monkeypatch.setattr(clients, 'ROOT', tmp_path)
+    (tmp_path/'release.json').write_text('{}')
+    credential = tmp_path/'.private/clients/codex-grant.token'
+    old = clients.server_entry(credential)
+    assert old['args'][-1] == str(tmp_path/'.private/launch.json')
+    endpoint = tmp_path/'.private/mcp-endpoint.json'
+    endpoint.parent.mkdir()
+    endpoint.write_text('{"mcp_url":"http://127.0.0.1:12345/mcp"}')
+    expected = clients.server_entry(credential)
+    assert expected['args'][-1] == str(endpoint)
+    assert clients.owned(old) and clients.owned(expected)
+    doc = clients.codex_config(clients.codex_config('', old), expected)
+    assert tomllib.loads(doc)['mcp_servers']['airlock'] == expected
+
+
+def test_workspace_can_export_configuration_for_a_custom_profile(bundle,tmp_path,monkeypatch):
+    from privacy_layer.workspace import Workspace
+    gateway,sources,*_=bundle
+    gateway.device_apps = object()
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    sources.context_home=tmp_path/'profile'
+    body = dict(agent='muse-code',identifier='',selection={},proposals=False,mail=False,calendar=False)
+    result=Workspace(gateway).owner('workspace-connect',{**body,'install':False})
+    assert not result['installed'] and 'mcp_servers' in result['config']
+    assert not (sources.context_home/'.config/muse/settings.json').exists()
+    with pytest.raises(Denied):
+        Workspace(gateway).owner('workspace-connect',{**body,'install':'false'})
+
+
+def test_muse_profile_respects_both_documented_config_spellings(bundle,tmp_path,monkeypatch):
+    monkeypatch.setattr(clients,'ROOT',tmp_path/'app')
+    home=tmp_path/'profile'
+    path=home/'.config/muse/settings.json'
+    path.parent.mkdir(parents=True)
+    path.write_text('{"schema_version":1,"mcpServers":{"existing":{"command":"keep"}}}')
+    result=clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+    saved=json.loads(path.read_text())
+    assert set(saved) == {'schema_version','mcpServers'}
+    assert saved['mcpServers']['existing'] == {'command':'keep'}
+    assert saved['mcpServers']['airlock']['type']=='stdio'
+    assert saved['mcpServers']['airlock']['required'] is False
+    assert json.loads(result['config'])['mcpServers']['airlock']==saved['mcpServers']['airlock']
+    for declaration in ['{"mcpServers":{},"mcp_servers":{}}','{"schema_version":2}']:
+        path.write_text(declaration)
+        result=clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+        assert not result['installed'] and path.read_text()==declaration
+    path.unlink()
+    clients.connect(bundle[0],agent='muse-code',approved=True,home=home)
+    assert json.loads(path.read_text())['schema_version']==1

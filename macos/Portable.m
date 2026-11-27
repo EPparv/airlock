@@ -1,9 +1,13 @@
-#import <Cocoa/Cocoa.h>
+#import "WorkspacePanel.m"
 #import <sys/stat.h>
+#import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <signal.h>
 
 @interface PrivacyLauncher : NSObject <NSApplicationDelegate, NSURLSessionTaskDelegate>
 @property NSWindow *window;
+@property AirlockPanel *panel;
+@property NSView *startup;
 @property NSTextField *detail;
 @property NSProgressIndicator *spinner;
 @property NSButton *button;
@@ -13,6 +17,7 @@
 @property NSURL *url;
 @property NSNumber *serverPID;
 @property BOOL preparing;
+@property BOOL needsFreshEntry;
 @property BOOL quitting;
 @property BOOL updating;
 @property BOOL updateReady;
@@ -30,14 +35,29 @@
  if(![record isKindOfClass:NSDictionary.class]||![record[@"url"] isKindOfClass:NSString.class]||![record[@"owner_token"] isKindOfClass:NSString.class]||![record[@"pid"] isKindOfClass:NSNumber.class])return nil;
  NSURL *url=[NSURL URLWithString:record[@"url"]];
  if(![url.scheme isEqual:@"http"]||![url.host isEqual:@"127.0.0.1"]||url.user||url.password||url.port.integerValue<1||url.port.integerValue>65535)return nil;
- NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@/api/state",url.port]] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:2];
- request.HTTPMethod=@"POST";request.HTTPBody=[@"{}" dataUsingEncoding:NSUTF8StringEncoding];
- [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
- [request setValue:[@"Bearer " stringByAppendingString:record[@"owner_token"]] forHTTPHeaderField:@"Authorization"];
+ BOOL verifiesListener=[record[@"session_check"] isEqual:@1];
+ NSString *pathPart=verifiesListener?@"/_airlock/session":@"/api/state";
+ NSURL *probe=[NSURL URLWithString:[NSString stringWithFormat:@"http://127.0.0.1:%@%@",url.port,pathPart]];
+ NSMutableURLRequest *request=[NSMutableURLRequest requestWithURL:probe cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:2];
+ NSData *expected=nil;
+ if(verifiesListener){
+  NSString *challenge=NSUUID.UUID.UUIDString.lowercaseString;
+  NSData *message=[[@"Airlock session v1 " stringByAppendingString:challenge] dataUsingEncoding:NSUTF8StringEncoding];
+  NSData *key=[record[@"owner_token"] dataUsingEncoding:NSUTF8StringEncoding];
+  unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+  CCHmac(kCCHmacAlgSHA256,key.bytes,key.length,message.bytes,message.length,digest);
+  expected=[[NSData dataWithBytes:digest length:sizeof(digest)] base64EncodedDataWithOptions:0];
+  [request setValue:challenge forHTTPHeaderField:@"X-Airlock-Challenge"];
+ }else{
+  // Older releases expose only the authenticated state check.
+  request.HTTPMethod=@"POST";request.HTTPBody=[@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+  [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+  [request setValue:[@"Bearer " stringByAppendingString:record[@"owner_token"]] forHTTPHeaderField:@"Authorization"];
+ }
  NSURLSessionConfiguration *config=NSURLSessionConfiguration.ephemeralSessionConfiguration;config.connectionProxyDictionary=@{};
  NSURLSession *session=[NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:nil];
  dispatch_semaphore_t done=dispatch_semaphore_create(0);__block BOOL ok=NO;
- [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){ok=!error&&[(NSHTTPURLResponse *)response statusCode]==200;dispatch_semaphore_signal(done);}] resume];
+ [[session dataTaskWithRequest:request completionHandler:^(NSData *data,NSURLResponse *response,NSError *error){ok=!error&&[(NSHTTPURLResponse *)response statusCode]==200&&(!expected||[expected isEqual:data]);dispatch_semaphore_signal(done);}] resume];
  dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC));[session invalidateAndCancel];return ok?record:nil;
 }
 - (NSTextField *)label:(NSString *)text frame:(NSRect)frame size:(CGFloat)size {
@@ -51,26 +71,42 @@
  NSArray *args=NSProcessInfo.processInfo.arguments;
  NSUInteger n=[args indexOfObject:@"--data-dir"];if(n!=NSNotFound&&n+1<args.count)self.base=[args[n+1] stringByStandardizingPath];
  n=[args indexOfObject:@"--profile-home"];if(n!=NSNotFound&&n+1<args.count)self.profileHome=[args[n+1] stringByStandardizingPath];
- self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,460,310) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
- self.window.title=@"Airlock";self.window.releasedWhenClosed=NO;self.window.appearance=[NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];self.window.backgroundColor=[NSColor colorWithRed:.047 green:.063 blue:.09 alpha:1];
- NSImageView *brand=[[NSImageView alloc] initWithFrame:NSMakeRect(193,207,74,74)];brand.image=[NSImage imageNamed:NSImageNameApplicationIcon];[self.window.contentView addSubview:brand];
- [self label:@"Welcome to Airlock." frame:NSMakeRect(25,163,410,35) size:23];
- self.detail=[self label:@"Opening…" frame:NSMakeRect(35,85,390,65) size:14];self.detail.textColor=NSColor.secondaryLabelColor;
- self.spinner=[[NSProgressIndicator alloc] initWithFrame:NSMakeRect(215,50,30,30)];self.spinner.style=NSProgressIndicatorStyleSpinning;[self.window.contentView addSubview:self.spinner];
- self.button=[NSButton buttonWithTitle:@"Open control panel" target:self action:@selector(openPanel:)];self.button.frame=NSMakeRect(130,20,200,30);self.button.hidden=YES;[self.window.contentView addSubview:self.button];
+ self.window=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,640,536) styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable|NSWindowStyleMaskMiniaturizable|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+ self.window.title=@"Airlock";self.window.releasedWhenClosed=NO;self.window.contentMinSize=NSMakeSize(350,300);
+ self.startup=self.window.contentView;
+ self.detail=[self label:@"Opening Airlock…" frame:NSMakeRect(60,233,520,44) size:15];
+ self.detail.autoresizingMask=NSViewMinYMargin|NSViewMaxYMargin|NSViewWidthSizable;
+ self.spinner=[[NSProgressIndicator alloc] initWithFrame:NSMakeRect(308,283,24,24)];self.spinner.style=NSProgressIndicatorStyleSpinning;
+ self.spinner.autoresizingMask=NSViewMinXMargin|NSViewMaxXMargin|NSViewMinYMargin|NSViewMaxYMargin;[self.startup addSubview:self.spinner];
+ self.button=[NSButton buttonWithTitle:@"Try again" target:self action:@selector(openPanel:)];self.button.frame=NSMakeRect(245,187,150,32);self.button.hidden=YES;
+ self.button.autoresizingMask=self.spinner.autoresizingMask;[self.startup addSubview:self.button];
  NSMenu *menu=[NSMenu new];NSMenuItem *item=[NSMenuItem new];[menu addItem:item];NSMenu *appMenu=[NSMenu new];item.submenu=appMenu;
  [appMenu addItemWithTitle:@"About Airlock" action:@selector(about:) keyEquivalent:@""].target=self;
- [appMenu addItemWithTitle:@"Open control panel" action:@selector(openPanel:) keyEquivalent:@"o"].target=self;
+ [appMenu addItemWithTitle:@"Open Airlock" action:@selector(openPanel:) keyEquivalent:@"o"].target=self;
  [appMenu addItemWithTitle:@"Check for Updates…" action:@selector(checkForUpdates:) keyEquivalent:@""].target=self;
  self.automaticUpdatesItem=[appMenu addItemWithTitle:@"Check for updates on launch" action:@selector(toggleUpdates:) keyEquivalent:@""];self.automaticUpdatesItem.target=self;
  [NSUserDefaults.standardUserDefaults registerDefaults:@{@"AirlockCheckUpdatesOnLaunch":@YES}];self.automaticUpdatesItem.state=[NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"]?NSControlStateValueOn:NSControlStateValueOff;
  [appMenu addItemWithTitle:@"Version history" action:@selector(versionHistory:) keyEquivalent:@""].target=self;
  [appMenu addItem:NSMenuItem.separatorItem];
- [appMenu addItemWithTitle:@"Quit Airlock" action:@selector(terminate:) keyEquivalent:@"q"];NSApp.mainMenu=menu;
+ [appMenu addItemWithTitle:@"Quit Airlock" action:@selector(terminate:) keyEquivalent:@"q"];NSMenuItem *editItem=[NSMenuItem new];editItem.title=@"Edit";[menu addItem:editItem];NSMenu *edit=[[NSMenu alloc] initWithTitle:@"Edit"];editItem.submenu=edit;
+ for(NSArray *command in @[@[@"Undo",@"undo:",@"z"],@[@"Redo",@"redo:",@"Z"],@[@"Cut",@"cut:",@"x"],@[@"Copy",@"copy:",@"c"],@[@"Paste",@"paste:",@"v"],@[@"Select All",@"selectAll:",@"a"]])
+     [edit addItemWithTitle:command[0] action:NSSelectorFromString(command[1]) keyEquivalent:command[2]];
+ NSApp.mainMenu=menu;
  [self.window center];[self.window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];[self prepare];
 }
 - (void)ready:(NSDictionary *)record {
- dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Open control panel";self.detail.stringValue=@"Ready. Keep this app open while your AI uses your context.";[[NSWorkspace sharedWorkspace] openURL:self.url];[self.window orderOut:nil];
+ dispatch_async(dispatch_get_main_queue(),^{if(self.quitting)return;self.preparing=NO;self.needsFreshEntry=NO;self.url=[NSURL URLWithString:record[@"url"]];self.serverPID=record[@"pid"];[self.spinner stopAnimation:nil];self.spinner.hidden=YES;[self.panel detach];
+  self.panel=[[AirlockPanel alloc] initWithWindow:self.window entry:self.url];
+  __weak PrivacyLauncher *weakSelf=self;
+  self.panel.setAutomatic=^(BOOL enabled){[weakSelf setAutomaticUpdates:enabled];};
+  self.panel.checkUpdates=^{[weakSelf checkUpdates:YES];};
+  self.panel.reconnect=^{[weakSelf revalidatePanel:YES];};
+  self.panel.loadFailed=^{
+   PrivacyLauncher *launcher=weakSelf;
+   [launcher.panel detach];launcher.panel=nil;launcher.window.contentView=launcher.startup;
+   [launcher failed];
+  };
+  self.window.contentView=self.panel.view;[self.window makeKeyAndOrderFront:nil];[self.window makeFirstResponder:self.panel.view];
   if(!self.checkedAutomatically){self.checkedAutomatically=YES;
    if([NSProcessInfo.processInfo.arguments containsObject:@"--update-restored"])[self alert:@"Previous version restored" message:@"The update could not start. Airlock restored the previous app. Your library has not been reset."];
    if(![NSProcessInfo.processInfo.arguments containsObject:@"--no-update-check"]&&[NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"])[self checkUpdates:NO];
@@ -78,15 +114,19 @@
  });
 }
 - (void)failed {
- dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Setup could not finish. Check your internet connection, then try again. Your data has not been reset.";[self.window makeKeyAndOrderFront:nil];});
+ dispatch_async(dispatch_get_main_queue(),^{self.preparing=NO;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.button.title=@"Try again";self.detail.stringValue=@"Airlock’s local service could not start. Try opening it again.";[self.window makeKeyAndOrderFront:nil];});
 }
 - (void)prepare {
- if(self.preparing)return;self.preparing=YES;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
+ if(self.preparing||self.updating||self.quitting)return;self.preparing=YES;self.window.contentView=self.startup;self.detail.stringValue=@"Opening Airlock…";self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
   NSString *resource=NSBundle.mainBundle.resourcePath;
   NSDictionary *release=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfFile:[resource stringByAppendingPathComponent:@"payload/release.json"]] options:0 error:nil];
   NSDictionary *existing=[self session];
-  if(existing&&[existing[@"version"] isEqual:release[@"version"]]&&[existing[@"mode"] isEqual:@"safe-test"]){[self ready:existing];return;}
+  NSString *runningVersion=existing[@"version"], *bundledVersion=release[@"version"];
+  if([runningVersion isKindOfClass:NSString.class]&&[bundledVersion isKindOfClass:NSString.class]&&
+     [runningVersion compare:bundledVersion options:NSNumericSearch]!=NSOrderedAscending&&[existing[@"mode"] isEqual:@"safe-test"]){
+   [self ready:existing];return;
+  }
   if(existing){
    // Replace only this installation's authenticated service; keep its vault and key.
    int pid=[existing[@"pid"] intValue];if(pid<=1){[self failed];return;}
@@ -111,8 +151,9 @@
  [self alert:@"Airlock" message:[NSString stringWithFormat:@"Version %@\n\nUpdates are checked against a signed release from Airlock’s GitHub build. Checks send no library content. Installation requires your click.",release[@"version"]?:@"Unknown"]];
 }
 - (void)versionHistory:(id)sender { [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:@"https://github.com/EPparv/airlock/releases"]]; }
-- (void)toggleUpdates:(id)sender {
- BOOL value=![NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"];[NSUserDefaults.standardUserDefaults setBool:value forKey:@"AirlockCheckUpdatesOnLaunch"];self.automaticUpdatesItem.state=value?NSControlStateValueOn:NSControlStateValueOff;
+- (void)toggleUpdates:(id)sender { [self setAutomaticUpdates:![NSUserDefaults.standardUserDefaults boolForKey:@"AirlockCheckUpdatesOnLaunch"]]; }
+- (void)setAutomaticUpdates:(BOOL)value {
+ [NSUserDefaults.standardUserDefaults setBool:value forKey:@"AirlockCheckUpdatesOnLaunch"];self.automaticUpdatesItem.state=value?NSControlStateValueOn:NSControlStateValueOff;
 }
 - (NSTask *)updateCommand:(NSArray *)arguments {
  NSTask *task=[NSTask new];task.executableURL=[NSURL fileURLWithPath:[self.base stringByAppendingPathComponent:@"runtime/venv/bin/python"]];
@@ -139,7 +180,7 @@
  });
 }
 - (void)installUpdate:(NSDictionary *)release {
- self.updating=YES;self.updateReady=NO;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];self.detail.stringValue=@"Downloading and verifying the update…";[self.window makeKeyAndOrderFront:nil];
+ self.window.contentView=self.startup;self.updating=YES;self.updateReady=NO;self.button.hidden=YES;self.spinner.hidden=NO;[self.spinner startAnimation:nil];self.detail.stringValue=@"Downloading and verifying the update…";[self.window makeKeyAndOrderFront:nil];
  NSString *status=[self.base stringByAppendingPathComponent:[NSString stringWithFormat:@"update-%@.json",NSUUID.UUID.UUIDString]];
  NSMutableArray *args=[@[@"install",@"--app",NSBundle.mainBundle.bundlePath,@"--base",self.base,@"--expected-build",[release[@"build"] stringValue],@"--parent-pid",[NSString stringWithFormat:@"%d",getpid()],@"--status",status] mutableCopy];if(self.profileHome)[args addObjectsFromArray:@[@"--profile-home",self.profileHome]];
  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
@@ -152,12 +193,31 @@
   }
   NSData *data=[NSData dataWithContentsOfFile:status];if(data.length&&data.length<8192)state=[NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
   [[NSFileManager defaultManager] removeItemAtPath:status error:nil];
-  dispatch_async(dispatch_get_main_queue(),^{self.updating=NO;if(self.quitting)return;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;self.detail.stringValue=@"Your current app is ready.";[self alert:@"Update not installed" message:state[@"message"]?:@"The update could not be verified or downloaded. Your current app is unchanged. Try again from Check for Updates."];});
+  dispatch_async(dispatch_get_main_queue(),^{self.updating=NO;if(self.quitting)return;[self.spinner stopAnimation:nil];self.spinner.hidden=YES;self.button.hidden=NO;if(self.panel)self.window.contentView=self.panel.view;[self alert:@"Update not installed" message:state[@"message"]?:@"The update could not be verified or downloaded. Your current app is unchanged. Try again from Check for Updates."];});
  });
 }
-- (void)openPanel:(id)sender { if(self.preparing||self.updating){[self.window makeKeyAndOrderFront:nil];return;}[self prepare]; }
+- (void)revalidatePanel:(BOOL)freshEntry {
+ if(self.updating||self.quitting)return;
+ if(freshEntry)self.needsFreshEntry=YES;
+ if(self.preparing)return;
+ if(!self.panel){[self prepare];return;}
+ self.preparing=YES;
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+  NSDictionary *record=[self session];
+  dispatch_async(dispatch_get_main_queue(),^{
+   self.preparing=NO;
+   if(self.quitting||self.updating)return;
+   BOOL sameService=[record[@"url"] isEqual:self.url.absoluteString]&&[record[@"pid"] isEqual:self.serverPID];
+   if(sameService&&!self.needsFreshEntry)return;
+   [self.panel detach];self.panel=nil;
+   if(sameService){[self ready:record];return;}
+   [self prepare];
+  });
+ });
+}
+- (void)openPanel:(id)sender { [self.window makeKeyAndOrderFront:nil];[self revalidatePanel:NO]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag { [self openPanel:nil];return YES; }
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender { return NO; }
-- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];if(self.updateTask.running&&!self.updateReady)[self.updateTask terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender { self.quitting=YES;if(self.task.running)[self.task terminate];if(self.updateTask.running&&!self.updateReady)[self.updateTask terminate];NSDictionary *live=[self session];if(self.serverPID.intValue>1&&[live[@"pid"] isEqual:self.serverPID]&&[live[@"url"] isEqual:self.url.absoluteString])kill(self.serverPID.intValue,SIGTERM);return NSTerminateNow; }
 @end
 int main(int argc,const char *argv[]){@autoreleasepool{umask(0077);NSApplication *app=NSApplication.sharedApplication;PrivacyLauncher *delegate=[PrivacyLauncher new];app.delegate=delegate;[app setActivationPolicy:NSApplicationActivationPolicyRegular];[app run];}return 0;}

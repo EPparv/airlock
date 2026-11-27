@@ -27,3 +27,37 @@ No personal records were used to develop or test these changes. Tests use dispos
 ## Limits
 
 Rule-based redaction is not complete anonymization. Unlabelled names, novel credentials, paraphrased sensitive facts, and unique combinations of projects or dates may remain identifying. Pseudonyms intentionally allow continuity within a connection. An external host can retain the safe text it receives; revocation cannot recall copies. Airlock cannot force a host to refresh its tools or reproduce another product's personal memory. The Mac app is not Apple-notarized. Live NEAR confidential inference remains unverified; see [actual verification attempts](NEAR_VERIFICATION.md).
+
+## Filter model requests
+
+Open the personal workspace, choose **Privacy & connections → Data protection → Filter model requests**, and create a connection. Copy its base URL and one-time key into a client that lets you choose an OpenAI-compatible endpoint. Use the model ID `airlock`. The example reads the URL and key from your environment.
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url=os.environ["AIRLOCK_MODEL_URL"],
+                api_key=os.environ["AIRLOCK_MODEL_KEY"])
+
+# POST /v1/chat/completions
+chat = client.chat.completions.create(
+    model="airlock", messages=[{"role": "user", "content": "Write a meeting agenda."}]
+)
+print(chat.choices[0].message.content)
+
+# POST /v1/responses, with a string or a self-contained list of text messages
+one = client.responses.create(model="airlock", input="Write a meeting agenda.")
+two = client.responses.create(
+    model="airlock", store=False, instructions="Use short sentences.",
+    input=[{"role": "user", "content": [{"type": "input_text", "text": "Write a meeting agenda."}]}],
+)
+print(one.output_text, two.output_text)
+```
+
+Both routes accept system, developer, user, and assistant text. Responses instructions and all supplied history pass through the same local filter. Streaming clients receive buffered text after generation finishes. Submit the required history on each request. Tools, files, images, stored conversation IDs, provider-specific metadata, and background jobs receive an error. These limits matter for coding agents that automatically attach tools to every request. A client using its own model endpoint continues to send its prompts there.
+
+Each connection is limited to one owner-selected model, 100 generation calls, and 24 hours. Closing the personal workspace or restarting Airlock discards the key and local connection state. Ollama runs at a fixed loopback address and must report locally installed GGUF weights. Selecting OpenAI sends the filtered text to its Chat Completions API with storage disabled. Its API key stays in process memory. Airlock never sends the local client key or arbitrary client headers to the selected model. The provider may apply its own data handling policies.
+
+Filtering replaces known contact patterns and explicitly labelled identities with connection-specific tokens. It removes matching protected phrases, known secrets, and detected sensitive passages. Unlabelled names and identifying facts in ordinary prose can survive detection. The gateway keeps no prompt transcript. It retains a bounded identity lookup in memory for the lifetime of a connection so that subsequent messages can use the same tokens.
+
+Wire format references are the [OpenAI Chat Completions reference](https://developers.openai.com/api/reference/resources/chat), the [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create), and [Ollama's OpenAI compatibility guide](https://docs.ollama.com/api/openai-compatibility).

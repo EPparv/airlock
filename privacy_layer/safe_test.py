@@ -1,4 +1,5 @@
 """Isolated first-run checks. Personal sources are constructed only after opt-in."""
+import asyncio
 import copy
 import json
 import os
@@ -14,6 +15,8 @@ from starlette.routing import Route
 from .core import Gateway, EncryptedStore, Denied, digest, normalized
 from .context import ContextHub
 from .agent_memory import AgentMemory
+from .device_apps import ExampleApps, NativeApps
+from .workspace import Workspace, TOOLS as DEVICE_TOOLS, WORKSPACE_ASSETS
 
 REHEARSAL = 'Cypress product rehearsal is November 18.'
 PRIVATE = 'FICTIONAL-ORCHID-7429'
@@ -38,7 +41,7 @@ class TestSources:
 
 class TestGateway(Gateway):
     def call(self, token, tool, args):
-        if tool not in ALLOWED:
+        if tool not in ALLOWED and tool not in DEVICE_TOOLS:
             raise Denied('The isolated test has no email, real files, imports, execution or inference access.')
         if tool == 'update_shared_context' and (
             args.get('operation') != 'add' or args.get('kind') != 'memories' or
@@ -53,16 +56,16 @@ class GatewayRouter:
     def __init__(self, controller):
         self.controller = controller
 
-    def authenticate(self, token):
+    def authenticate(self, token, *, discovered=False, initialized=False):
         """The HTTP boundary authenticates before dispatching any MCP method."""
         c = self.controller
         try:
-            return c.g.authenticate(token)
+            return c.g.authenticate(token, discovered=discovered, initialized=initialized)
         except Denied:
             personal = c.personal
             if personal is None:
                 raise Denied('Personal access is closed.') from None
-            result = personal.authenticate(token)
+            result = personal.authenticate(token, discovered=discovered, initialized=initialized)
             if c.personal is not personal:
                 raise Denied('The personal workspace closed during authentication.')
             return result
@@ -104,7 +107,9 @@ class SafeTest:
 
     def reopen(self):
         store = EncryptedStore(self.folder / 'fictional.enc', self.key)
-        return TestGateway(store, TestSources(store), self.clock)
+        gateway = TestGateway(store, TestSources(store), self.clock)
+        gateway.device_apps = ExampleApps()
+        return gateway
 
     def metadata(self):
         with self.g.store.transaction() as d:
@@ -260,7 +265,7 @@ class SafeTest:
             if isinstance(error,Denied):raise
             raise Denied('The test connection could not be installed. Its access was revoked.') from None
 
-    def open_personal(self, approved, port):
+    def open_personal(self, approved, port, host=None):
         if approved is not True:
             raise Denied('Confirm before opening personal sources and previously approved connections.')
         with self.lock:
@@ -270,14 +275,16 @@ class SafeTest:
                 sources = LocalSources(context_home=self.profile_home)
                 personal = Gateway(EncryptedStore(self.state/'connections.enc',sources.key),sources)
                 sources.connection_store = personal.store
+                personal.device_apps = NativeApps()
                 token = secrets.token_urlsafe(32)
                 app = owner_app(personal, token, port)
                 self.personal, self.personal_app, self.personal_token = personal, app, token
-            return {'url':f'http://127.0.0.1:{port}/personal#'+self.personal_token}
+            authority = f'localhost:{port}' if host == f'localhost:{port}' else f'127.0.0.1:{port}'
+            return {'url':f'http://{authority}/personal#'+self.personal_token}
 
     def app(self, owner_token, port):
         async def asset(req):
-            name = {'/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
+            name = {'/workspace':'workspace.html','/workspace/personal':'workspace.html',**WORKSPACE_ASSETS,'/':'safe-test.html','/safe-test.js':'safe-test.js','/safe-test.css':'safe-test.css','/icon.svg':'icon.svg'}.get(req.url.path)
             if not name:return Response(status_code=404)
             return FileResponse(self.root/'ui'/name,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
                 'X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"})
@@ -293,11 +300,22 @@ class SafeTest:
                 if len(raw)>4096:return Response(status_code=413)
             try:
                 body=json.loads(raw or '{}'); action=req.path_params['action']
-                expected={'state':set(),'test-state':set(),'test-check':{'step'},'test-reset':{'approved'},
+                expected={'workspace-launch-options':set(),'state':set(),'test-state':set(),'test-check':{'step'},'test-reset':{'approved'},
                           'test-connect':{'agent','approved'},'test-disconnect':set(),'open-personal':{'approved'},'close-personal':set()}
+                allowed_example = {'workspace-state', 'workspace-try', 'workspace-decide', 'workspace-sources'}
+                if action in allowed_example and isinstance(body, dict):
+                    with self.lock:
+                        work = Workspace(self.g)
+                        work.seed()
+                        result = work.owner(action, body)
+                    return JSONResponse(result, headers={'Cache-Control':'no-store'})
                 if not isinstance(body,dict) or action not in expected or set(body)!=expected[action]:
                     raise Denied('Only the guided fictional test is available here.')
-                if action in ('state','test-state'):result=self.status()
+                if action == 'workspace-launch-options':
+                    # This advertises static Mac capabilities without opening the owner vault.
+                    from .quick_connect import launch_options
+                    result = {'agents':launch_options()}
+                elif action in ('state','test-state'):result=self.status()
                 elif action=='test-check':result=self.check(body['step'])
                 elif action=='test-reset':
                     if body['approved'] is not True:raise Denied('Confirm resetting the fictional test.')
@@ -306,15 +324,23 @@ class SafeTest:
                 elif action=='test-disconnect':
                     for key in self.metadata()['live']:self.g.revoke(key)
                     result={'revoked':True}
-                elif action=='open-personal':result=self.open_personal(body['approved'],port)
+                elif action=='open-personal':
+                    result=await asyncio.to_thread(self.open_personal, body['approved'], port, req.headers.get('host'))
                 else:
-                    with self.lock:self.personal=self.personal_app=self.personal_token=None
+                    with self.lock:
+                        closing = self.personal_app
+                        if self.personal is not None and hasattr(self.personal.sources, 'cancel_gmail_sign_in'):
+                            self.personal.sources.cancel_gmail_sign_in()
+                        self.personal=self.personal_app=self.personal_token=None
+                        if closing is not None:
+                            closing.state.prompt_gateway.close()
+                            closing.state.remote_clients.close()
                     result={'closed':True}
                 return JSONResponse(result,headers={'Cache-Control':'no-store'})
             except (Denied,ValueError,TypeError) as e:return JSONResponse({'error':str(e)},status_code=400)
             except Exception:return JSONResponse({'error':'The test could not finish. Review the workspace status, or reopen Airlock to close personal access.'},status_code=400)
 
-        test_app=Starlette(routes=[Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
+        test_app=Starlette(routes=[Route('/workspace',asset),Route('/workspace/personal',asset),*[Route(path,asset) for path in WORKSPACE_ASSETS],Route('/',asset),Route('/safe-test.js',asset),Route('/safe-test.css',asset),Route('/icon.svg',asset),Route('/api/{action}',api,methods=['POST'])])
         near_app = None
         async def dispatch(scope, receive, send):
             nonlocal near_app
@@ -335,7 +361,7 @@ class SafeTest:
                 return await near_app(scope,receive,send)
             personal_app, token = self.personal_app, self.personal_token
             personal_auth = token and secrets.compare_digest(headers.get(b'authorization',b''),('Bearer '+token).encode())
-            personal_asset = path not in ('/','/safe-test.js','/safe-test.css','/icon.svg') and not path.startswith('/api/')
+            personal_asset = path not in ('/','/workspace',*WORKSPACE_ASSETS,'/safe-test.js','/safe-test.css','/icon.svg') and not path.startswith('/api/')
             if personal_app and (personal_auth or personal_asset):
                 if path=='/personal':scope={**scope,'path':'/','raw_path':b'/'}
                 return await personal_app(scope,receive,send)

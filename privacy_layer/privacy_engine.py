@@ -80,14 +80,18 @@ class PrivacyEngine:
                 raise Denied('This connection reached its local identity limit. Create a new scoped connection.')
             for key, entry in found.items(): aliases.setdefault(key, entry)
 
-    def pseudonymize(self, value):
+    def alias_filter(self):
         with self.g.store.transaction() as data:
             aliases = dict(data.get('privacy_aliases', {}).get(self.grant['id'], {}))
         # Single substitution prevents aliases from being interpreted as identities.
         if not aliases:
-            return value
+            return lambda value: value
         pattern = r'(?<!\w)(?:' + '|'.join(re.escape(x) for x in sorted(aliases, key=len, reverse=True)) + r')(?!\w)'
-        return re.sub(pattern, lambda m: aliases[m.group().casefold()][1], value, flags=re.I)
+        compiled = re.compile(pattern, re.I)
+        return lambda value: compiled.sub(lambda m: aliases.get(m.group().casefold(), ('', '[identity withheld]'))[1], value)
+
+    def pseudonymize(self, value):
+        return self.alias_filter()(value)
 
     def filter(self, value, *, query='', email=False, compute=False, core=False, skill=False):
         value = clean(value)
