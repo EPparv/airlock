@@ -239,10 +239,10 @@ function watchHandoff(host, opt, headline, detail) {
       }
       const discovered = fresh('last_discovery');
       if (discovered || fresh('last_initialized')) {
-        clearRecovery();
         received = true;
-        headline.textContent = 'Connected';
-        detail.textContent = name + (discovered ? ' found Airlock’s tools.' : ' established a connection to Airlock.');
+        headline.textContent = discovered ? 'Tools discovered' : 'Session opened';
+        detail.textContent = 'Waiting for ' + name + ' to call an Airlock tool.';
+        if (Date.now() - started >= 20000) showRecovery();
       } else if (!received) {
         const quiet = opt.opened && Date.now() - started >= 20000;
         headline.textContent = quiet ? 'No response yet' : waitingTitle;

@@ -189,6 +189,21 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
  assert.equal(cursorGrants.length,1);assert.deepEqual(cursorGrants[0].scope,savedCursor.scope);
  assert.equal(cursorGrants[0].last_discovery,null);assert.equal(cursorGrants[0].last_call,null);
  assert.deepEqual(launched(),['cursor','cursor','cursor']);
+ // Drive the handoff through initialization, tool listing and the first successful call.
+ // Each snapshot is a fixture, independent of any installed agent or model account.
+ const sampleStatus = {status:'waiting', last_initialized:1, last_discovery:null, last_call:null};
+ const statusReply = () => ({
+   responseCode:200, responseHeaders:[{name:'Content-Type',value:'application/json'}],
+   body:Buffer.from(JSON.stringify(sampleStatus)).toString('base64')
+ });
+ interceptedReply = statusReply();
+ await send('Fetch.enable',{patterns:[{urlPattern:`http://127.0.0.1:${port}/api/client-status`,requestStage:'Request'}]},session);
+ for (const [title, update] of [['Session opened',{}], ['Tools discovered',{last_discovery:2}], ['Connected',{last_call:3}]]) {
+   Object.assign(sampleStatus, update);
+   interceptedReply = statusReply();
+   await until("document.querySelector('.handoff-status')?.textContent===" + JSON.stringify(title));
+ }
+ await send('Fetch.disable',{},session);interceptedReply=null;
  await home();await btn('Privacy & connections');await btn('Data protection');await type('Always hide these phrases','Sensitive Pilot Code','#app');await btn('Save phrases');await until("document.getElementById('notice').textContent==='Private phrases saved.'");
  await byText('summary','Test redaction');await type('Sample','Write to test@example.org about Sensitive Pilot Code.','#app');await btn('Show filtered result');await until("document.querySelector('#app pre')?.textContent.length>0");
  const redacted=await evaluate("document.querySelector('#app pre').textContent");assert.ok(!redacted.includes('test@example.org')&&!redacted.includes('Sensitive Pilot Code'));
