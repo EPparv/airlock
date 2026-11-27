@@ -1,0 +1,24 @@
+name: Safari native reviewed share acceptance
+on:
+  push:
+    branches: ["qa/iphone-safari-native-share-694a18c"]
+permissions:
+  contents: read
+jobs:
+  system-share:
+    name: Open and cancel the real iOS share sheet
+    runs-on: macos-15
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify iPhone input is identical to candidate
+        run: |
+          test "$(git hash-object web/iphone/app.js)" = 694a18cfe4a422dca6d4761e3b1a96dc4ffc8dc0
+          test "$(git hash-object web/iphone/vault.js)" = 20bf1ae2233439537faa9a254b9a4adf27f950f7
+      - name: Install project generator if absent
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: command -v xcodegen || brew install xcodegen
+      - name: Native Safari tap, system sheet and cancel using fictional text
+        run: python3 QA/run.py

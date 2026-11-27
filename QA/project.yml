@@ -1,0 +1,37 @@
+name: SafariShareProbe
+options:
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    GENERATE_INFOPLIST_FILE: YES
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  Probe:
+    type: application
+    platform: iOS
+    sources: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.airlock.qa.probe
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  SafariShareTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Probe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.airlock.qa.sharetests
+        TEST_TARGET_NAME: Probe
+schemes:
+  ShareAcceptance:
+    build:
+      targets:
+        Probe: all
+        SafariShareTests: [test]
+    test:
+      targets: [SafariShareTests]
+      gatherCoverageData: false
