@@ -13,6 +13,12 @@ function write(label, text) {
   const field = [...document.querySelectorAll('label')].find(l => l.firstChild.textContent === label);
   if (!field) throw Error('Missing field ' + label); field.querySelector('input,textarea').value = text;
 }
+async function reviewedExcerpt() {
+  const field = await until(() => [...document.querySelectorAll('main label')].find(label =>
+    label.firstChild?.textContent === 'Reviewed text')?.querySelector('textarea'), 'Filtered review did not finish');
+  if (!field.readOnly) throw Error('Reviewed output must be read-only.');
+  return field;
+}
 const title = name => until(() => document.querySelector('h1')?.textContent === name, 'Heading ' + name);
 const seen = text => until(() => document.querySelector('main').innerText.includes(text), text);
 const message = 'Cypress pilot contact sam@example.com';
@@ -45,8 +51,8 @@ if (phase === 1) {
   write('Text to share', 'The demo word is cedar. Email editor@example.org.');
   if (findButton('Share reviewed text')) throw Error('Unreviewed input is shareable.');
   await press('Review excerpt');
-  const approved = document.querySelectorAll('textarea')[1], reviewed = approved?.value;
-  if (!approved?.readOnly || !reviewed.includes('cedar') || !reviewed.includes('[email-') || reviewed.includes('example.org')) throw Error('Raw text in review.');
+  const approved = await reviewedExcerpt(), reviewed = approved.value;
+  if (!/^The demo word is cedar\. Email \[email-[a-f0-9]{16}\]\.$/.test(reviewed)) throw Error('Reviewed text did not preserve the sentence and fully pseudonymize its email.');
   if (shared.length || copied.length) throw Error('Review released text without a user action.');
   const originalURL = location.href;
   nextError = 'AbortError';
@@ -88,8 +94,8 @@ await press('‹ Privacy & connections'); await press('‹ Airlock'); await pres
 if (phase === 1) {
   Object.defineProperty(navigator, 'share', {configurable:true, value:undefined});
   await title('Share an excerpt'); write('Text to share','Send the draft to editor@example.org');
-  await press('Review excerpt'); const approved = document.querySelectorAll('textarea')[1];
-  if (!approved?.readOnly || !approved.value.includes('[email-') || approved.value.includes('example.org')) throw Error('One-time excerpt leaked raw email.');
+  await press('Review excerpt'); const approved = await reviewedExcerpt();
+  if (!/^Send the draft to \[email-[a-f0-9]{16}\]$/.test(approved.value)) throw Error('One-time excerpt did not fully pseudonymize its email.');
   if (findButton('Share reviewed text') || !findButton('Copy reviewed text')) throw Error('Unsupported share sheet should offer copy.');
   delete navigator.share;
 } else {
