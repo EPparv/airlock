@@ -38,7 +38,7 @@ await press('Set up on Mac');
 delete navigator.share;
 if (handedOff !== 'https://try-airlock.parv223885.chatgpt.site/#mac') throw Error('Incorrect Mac handoff.');
 location.hash = '#mac'; await title('Mac setup');
-if (document.querySelector('a').href !== 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip') throw Error('Missing direct Mac download.');
+if (document.querySelector('a').href !== 'https://epparv.github.io/airlock/Airlock_Mac_Latest.zip') throw Error('Missing direct Mac download.');
 location.hash = '#connect'; await title('Connect agent');
 await press('‹ Airlock'); await press('Privacy & connections'); await press('Pair this iPhone');
 write('Pairing link from your Mac','https://example.com/wrong#pair=bad'); await press('Check link');

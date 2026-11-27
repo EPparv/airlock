@@ -2,7 +2,7 @@
 
 Airlock is a local context and permissions layer for MCP agents. It solves two problems: repeating personal context across agents, and disclosing an entire private library to get one useful answer. Each agent receives selected, locally filtered context. Sensitive records use private tasks with separate input and result approvals. Useful preferences stay available across sessions.
 
-[Download the Mac tester](https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip)
+[Download the Mac tester](https://epparv.github.io/airlock/Airlock_Mac_Latest.zip)
 
 Version **0.11.8** opens in its own Mac window. The home screen has three controls.
 

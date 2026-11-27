@@ -40,7 +40,7 @@
   const lookup = (key, ref = selected) => state()[key].find(row => row.id === ref);
   const needsVault = key => !['home','privacy','context','pair','sample','agents','mac','excerpt'].includes(key);
   const macSetup = 'https://try-airlock.parv223885.chatgpt.site/#mac';
-  const macDownload = 'https://try-airlock.parv223885.chatgpt.site/Airlock-Mac.zip';
+  const macDownload = 'https://epparv.github.io/airlock/Airlock_Mac_Latest.zip';
   const pages = {
     home: ['Airlock'], sample: ['Sample workspace'], agents: ['Connect agent','home'], mac:['Mac setup','agents'],
     excerpt:['Share an excerpt','context'], sessions:['Local test sessions','privacy'], newAgent:['New test session','sessions'],
