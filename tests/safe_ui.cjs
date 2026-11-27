@@ -332,7 +332,7 @@ async function click(id){await evaluate(`document.getElementById(${JSON.stringif
    await until("document.querySelector('.preview-note') && document.querySelectorAll('nav button').length===3");assert.deepEqual(await labels(),controls);
    await btn('Context & memory');await btn('Import context');await type('Paste context','Remember the demo date.','#app');await btn('Review import');await sheet('Add selected records');await sheet('View memories');await contains('Remember the demo date.');
    await home();await btn('Connect agent');
-   assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://try-airlock.parv223885.chatgpt.site/#connect');
+   assert.equal(await evaluate("document.querySelector('#app a.external-link').href"), 'https://epparv.github.io/airlock/iphone/#connect');
    assert.equal((await visibleActions()).some(label=>pickerChoices.includes(label)),false);
    await btn('Try sample agents');await matchesPicker();await btn('Cursor');await byText('summary','Shared records · 0 selected');await type('Remember the demo date.','excerpt','#app');await btn('Connect Cursor');await sheet('Close');await contains('Cursor');
    await pickerTests.offlineChoices({home,btn,titled,contains,evaluate,until});

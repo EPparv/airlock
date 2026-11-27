@@ -36,7 +36,7 @@ let handedOff;
 Object.defineProperty(navigator, 'share', {configurable:true, value:async data => { handedOff = data.url; }});
 await press('Set up on Mac');
 delete navigator.share;
-if (handedOff !== 'https://try-airlock.parv223885.chatgpt.site/#mac') throw Error('Incorrect Mac handoff.');
+if (handedOff !== 'https://epparv.github.io/airlock/iphone/#mac') throw Error('Incorrect Mac handoff.');
 location.hash = '#mac'; await title('Mac setup');
 if (document.querySelector('a').href !== 'https://epparv.github.io/airlock/Airlock_Mac_Latest.zip') throw Error('Missing direct Mac download.');
 location.hash = '#connect'; await title('Connect agent');

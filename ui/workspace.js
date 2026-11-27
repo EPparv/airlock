@@ -243,7 +243,7 @@ function previewSetupLink() {
   const mac = /^Mac/.test(navigator.platform) && navigator.maxTouchPoints <= 1;
   const link = el('a', mac ? 'Download Airlock for Mac' : 'Open agent setup', 'primary external-link');
   link.href = mac ? 'https://epparv.github.io/airlock/Airlock_Mac_Latest.zip' :
-    'https://try-airlock.parv223885.chatgpt.site/#connect';
+    'https://epparv.github.io/airlock/iphone/#connect';
   link.target = '_blank';
   link.rel = 'noopener noreferrer';
   return link;
