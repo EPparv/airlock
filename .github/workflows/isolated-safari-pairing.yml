@@ -20,12 +20,8 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.lock
       - run: 'python -m pip install --only-binary=:all: -r requirements.lock'
-      - name: Prepare the iOS UI test tools
-        run: |
-          if [[ -d /Applications/Xcode_16.4.app ]]; then sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer; fi
-          command -v xcodegen || HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen
-      - name: Pair, read, queue an approval and disconnect using Safari.app
-        run: python -u qa/safari_pair/acceptance.py
+      - name: Drive the released phone interface in Apple Mobile Safari and verify the Mac-side receipt
+        run: python -u qa/safari_pair/safari_live.py
       - uses: actions/upload-artifact@v4
         with:
           name: mobile-safari-pairing-receipt
