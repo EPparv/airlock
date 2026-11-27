@@ -1,3 +1,7 @@
+# Airlock 0.11.7
+
+You can open Meta Muse or Manus from Airlock and create an account before starting the HTTPS bridge. If sign-in closes the tab or redirects you away from connector setup, reopen the provider from the same connection.
+
 # Airlock 0.11.5
 
 Airlock can reopen its local workspace when a saved connection points to a stopped service. Connection errors now distinguish a locked workspace, an unreachable Mac, and provider setup that needs attention. Codex opens the privacy check in a dedicated local workspace. Terminal agents use the same profile Airlock configured. ChatGPT tunnel setup shows when its client is waiting for credentials, running, or stopped.

@@ -41,6 +41,8 @@ function validWorkspaceReply(action, body, data) {
     case 'remote-connect':
       return ['bridge','choose'].includes(data.state) || (['created','existing'].includes(data.state) &&
         typeof data.id === 'string' && !!data.id && typeof data.handoff?.opened === 'boolean');
+    case 'remote-open-hosted':
+      return typeof data.opened === 'boolean' && typeof data.url === 'string' && data.url.startsWith('https://');
     case 'client-status':
       return typeof data.status === 'string';
     case 'open-personal':

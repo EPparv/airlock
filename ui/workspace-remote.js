@@ -1,6 +1,7 @@
 'use strict';
 
 const cloudClients = {muse: 'Meta Muse', manus: 'Manus', chatgpt: 'ChatGPT', ironclaw: 'IronClaw', custom: 'Other remote MCP client'};
+const hostedSignupVendors = ['muse', 'manus'];
 
 let cloudReceipt;
 
@@ -36,6 +37,33 @@ function cloudValue(host, label, value, type = 'text') {
       if (type === 'password') box.addEventListener('blur', () => { box.type = 'password'; }, {once:true});
     }
   }));
+}
+
+function hostedSignIn(host, vendor, setup, initial) {
+  const label = setup ? 'Continue in ' + cloudClients[vendor] : 'Sign in or create an account';
+  let fallback;
+  function showFallback(result) {
+    fallback?.remove();
+    if (result.opened) return;
+    fallback = el('div');
+    action.after(fallback);
+    if (result.retry_native) {
+      note(fallback, 'Copy the link and paste it into your browser.');
+    } else {
+      const link = el('a', 'Open ' + cloudClients[vendor] + ' in your browser');
+      link.href = result.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      fallback.append(link);
+    }
+    fallback.append(button('Copy link', () => copyText(result.url)));
+  }
+  const action = button(label, async () => showFallback(await api('remote-open-hosted', {vendor})),
+    setup ? 'primary' : 'secondary');
+  host.append(action);
+  if (initial?.url) showFallback(initial);
+  note(host, setup ? 'If sign-in takes you to the home page, return here and choose ' + label + '.' :
+    'After signing in, return to Airlock to finish connecting.');
 }
 
 function addTunnelDownload(host) {
@@ -95,7 +123,9 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
   surface.append(headline, detail);
   host.append(surface);
   if (handoff?.choose_host) ironclawHostForm(host, !!setup);
-  if (handoff?.retry_native) {
+  if (setup && hostedSignupVendors.includes(opt.vendor)) {
+    hostedSignIn(host, opt.vendor, true, handoff);
+  } else if (handoff?.retry_native) {
     host.append(button('Open ' + name, async () => {
       const next = await api('remote-open-provider', {vendor:opt.vendor, setup:!!setup});
       if (!next.opened) throw Error('Could not open ' + name + '. Open ' + next.url + ' in your browser.');
@@ -108,7 +138,7 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
     link.rel = 'noopener noreferrer';
     host.append(link);
   }
-  if (handoff?.request && !handoff.prepared) {
+  if (handoff?.request && (!handoff.prepared || (setup && opt.vendor === 'muse'))) {
     host.append(button('Copy ' + (setup ? 'setup' : 'status') + ' request', () => copyText(handoff.request)));
   }
   if (setup && opt.vendor === 'chatgpt') {
@@ -295,6 +325,10 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
   }
   const state = await api('remote-state');
   const existing = state.connections.filter(c => c.vendor === opt.vendor && c.active);
+  const waitingForBridge = !state.enabled || !state.listening || (state.mode === 'temporary' && !state.verified);
+  if (hostedSignupVendors.includes(opt.vendor) && (waitingForBridge || !opt.quick)) {
+    hostedSignIn(host, opt.vendor, false);
+  }
   if (opt.quick) {
     const resume = () => connectRemoteNow(opt.vendor, opt.from);
     if (opt.vendor !== 'chatgpt' && state.mode === 'temporary' && state.enabled && !state.verified) {
@@ -383,6 +417,7 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       f.append(button('Copy command', () => copyText(result.command)));
       note(f, 'In ChatGPT on the web, open Plugins → + → Add custom MCP server. Choose Tunnel, select the same tunnel and choose No authentication. Create and install the plugin.');
     } else {
+      if (hostedSignupVendors.includes(opt.vendor)) hostedSignIn(f, opt.vendor, true);
       note(f, opt.vendor === 'muse' ?
         'Paste the setup request into Muse. When Muse opens its secure credential prompt, enter the token there.' :
         opt.vendor === 'manus' ? 'In Manus, choose Connectors → Create → Add MCP by URL. Save the token in its authentication settings.' :
