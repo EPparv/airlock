@@ -29,8 +29,11 @@ from privacy_layer.remote_clients import BridgeApp
 from privacy_layer.workspace import Workspace
 
 class SafariWitness:
-    def __init__(self, app):
+    def __init__(self, app, start, origin):
         self.app = app
+        self.start = start
+        self.origin = origin
+        self.pair_count = None
         self.session = None
         self.events = []
 
@@ -40,15 +43,31 @@ class SafariWitness:
         headers = dict(scope['headers'])
         path = scope['path']
         agent = headers.get(b'user-agent', b'')
-        if b'Mobile/' in agent and b'Safari/' in agent:
-            async def watch(event):
-                if event['type'] == 'http.response.start':
-                    self.events.append((path, event['status']))
+        if path == '/qa/start' and scope['method'] == 'GET':
+            ok = self.start()
+            await send({'type':'http.response.start','status':204 if ok else 410,'headers':[(b'cache-control',b'no-store')]})
+            await send({'type':'http.response.body','body':b''})
+            return
+        mobile = b'Mobile/' in agent and b'Safari/' in agent
+        known = {'/phone','/phone/pair','/phone/context','/phone/actions','/phone/request','/phone/disconnect','/phone/status'}
+        async def watch(event):
+            if event['type'] == 'http.response.start' and path in known:
+                origin = headers.get(b'origin')
+                origin_kind = {None:'absent', b'null':'null',self.origin.encode('ascii'):'same-origin'}.get(origin,'other')
+                print('Airlock QA HTTP:',scope['method'],path,event['status'],'Origin:',origin_kind,
+                      'Mobile Safari:',mobile,'JSON:',b'application/json' in headers.get(b'content-type',b''),
+                      'Fetch-Site:',{None:'absent',b'same-origin':'same-origin'}.get(headers.get(b'sec-fetch-site'),'other'),flush=True)
+                if mobile:
+                    self.events.append((path,event['status']))
                     if path == '/phone/context' and event['status'] == 200:
                         self.session = headers.get(b'authorization')
-                await send(event)
-            return await self.app(scope, receive, watch)
-        return await self.app(scope, receive, send)
+            if mobile and path == '/phone/pair' and event['type'] == 'http.response.body':
+                try:
+                    self.pair_count = json.loads(event.get('body',b'{}')).get('count')
+                except (ValueError,TypeError):
+                    pass
+            await send(event)
+        return await self.app(scope, receive, watch)
 
 def ensure(ok, message):
     if not ok:
@@ -59,6 +78,8 @@ def xcode(args, tmp, stage, markers=()):
         rc = subprocess.run(args, stdout=f, stderr=subprocess.STDOUT, timeout=540).returncode
         f.seek(0)
         log = f.read()
+    for hint in re.findall(r'AIRLOCK_SAFARI_HINT ([a-z_0-9]+)',log):
+        print('Mobile Safari diagnosis:', hint)
     for mark in markers:
         if 'AIRLOCK_SAFARI_PAIR ' + mark in log:
             print('Mobile Safari:', mark, flush=True)
@@ -108,7 +129,7 @@ def main():
             vault=Gateway(EncryptedStore(tmp/'synthetic.enc',secrets.token_bytes(32)),src)
             vault.device_apps=ExampleApps()
             with socket.socket() as sock:
-                sock.bind(('127.0.0.1',0))
+                sock.bind(('127.0.0.1',39791))
                 sock.listen(32)
                 port=sock.getsockname()[1]
                 origin='https://127.0.0.1:'+str(port)
@@ -116,11 +137,21 @@ def main():
                     state['remote_bridge']={'enabled':True,'port':port,'origin':origin}
                 phone=PhoneCompanion(vault)
                 ref=src.library()[0]
-                offer=phone.owner('phone-create',{'approved':True,'selection':{'memories:schedule':digest(ref['text'])}})
-                ws=Workspace(vault)
-                action=ws.create('email','Review fictional follow-up',[offer['id']],
-                          {'recipients':'review@example.test','subject':'Fictional rehearsal','body':'Fixture only.'})
-                witness=SafariWitness(BridgeApp(lambda:vault,port))
+                issued = {}
+                def start():
+                    if issued: return False
+                    offer=phone.owner('phone-create',{'approved':True,'selection':{'memories:schedule':digest(ref['text'])}})
+                    ws=Workspace(vault)
+                    action=ws.create('email','Review fictional follow-up',[offer['id']],
+                              {'recipients':'review@example.test','subject':'Fictional rehearsal','body':'Fixture only.'})
+                    issued.update(offer=offer,action=action)
+                    def launch():
+                        rc=subprocess.run(['xcrun','simctl','openurl',device,offer['url']],
+                                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode
+                        print('Fresh link sent to active Mobile Safari:',rc==0, flush=True)
+                    threading.Timer(.2,launch).start()
+                    return True
+                witness=SafariWitness(BridgeApp(lambda:vault,port),start,origin)
                 server=uvicorn.Server(uvicorn.Config(witness,ssl_keyfile=str(tmp/'site.key'),ssl_certfile=str(cert),
                        log_level='error',access_log=False,proxy_headers=False))
                 th=threading.Thread(target=server.run,kwargs={'sockets':[sock]},daemon=True); th.start()
@@ -128,11 +159,10 @@ def main():
                     wait=time.monotonic()+10
                     while not server.started and time.monotonic()<wait: time.sleep(.1)
                     ensure(server.started,'Mac gateway did not start')
-                    # Only the synthetic simulator receives the pairing fragment. Do not echo simctl arguments.
-                    rc=subprocess.run(['xcrun','simctl','openurl',device,offer['url']],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode
-                    ensure(rc==0,'Could not hand the pairing link to Mobile Safari')
                     marks=('connected','scoped_read','pending_mac_approval','disconnected')
                     xcode(xargs+['test-without-building'],tmp,'ui',marks)
+                    ensure(issued and witness.pair_count==1,'Missing the Mac-confirmed selected record count')
+                    offer,action=issued['offer'],issued['action']
                     expect=('/phone/pair','/phone/context','/phone/actions','/phone/request','/phone/disconnect')
                     ensure(all((p,200) in witness.events for p in expect),'Mobile Safari did not complete every successful HTTP action')
                     ensure(witness.session is not None,'Missing HTTP witness for real Mobile Safari')
