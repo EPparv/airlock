@@ -1,0 +1,23 @@
+name: Stop two disposable provider sessions
+on:
+  push:
+    branches: [test/stop-two-provider-runs-46070692363]
+permissions:
+  actions: write
+jobs:
+  close-test-sessions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Cancel the two isolated test runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -eu
+          for run_id in 46070692363 46070698378; do
+            result=$(gh api -H 'Accept: application/vnd.github+json' "repos/EPparv/airlock/actions/runs/$run_id" --jq '.status')
+            if [ "$result" != completed ]; then
+              gh api --silent -X POST "repos/EPparv/airlock/actions/runs/$run_id/cancel"
+            fi
+          done
