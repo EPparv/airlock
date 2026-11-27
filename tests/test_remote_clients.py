@@ -1,5 +1,8 @@
 import json
+import os
 import socket
+import subprocess
+from pathlib import Path
 
 import httpx
 import pytest
@@ -155,6 +158,39 @@ def test_tunnel_export_contains_only_paths_and_uses_dedicated_profile(bundle, mo
     assert remote_tunnel.run(token_file, session, 'tunnel_test1234', 'sk-fictional-runtime-key', 'tunnel-client') == 0
     assert [args[1] for args in calls] == ['init', 'doctor', 'run']
     assert all('airlock-' + created['id'] in args for args in calls)
+
+
+@pytest.mark.skipif(not os.environ.get('AIRLOCK_TEST_TUNNEL_CLIENT'), reason='official tunnel-client executable required')
+def test_reopen_chatgpt_with_official_tunnel_client(tmp_path, monkeypatch):
+    binary = os.environ['AIRLOCK_TEST_TUNNEL_CLIENT']
+    profile_id = 'a' * 32
+    token = tmp_path/f'chatgpt-{profile_id}.token'
+    token.write_text('synthetic-scoped-grant')
+    session = tmp_path/'launch.json'
+    session.write_text('{}')
+    legacy = tmp_path/f'airlock-{profile_id}.yaml'
+    legacy.write_text('owner configuration')
+    monkeypatch.setenv('TUNNEL_CLIENT_PROFILE_DIR', str(tmp_path))
+    monkeypatch.setenv('CONTROL_PLANE_BASE_URL', 'http://127.0.0.1:1')
+
+    # Exercise the official init and doctor twice. Stop before any tunnel polling.
+    official_run = subprocess.run
+    prepared = []
+    def offline_run(args, **kwargs):
+        if args[1] != 'run':
+            return official_run(args, **kwargs)
+        directory = Path(args[args.index('--profile-dir')+1])
+        contents = (directory/f'airlock-{profile_id}.yaml').read_text()
+        assert directory.stat().st_mode & 0o777 == 0o700
+        assert token.name in contents and 'env:CONTROL_PLANE_API_KEY' in contents
+        assert 'sk-offline-test' not in contents
+        prepared.append(directory)
+        return subprocess.CompletedProcess(args, 0)
+    monkeypatch.setattr(remote_tunnel.subprocess, 'run', offline_run)
+    for _ in range(2):
+        assert remote_tunnel.run(token, session, 'tunnel_'+'b'*32, 'sk-offline-test', binary) == 0
+    assert len(set(prepared)) == 2 and not any(directory.exists() for directory in prepared)
+    assert legacy.read_text() == 'owner configuration'
 
 
 def test_muse_handoffs_and_ironclaw_manifest(cloud):
