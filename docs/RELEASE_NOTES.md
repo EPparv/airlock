@@ -1,6 +1,10 @@
-# Airlock 0.11.6
+# Airlock 0.11.8
 
-ChatGPT and Dot accept OpenAI tunnel IDs with or without a namespace. Reopening a ChatGPT tunnel creates a temporary local client profile for the existing Airlock grant. You can reconnect after closing Terminal and keep the records and permissions you previously selected.
+ChatGPT and Dot accept OpenAI tunnel IDs with or without a namespace. Reopening a ChatGPT tunnel creates a temporary local client profile for the existing Airlock connection, so closing and reopening Terminal preserves the records and permissions you selected.
+
+# Airlock 0.11.7
+
+You can open Meta Muse or Manus from Airlock and create an account before starting the HTTPS bridge. If sign-in closes the tab or redirects you away from connector setup, reopen the provider from the same connection.
 
 # Airlock 0.11.5
 

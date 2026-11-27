@@ -13,12 +13,23 @@ const cloud = new Map([
 ]);
 const generic = 'Custom MCP client';
 const choices = [...local.keys(), ...cloud.keys(), generic, 'Dot'];
+const hostedSignup = new Map([
+  ['Meta Muse', 'https://muse.ai/'],
+  ['Manus', 'https://www.manus.im/app?openConnectors=true'],
+]);
 
 async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,type,byText,freePort}) {
   async function choose(name) {
     await home(); await btn('Connect agent'); await btn(name);
     await titled(name === 'Dot' ? 'Dot tunnel' : name);
     await until("!document.querySelector('#app [aria-busy]')");
+  }
+  async function openHosted(label, name, url) {
+    await btn(label);
+    await contains('Open ' + name + ' in your browser');
+    const links = await evaluate("Array.from(document.querySelectorAll('#app a')).filter(a=>a.textContent===" +
+      JSON.stringify('Open ' + name + ' in your browser') + ").map(a=>a.href)");
+    assert.deepEqual(links, [url]);
   }
   for (const [name,key] of local) {
     const before = launched().length;
@@ -42,6 +53,13 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
   assert.equal(await evaluate("document.querySelector('#app input').checkValidity()"), true);
   for (const name of [...cloud.keys()].filter(n=>n!=='ChatGPT')) {
     await choose(name); await contains('Start temporary link');
+    const signupUrl = hostedSignup.get(name);
+    if (signupUrl) {
+      const state = await evaluate("api('remote-state')");
+      assert.equal(state.enabled, false);
+      await openHosted('Sign in or create an account', name, signupUrl);
+      assert.deepEqual(await evaluate("api('remote-state')"), state);
+    }
   }
   // Bring up a real loopback bridge in the fixture. External reachability has
   // its own independent HTTPS acceptance. No provider credentials are involved.
@@ -60,6 +78,15 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
     else {
       await contains(vendor==='ironclaw'?'Extension manifest':vendor==='muse'?'Schema URL':'Server URL');
       assert.equal(await evaluate("document.querySelector('.handoff-status')?.textContent"),'Finish setup');
+      const signupUrl = hostedSignup.get(name);
+      if (signupUrl) {
+        if (vendor==='muse') await contains('Copy setup request');
+        const before = await evaluate("api('remote-state')");
+        await openHosted('Continue in ' + name, name, signupUrl);
+        assert.deepEqual(await evaluate("api('remote-state')"), before);
+        assert.ok(await evaluate("Boolean(document.querySelector('#app input[type=password]')?.value)"));
+        assert.equal(await evaluate("document.querySelector('.handoff-status')?.textContent"), 'Finish setup');
+      }
     }
   }
 }

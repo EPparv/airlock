@@ -81,6 +81,46 @@ def test_opener_never_treats_user_input_as_a_destination(monkeypatch):
     assert not result['opened'] and not result['prepared'] and result['retry_native']
 
 
+@pytest.mark.parametrize('vendor,url', [
+    ('muse', 'https://muse.ai/'),
+    ('manus', 'https://www.manus.im/app?openConnectors=true'),
+])
+def test_hosted_signup_and_resume_only_open_the_provider(bundle, monkeypatch, vendor, url):
+    remote = RemoteClients(bundle[0], FakeListener())
+    monkeypatch.setattr(remote_clients.sys, 'platform', 'darwin')
+    launch = Mock()
+    monkeypatch.setattr(remote_clients.subprocess, 'run', launch)
+    before_signup = remote.state()
+    assert not before_signup['enabled'] and not before_signup['connections']
+    signup = remote.owner('remote-open-hosted', {'vendor': vendor})
+    assert signup['opened'] and 'request' not in signup
+    assert remote.state() == before_signup
+
+    remote.configure('https://bridge.example.net', 9874, True)
+    grant = remote.create(vendor, 3600, 10)
+    configured = remote.state()
+    for _ in range(2):
+        resume = remote.owner('remote-open-hosted', {'vendor': vendor})
+        assert resume['opened'] and 'request' not in resume and 'credential' not in resume
+    assert remote.state() == configured
+    assert configured['connections'][0]['id'] == grant['id']
+    assert configured['connections'][0]['last_call'] is None
+    assert [call.args[0] for call in launch.call_args_list] == [['/usr/bin/open', url]] * 3
+
+
+def test_hosted_signup_rejects_other_destinations_and_locked_workspaces(bundle, monkeypatch):
+    remote = RemoteClients(bundle[0], FakeListener())
+    launch = Mock()
+    monkeypatch.setattr(remote_clients, 'open_provider', launch)
+    for body in [{'vendor': 'custom'}, {'vendor': 'https://example.org'}, {'vendor': 'muse', 'url': 'https://example.org'}]:
+        with pytest.raises(Denied):
+            remote.owner('remote-open-hosted', body)
+    remote.close()
+    with pytest.raises(Denied):
+        remote.owner('remote-open-hosted', {'vendor': 'muse'})
+    launch.assert_not_called()
+
+
 def test_native_tunnel_setup_is_only_for_an_active_dedicated_grant(bundle, monkeypatch):
     gateway = bundle[0]
     remote = RemoteClients(gateway, FakeListener())
