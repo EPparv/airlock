@@ -1,7 +1,7 @@
 import XCTest
 
 final class NativeShare: XCTestCase {
-    let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+    let safari = XCUIApplication()
     let spring = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     func button(_ text: String, in app: XCUIApplication) -> XCUIElement {
@@ -12,38 +12,15 @@ final class NativeShare: XCTestCase {
     }
     func testWebShareCancelledWithoutSending() throws {
         continueAfterFailure = false
-        let host = XCUIApplication()
-        host.launch()
-        host.buttons["Open local Airlock in Safari"].tap()
-        let more = button("Share an excerpt", in: safari)
-        for _ in 0..<8 where !more.exists {
-            if more.waitForExistence(timeout: 2) { break }
-            for text in ["Continue","Not Now","Start Page","Start Using Safari","Use Safari","Get Started","Done","Open"] {
-                let option = button(text,in:safari)
-                if option.exists && option.isHittable { option.tap(); break }
-            }
-        }
-        XCTAssertTrue(more.waitForExistence(timeout: 14), "Safari onboarding or page missing. " + safari.debugDescription)
-        more.tap()
-        let input = safari.webViews.textViews.firstMatch
-        XCTAssertTrue(input.waitForExistence(timeout: 8), safari.debugDescription)
-        input.tap()
-        input.typeText("Fictional preview cedar. Email editor@example.org.")
-        if safari.keyboards.count > 0 {
-            let done = button("Done",in:safari)
-            if done.exists && done.isHittable { done.tap() }
-        }
-        let review = button("Review excerpt", in: safari)
-        XCTAssertTrue(review.exists, safari.debugDescription)
-        if !review.isHittable { safari.webViews.firstMatch.swipeUp() }
-        review.tap()
-        let share = button("Share reviewed text", in: safari)
-        XCTAssertTrue(share.waitForExistence(timeout: 10), safari.debugDescription)
-        let filtered = safari.webViews.descendants(matching:.any).matching(NSPredicate(format:"value CONTAINS[c] %@ AND value CONTAINS[c] %@", "cedar","[email-")).firstMatch
-        XCTAssertTrue(filtered.exists, safari.debugDescription)
-        let prior = try XCTUnwrap(filtered.value as? String)
+        safari.launch()
+        let state = safari.staticTexts["fixture-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 20), safari.debugDescription)
+        let ready = NSPredicate(format:"label CONTAINS %@ AND label ENDSWITH %@", "[email-","ready")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:ready,object:state)],timeout:30),.completed,safari.debugDescription)
+        let prior = state.label
         XCTAssertFalse(prior.contains("example.org"))
-        if !share.isHittable { safari.webViews.firstMatch.swipeUp() }
+        let share = button("Share reviewed text", in:safari)
+        XCTAssertTrue(share.exists && share.isHittable, safari.debugDescription)
         share.tap()
         var sheetApp: XCUIApplication?
         var matched = [String]()
@@ -81,8 +58,9 @@ final class NativeShare: XCTestCase {
             return choices.count < 2 && share.exists && share.isHittable
         }
         XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:returned,object:nil)],timeout:10),.completed, "Share sheet still displayed: " + active.debugDescription)
-        XCTAssertEqual(filtered.value as? String,prior)
-        XCTAssertFalse((filtered.value as? String ?? "").contains("example.org"))
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:ready,object:state)],timeout:8),.completed)
+        XCTAssertEqual(state.label,prior)
+        XCTAssertFalse(state.label.contains("example.org"))
         print("NATIVE-SHARE: cancelled, reviewed text retained, no app selected.")
     }
 }

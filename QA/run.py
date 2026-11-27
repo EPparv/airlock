@@ -4,7 +4,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import smoke_iphone as fixtures
 
-runtime, device = fixtures.choose_phone()
+import json
+devices = json.loads(fixtures.output('xcrun','simctl','list','devices','available','-j'))['devices']
+pairs = [(r,d['deviceTypeIdentifier']) for r,ds in devices.items() if '.iOS-18-' in r for d in ds if d.get('isAvailable') and d['name'].startswith('iPhone')]
+runtime, device = sorted(pairs)[-1] if pairs else fixtures.choose_phone()
 udid = fixtures.output('xcrun','simctl','create','Airlock Actual Safari Share Probe',device,runtime)
 print("iOS runtime",runtime,flush=True)
 try:
