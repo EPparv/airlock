@@ -47,6 +47,29 @@ def test_reconnect_requires_owner_and_keeps_existing_access(bundle, monkeypatch)
         remote.connect('muse', True, second['id'])
 
 
+def test_muse_setup_copies_public_schema_without_the_grant_and_reuses_the_connection(bundle, monkeypatch):
+    remote = RemoteClients(bundle[0], FakeListener())
+    remote.configure('https://bridge.example.net:9443', 9874, True)
+    monkeypatch.setattr(remote_clients.sys, 'platform', 'darwin')
+    launch = Mock()
+    monkeypatch.setattr(remote_clients.subprocess, 'run', launch)
+    created = remote.owner('remote-connect', {'vendor': 'muse', 'approved': True})
+    prompt = created['handoff']['request']
+    assert created['url'] == 'https://bridge.example.net:9443/openapi.json'
+    assert created['url'] in prompt and 'privacy_status' in prompt
+    assert created['credential'] not in prompt and created['id'] not in prompt
+    assert launch.call_args_list[0].args == (['/usr/bin/open', 'https://muse.ai/'],)
+    assert launch.call_args_list[1].kwargs['input'].decode() == prompt
+    resumed = remote.connect('muse', True)
+    assert resumed['id'] == created['id'] and 'credential' not in resumed
+    assert resumed['handoff']['request'] == prompt
+    assert len(remote.state()['connections']) == 1
+    advanced = remote.create('muse', 3600, 10)
+    assert advanced['setup_request'] == prompt and advanced['credential'] not in prompt
+    bundle[0].authenticate(created['credential'], discovered=True)
+    assert remote.connect('muse', True, created['id'])['handoff']['request'] == STATUS_REQUEST
+
+
 @pytest.mark.parametrize('vendor,setup,url,prompt', [
     ('muse', True, 'https://muse.ai/', MUSE_SETUP_REQUEST),
     ('chatgpt', True, 'https://chatgpt.com/plugins', None),

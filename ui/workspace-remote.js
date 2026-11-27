@@ -20,58 +20,72 @@ async function connectRemoteNow(vendor, from = 'connect', id) {
   }
 }
 
+function privateCopyButton(label, getValue, selectionLabel, success, style = 'secondary') {
+  let manual;
+  const copy = button(label, async () => {
+    manual?.remove();
+    const value = getValue();
+    try {
+      await navigator.clipboard.writeText(value);
+      flash(success);
+    } catch {
+      manual = el('div', null, 'form');
+      copy.after(manual);
+      note(manual, 'Choose Copy from the Edit menu or press Command-C on your Mac.');
+      const selected = field(manual, 'Manual copy', input('text', selectionLabel));
+      selected.readOnly = true;
+      selected.addEventListener('copy', event => {
+        if (!event.clipboardData) return;
+        event.clipboardData.setData('text/plain', value);
+        event.preventDefault();
+        manual.remove();
+        copy.focus();
+        flash(success);
+      });
+      selected.focus();
+      selected.select();
+    }
+  }, style);
+  return copy;
+}
+
 function cloudValue(host, label, value, type = 'text') {
   const box = field(host, label, type === 'multiline' ? el('textarea') : input(type));
   box.value = value;
   box.readOnly = true;
   box.autocomplete = 'off';
-  host.append(button('Copy ' + (type === 'password' ? 'token' : label.toLowerCase()), async () => {
+  if (type === 'password') {
+    host.append(privateCopyButton('Copy token', () => value, 'Airlock token', 'Token copied.'));
+    return;
+  }
+  host.append(button('Copy ' + label.toLowerCase(), async () => {
     try {
       await navigator.clipboard.writeText(value);
       flash('Copied.');
     } catch {
-      if (type === 'password') box.type = 'text';
       box.focus();
       box.select();
       flash('Press Command-C to copy the selected text.');
-      if (type === 'password') box.addEventListener('blur', () => { box.type = 'password'; }, {once:true});
     }
   }));
 }
 
 function manusSetup(host, receipt) {
-  if (!receipt.credential) {
+  if (receipt.credential) {
+    manusConfiguration(host, receipt);
+  } else {
     note(host, 'Use the Airlock connector in Manus or import the configuration you saved. If you lost it, open Test or recover connection, then Connection help → Lost the token?');
-    return;
   }
-  note(host, 'In Manus, choose Connectors → Create → Import MCP by JSON. Paste the configuration into that form. It contains your Airlock token.');
-  let manual;
-  const copy = button('Copy Manus configuration', async () => {
+  note(host, 'After import, open a task in the same Manus account on your iPhone or Mac. Select Airlock if prompted, then send the status request.');
+  host.append(button('Copy status request', () => copyText('Call the Airlock privacy_status tool once and tell me whether it responds. Do not read any records.')));
+}
+
+function manusConfiguration(host, receipt) {
+  note(host, 'In Manus, open Connectors → Create → Import MCP by JSON. Paste the configuration into that form and import it privately. It contains your Airlock token.');
+  const copy = privateCopyButton('Copy Manus configuration', () => {
     const server = {type:'streamableHttp', url:receipt.url, headers:{Authorization:'Bearer ' + receipt.credential}};
-    const config = JSON.stringify({mcpServers:{Airlock:server}}, null, 2);
-    try {
-      await navigator.clipboard.writeText(config);
-      manual?.remove();
-      flash('Manus configuration copied.');
-    } catch {
-      manual?.remove();
-      manual = el('div', null, 'form');
-      copy.after(manual);
-      note(manual, 'Choose Copy from the Edit menu or press Command-C on your Mac.');
-      const selected = field(manual, 'Manual copy', input('text', 'Airlock configuration'));
-      selected.readOnly = true;
-      selected.addEventListener('copy', event => {
-        if (!event.clipboardData) return;
-        event.clipboardData.setData('text/plain', config);
-        event.preventDefault();
-        manual.remove();
-        copy.focus();
-        flash('Manus configuration copied.');
-      });
-      selected.focus();
-      selected.select();
-    }
-  }, 'primary');
+    return JSON.stringify({mcpServers:{Airlock:server}}, null, 2);
+  }, 'Airlock configuration', 'Manus configuration copied.', 'primary');
   host.append(copy);
   const values = details(host, 'Connection values');
   cloudValue(values, 'Server URL', receipt.url, 'url');
@@ -191,7 +205,7 @@ addPage('remote-handoff', 'Connect agent', 'connect', async (host, opt, bar) => 
     manusSetup(host, receipt);
   } else if (setup) {
     const next = {
-      muse:'Enter your schema URL in the custom connector setup. Save the bearer token in Muse’s secure credential prompt.',
+      muse:'Paste the setup request in Muse. It includes the public schema URL. Enter the bearer token only in Muse’s API key field.',
       ironclaw:'In Extensions → Registry, choose Add MCP server. Enter the Server URL and select Bearer token. Install Airlock and save its token in IronClaw’s setup form.',
       custom:'Add a Streamable HTTP MCP server in your app. Save the token in its bearer authentication settings.'
     };
@@ -461,7 +475,7 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       manusSetup(f, result);
     } else {
       note(f, opt.vendor === 'muse' ?
-        'Paste the setup request into Muse. When Muse opens its secure credential prompt, enter the token there.' :
+        'Paste the setup request in Muse. It includes the public schema URL. Enter the bearer token only in Muse’s API key field.' :
         opt.vendor === 'ironclaw' ? 'In your IronClaw instance, open Extensions → Registry → Add MCP server. Choose bearer authentication, install the extension, then enter the token in its setup form.' :
         'Add this URL as a Streamable HTTP MCP server. Set Authorization to Bearer followed by the token in the client’s secret settings.');
       if (result.manifest) {
@@ -473,15 +487,10 @@ addPage('remote-create', 'Connect cloud agent', 'remote-clients', async (host, o
       const url = field(f, opt.vendor === 'muse' ? 'OpenAPI schema URL' : 'MCP server URL', input('url', result.url));
       url.readOnly = true;
       if (opt.vendor === 'muse') {
-        f.append(button('Copy setup request for Muse', () => copyText(
-          'Create a private Airlock connector. Ask me for its OpenAPI URL and use your secure credential prompt for the bearer token. Then call privacy_status once without reading records.'
-        )));
+        f.append(button('Copy setup request for Muse', () => copyText(result.setup_request)));
       }
       f.append(button(opt.vendor === 'muse' ? 'Copy schema URL' : 'Copy server URL', () => copyText(result.url)));
-      const secret = field(f, 'Bearer token · shown once', input('password', result.credential));
-      secret.autocomplete = 'off';
-      secret.readOnly = true;
-      f.append(button('Copy token', () => copyText(result.credential)));
+      cloudValue(f, 'Bearer token · shown once', result.credential, 'password');
     }
     formAction(f, 'Test this connection', () => startProviderCheck(result.id));
     await destination;

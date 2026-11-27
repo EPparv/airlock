@@ -59,8 +59,15 @@ def ironclaw_origin(value):
         raise Denied('Enter your IronClaw HTTPS address or the local address printed by ironclaw serve.') from None
 
 
-def open_provider(vendor, setup=False, *, ironclaw_host=None, prepare_request=True):
-    """Launch only known provider surfaces. Credentials, endpoints and personal data never enter the URL or prompt."""
+def muse_setup_request(origin):
+    schema = public_origin(origin) + '/openapi.json'
+    return (f'Create a private Airlock connector using the OpenAPI schema at {schema}. '
+            'Open your secure API key form for the bearer token. After I add the key, '
+            'call privacy_status once without reading any records.')
+
+
+def open_provider(vendor, setup=False, *, ironclaw_host=None, prepare_request=True, muse_origin=None):
+    """Launch a known provider. Only Muse setup includes the public schema URL in its chat request."""
     if not isinstance(vendor, str) or vendor not in (*PROVIDER_SITES, 'custom', 'ironclaw') or type(setup) is not bool:
         raise Denied('Choose a supported agent.')
     result = {'opened':False, 'drafted':False, 'prepared':False, 'method':'manual'}
@@ -78,7 +85,10 @@ def open_provider(vendor, setup=False, *, ironclaw_host=None, prepare_request=Tr
     name = VENDORS.get(vendor, 'Dot')
     result['message'] = 'Open ' + name + ' to continue.'
     if prepare_request and (not setup or vendor == 'muse'):
-        result['request'] = MUSE_SETUP_REQUEST if setup else STATUS_REQUEST
+        if setup:
+            result['request'] = muse_setup_request(muse_origin) if muse_origin else MUSE_SETUP_REQUEST
+        else:
+            result['request'] = STATUS_REQUEST
     if sys.platform != 'darwin':
         return result
     try:
@@ -662,7 +672,7 @@ class RemoteClients:
                 result = {'state':'created','previous':{'last_initialized':None,'last_discovery':None,'last_call':None,
                                                        'last_context_read':None}, **self._create(vendor, 86400, 100)}
                 setup = True
-        handoff = self.open_client(vendor, setup)
+        handoff = self.open_client(vendor, setup, muse_origin=state['origin'])
         if vendor == 'chatgpt':
             from .remote_tunnel import local_status
             token_file = self.g.store.path.parent / 'clients' / ('chatgpt-' + result['id'] + '.token')
@@ -707,7 +717,9 @@ class RemoteClients:
                         pass
                 return {'opened':False, 'command':command}
 
-    def open_client(self, vendor, setup):
+    def open_client(self, vendor, setup, *, muse_origin=None):
+        if vendor == 'muse' and setup and muse_origin:
+            return open_provider(vendor, setup, muse_origin=muse_origin)
         if vendor == 'ironclaw':
             with self.g.store.transaction() as data:
                 origin = data.get('ironclaw_host')
@@ -806,6 +818,8 @@ class RemoteClients:
                 return {'id': identifier, 'command': launch_command(credential, folder / 'launch.json')}
             url = state['origin'] + ('/openapi.json' if vendor == 'muse' else '/mcp')
             setup = {'id': identifier, 'credential': result['token'], 'url': url}
+            if vendor == 'muse':
+                setup['setup_request'] = muse_setup_request(state['origin'])
             if vendor == 'ironclaw':
                 from .ironclaw_adapter import manifest
                 setup['manifest'] = manifest(url)

@@ -42,6 +42,28 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
         }
       }})`);
   }
+  async function verifyMuseSetup(area, label) {
+    await testClipboard();
+    await byText(area+' button', label);
+    await until('manusClipboard.writes === 1');
+    assert.ok(await evaluate(`(() => {
+      const text = manusClipboard.value;
+      const token = document.querySelector(${JSON.stringify(area)}).querySelector('input[type=password]').value;
+      return text.includes('https://browser-check.example.org/openapi.json') &&
+        text.includes('privacy_status') && !text.includes(token);
+    })()`));
+    await evaluate("manusClipboard.denied = true; manusClipboard.value = ''");
+    await byText(area+' button','Copy token');
+    await until("document.activeElement?.value === 'Airlock token'");
+    assert.ok(await evaluate(`(() => {
+      const token = document.querySelector(${JSON.stringify(area)}).querySelector('input[type=password]').value;
+      if (!token || [...document.querySelectorAll('input:not([type=password]),textarea')].some(e=>e.value.includes(token))) return false;
+      const transfer = new DataTransfer();
+      document.activeElement.dispatchEvent(new ClipboardEvent('copy',{clipboardData:transfer,bubbles:true,cancelable:true}));
+      return transfer.getData('text/plain') === token;
+    })()`));
+    await evaluate('delete navigator.clipboard; delete window.manusClipboard');
+  }
   async function verifyManusImport(area) {
     const label = 'Copy Manus configuration';
     const matches = `(() => {
@@ -73,6 +95,10 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
       return copy.defaultPrevented;
     })()`), true);
     assert.deepEqual(await evaluate(matches), expected);
+    await evaluate("manusClipboard.denied = false; manusClipboard.value = ''");
+    await byText(area+' button', 'Copy status request');
+    await until("manusClipboard.value.includes('privacy_status')");
+    assert.equal(await evaluate("manusClipboard.value.includes('https:') || manusClipboard.value.includes('pal_')"), false);
     await evaluate('delete navigator.clipboard; delete window.manusClipboard');
   }
   for (const [name,key] of local) {
@@ -126,7 +152,7 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
       assert.equal(await evaluate("document.querySelector('.handoff-status')?.textContent"),'Finish setup');
       const signupUrl = hostedSignup.get(name);
       if (signupUrl) {
-        if (vendor==='muse') await contains('Copy setup request');
+        if (vendor==='muse') await verifyMuseSetup('#app', 'Copy setup request');
         const before = await evaluate("api('remote-state')");
         await openHosted('Continue in ' + name, name, signupUrl);
         assert.deepEqual(await evaluate("api('remote-state')"), before);
@@ -140,6 +166,10 @@ async function ownerChoices({home,btn,titled,contains,evaluate,until,launched,ty
   assert.ok(!(await evaluate("Array.from(document.querySelectorAll('#app button')).some(b=>b.textContent==='Copy Manus configuration')")));
   await byText('summary','Connection details'); await contains('Test or recover connection');
   await btn('Test or recover connection'); await byText('summary','Connection help'); await contains('Lost the token?');
+  await home(); await btn('Privacy & connections'); await btn('Cloud agents'); await btn('Meta Muse');
+  await btn('Add another connection'); await btn('Create connection');
+  await verifyMuseSetup('dialog[open]', 'Copy setup request for Muse');
+  await byText('dialog[open] button','Test this connection'); await contains('Waiting for a status call');
   await home(); await btn('Privacy & connections'); await btn('Cloud agents'); await btn('Manus');
   await btn('Add another connection'); await testClipboard();
   await btn('Create connection');
